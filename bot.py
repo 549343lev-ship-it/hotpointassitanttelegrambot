@@ -509,10 +509,12 @@ def handle_photo(message):
             file_info = bot.get_file(message.photo[-1].file_id)
             downloaded = bot.download_file(file_info.file_path)
             image_b64 = base64.b64encode(downloaded).decode('utf-8')
+            # Якщо є caption — використовуємо, якщо forwarded — caption може бути порожнім
+            caption = message.caption or ""
             add_to_batch(message.chat.id, {
                 'type': 'photo',
                 'data': image_b64,
-                'caption': message.caption or ""
+                'caption': caption
             })
             return
         except Exception as e:
@@ -520,6 +522,18 @@ def handle_photo(message):
                 bot.reply_to(message, f"❌ Не вдалося завантажити фото після 3 спроб: {e}")
             else:
                 import time; time.sleep(2)
+
+
+@bot.message_handler(func=lambda m: m.text and not m.text.startswith('/') 
+                     and not m.text.lower().startswith('пошук')
+                     and not m.text.lower().startswith('правило'))
+def handle_forwarded_text(message):
+    """Обробляє forwarded текстові повідомлення як пошуковий запит"""
+    # Якщо це forwarded повідомлення з текстом — обробляємо як пошук
+    if message.forward_from or message.forward_from_chat or message.forward_sender_name:
+        текст = message.text.strip()
+        if текст:
+            add_to_batch(message.chat.id, {'type': 'text', 'text': текст})
 
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('пошук'))
