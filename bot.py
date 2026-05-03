@@ -168,7 +168,11 @@ def нормалізувати_фото(image_b64, caption=""):
   }}
 ]"""
 
-    import PIL.Image, io
+    try:
+        import PIL.Image
+    except ImportError:
+        raise Exception("Pillow не встановлено — додай Pillow в requirements.txt")
+    import io
     image_bytes = __import__('base64').b64decode(image_b64)
     pil_image = PIL.Image.open(io.BytesIO(image_bytes))
     resp = gemini.generate_content([prompt, pil_image])
@@ -476,7 +480,10 @@ def process_batch(chat_id):
             errors.append(f"❌ Помилка нормалізації елемента {index}: {e}")
 
     if not всі_позиції:
-        bot.edit_message_text("😕 Не вдалося розпізнати жодної позиції.", chat_id=chat_id, message_id=msg_id)
+        err_text = "😕 Не вдалося розпізнати жодної позиції."
+        if errors:
+            err_text += "\n\n" + "\n".join(errors)
+        bot.edit_message_text(err_text, chat_id=chat_id, message_id=msg_id)
         return
 
     preview = "\n".join(
