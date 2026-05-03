@@ -1,6 +1,6 @@
 import telebot
 import anthropic
-import google.generativeai as genai
+from google import genai as genai_new
 import os
 import pandas as pd
 import base64
@@ -15,8 +15,7 @@ bot = telebot.TeleBot(TELEGRAM_TOKEN)
 client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
 GEMINI_KEY = os.environ.get("GEMINI_KEY")
-genai.configure(api_key=GEMINI_KEY)
-gemini = genai.GenerativeModel("gemini-1.5-flash")
+gemini_client = genai_new.Client(api_key=GEMINI_KEY)
 
 # ─── КАТАЛОГИ ПО ФАЙЛАХ ──────────────────────────────────────────────────────
 # Кожен файл = окрема категорія товарів
@@ -168,14 +167,16 @@ def нормалізувати_фото(image_b64, caption=""):
   }}
 ]"""
 
-    try:
-        import PIL.Image
-    except ImportError:
-        raise Exception("Pillow не встановлено — додай Pillow в requirements.txt")
     import io
+    from google.genai import types as genai_types
     image_bytes = __import__('base64').b64decode(image_b64)
-    pil_image = PIL.Image.open(io.BytesIO(image_bytes))
-    resp = gemini.generate_content([prompt, pil_image])
+    resp = gemini_client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=[
+            genai_types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+            genai_types.Part.from_text(text=prompt)
+        ]
+    )
     raw = resp.text.strip().replace('```json', '').replace('```', '').strip()
     if '[' in raw:
         raw = raw[raw.index('['):raw.rindex(']')+1]
