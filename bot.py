@@ -1,4 +1,3 @@
-Content is user-generated and unverified.
 import telebot
 import anthropic
 import os
@@ -14,17 +13,78 @@ ANTHROPIC_KEY = os.environ.get("ANTHROPIC_KEY")
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
-# ─── ЗАВАНТАЖЕННЯ КАТАЛОГУ ───────────────────────────────────────────────────
-df = pd.read_excel("products.xlsx", header=0)
-df.columns = ['Наименование', 'Артикул WMS', 'ОР', 'Резерв', 'Код'] + list(df.columns[5:])
-df_товари = df[['Наименование', 'Артикул WMS', 'Код']].dropna(subset=['Наименование'])
-df_товари = df_товари[df_товари['Наименование'].astype(str).str.strip() != '']
-df_товари = df_товари.reset_index(drop=True)
+# ─── КАТАЛОГИ ПО ФАЙЛАХ ──────────────────────────────────────────────────────
+# Кожен файл = окрема категорія товарів
+CATALOG_FILES = [
+    ("adapters_reducers.xlsx",   "Перехідники, редуктори, подовжувачі різьб"),
+    ("automation.xlsx",          "Автоматика для опалення та водопостачання"),
+    ("boilers.xlsx",             "Котли"),
+    ("fasteners_sealants.xlsx",  "Кріплення, ущільнювачі, розхідники"),
+    ("filtration.xlsx",          "Фільтри, колби, системи фільтрації, очистка води"),
+    ("heating.xlsx",             "Опалення загальне"),
+    ("hoses.xlsx",               "Шланги"),
+    ("insulation.xlsx",          "Утеплювач"),
+    ("metal_plastic.xlsx",       "Металопластикова система, труби і фітинги М/П"),
+    ("mixers_faucets.xlsx",      "Змішувачі, крани"),
+    ("plastic_ppr.xlsx",         "Пластик ППР, система пайки, труби і фітинги ППР"),
+    ("pumps.xlsx",               "Насосна техніка, насоси"),
+    ("push_systems.xlsx",        "Системи PUSH, прес-з'єднання"),
+    ("radiators_radiatorsvalve.xlsx", "Радіатори та арматура для радіаторів"),
+    ("safety_valves.xlsx",       "Арматура безпеки, клапани"),
+    ("sanitary_ware.xlsx",       "Санфаянс, унітази, інсталяції, умивальники"),
+    ("sewage.xlsx",              "Каналізація, труби та фітинги каналізаційні"),
+    ("shutoff_valves.xlsx",      "Запірна арматура, крани, вентилі"),
+    ("siphons_fittings.xlsx",    "Сифони та арматура"),
+    ("towel_warmers.xlsx",       "Полотенцесушителі"),
+    ("underfloor_heating.xlsx",  "Системи теплої підлоги"),
+    ("water_heaters.xlsx",       "Водонагрівачі"),
+    ("water_meters.xlsx",        "Водолічильники"),
+]
 
-# Будуємо рядок каталогу один раз при старті (для Claude)
-КАТАЛОГ_РЯДКИ = "\n".join(
-    f"{r['Наименование']} | WMS: {r['Артикул WMS']} | Код: {r['Код']}"
-    for _, r in df_товари.iterrows()
+# ─── ЗАВАНТАЖЕННЯ ВСІХ КАТАЛОГІВ ─────────────────────────────────────────────
+# catalogs = { "sewage": {"label": "Каналізація", "df": DataFrame} }
+catalogs = {}
+
+def load_catalog(filename, label):
+    if not os.path.exists(filename):
+        print(f"⚠️  Файл не знайдено: {filename}")
+        return None
+    try:
+        df = pd.read_excel(filename, header=0)
+        # Перші 4 колонки завжди: Наименование, Артикул WMS, ОР, Код
+        cols = list(df.columns)
+        rename = {}
+        if len(cols) >= 1: rename[cols[0]] = 'Наименование'
+        if len(cols) >= 2: rename[cols[1]] = 'Артикул WMS'
+        if len(cols) >= 3: rename[cols[2]] = 'ОР'
+        if len(cols) >= 4: rename[cols[3]] = 'Код'
+        df = df.rename(columns=rename)
+
+        df = df[['Наименование', 'Артикул WMS', 'Код']].copy()
+        df = df.dropna(subset=['Наименование'])
+        df = df[df['Наименование'].astype(str).str.strip() != '']
+        df = df.reset_index(drop=True)
+        return df
+    except Exception as e:
+        print(f"❌ Помилка завантаження {filename}: {e}")
+        return None
+
+print("📦 Завантажую каталоги...")
+for filename, label in CATALOG_FILES:
+    key = filename.replace('.xlsx', '')
+    df = load_catalog(filename, label)
+    if df is not None:
+        catalogs[key] = {"label": label, "df": df}
+        print(f"  ✅ {filename}: {len(df)} позицій")
+    else:
+        print(f"  ⚠️  {filename}: пропущено")
+
+print(f"📦 Завантажено {len(catalogs)} каталогів")
+
+# Будуємо текстовий опис каталогів для Claude (для визначення категорії)
+CATALOG_DESCRIPTIONS = "\n".join(
+    f"- {key}: {info['label']}"
+    for key, info in catalogs.items()
 )
 
 # ─── ПРАВИЛА ─────────────────────────────────────────────────────────────────
@@ -41,10 +101,8 @@ def add_rule(new_rule):
     with open(RULES_FILE, "a", encoding="utf-8") as f:
         f.write(f"- {new_rule}\n")
 
-# ─── КРОК 1: OCR + НОРМАЛІЗАЦІЯ ──────────────────────────────────────────────
-# Приймає фото або текст, повертає список нормалізованих позицій
-# Кожна позиція: {"normalized": "Труба ПВХ каналізаційна 50мм 1м", "qty": "2", "original": "труба 50 - 2шт"}
 
+# ─── КРОК 1: OCR + НОРМАЛІЗАЦІЯ ──────────────────────────────────────────────
 def нормалізувати_фото(image_b64, caption=""):
     rules = get_rules()
     rules_block = f"\nДодаткові правила від користувача:\n{rules}" if rules else ""
@@ -54,20 +112,29 @@ def нормалізувати_фото(image_b64, caption=""):
 ЗАВДАННЯ:
 1. Прочитай кожен рядок (ігноруй електрику, тільки сантехніка/опалення/водопостачання)
 2. Нормалізуй кожну позицію до стандартної торгової назви
-3. Витягни кількість якщо є{rules_block}
+3. Витягни кількість якщо є
+4. Визнач категорію з цього списку:{rules_block}
 
-Підказка: '{caption}'
+ДОСТУПНІ КАТЕГОРІЇ:
+{CATALOG_DESCRIPTIONS}
+
+Підказка від користувача: '{caption}'
 
 ПРАВИЛА НОРМАЛІЗАЦІЇ:
 - "кол" → "Коліно каналізаційне"
 - "тр 50" → "Труба каналізаційна ПВХ 50мм"
 - "муф" → "Муфта"
-- скорочення розшифровуй за контекстом списку
+- скорочення розшифровуй за контекстом
 - якщо зверху написано "каналізація" — всі позиції каналізаційні
 
-ВІДПОВІДАЙ ТІЛЬКИ JSON масивом, без пояснень:
+ВІДПОВІДАЙ ТІЛЬКИ JSON масивом:
 [
-  {{"original": "що написано на фото", "normalized": "Стандартна торгова назва", "qty": "кількість або пусто"}}
+  {{
+    "original": "що написано на фото",
+    "normalized": "Стандартна торгова назва",
+    "qty": "кількість або пусто",
+    "category": "ключ категорії з списку вище або пусто якщо невідомо"
+  }}
 ]"""
 
     resp = client.messages.create(
@@ -91,11 +158,19 @@ def нормалізувати_текст(текст):
 ТЕКСТ:
 {текст}
 
-ЗАВДАННЯ: нормалізуй кожну позицію до стандартної торгової назви і витягни кількість.
+ДОСТУПНІ КАТЕГОРІЇ:
+{CATALOG_DESCRIPTIONS}
+
+ЗАВДАННЯ: нормалізуй кожну позицію до стандартної торгової назви, витягни кількість і визнач категорію.
 
 ВІДПОВІДАЙ ТІЛЬКИ JSON масивом:
 [
-  {{"original": "оригінальний рядок", "normalized": "Стандартна торгова назва", "qty": "кількість або пусто"}}
+  {{
+    "original": "оригінальний рядок",
+    "normalized": "Стандартна торгова назва",
+    "qty": "кількість або пусто",
+    "category": "ключ категорії з списку вище або пусто якщо невідомо"
+  }}
 ]"""
 
     resp = client.messages.create(
@@ -108,53 +183,52 @@ def нормалізувати_текст(текст):
 
 
 # ─── КРОК 2: ПОШУК У КАТАЛОЗІ ────────────────────────────────────────────────
-# Приймає список нормалізованих позицій, повертає знайдені товари з каталогу
-
 def знайти_у_каталозі(позиції):
-    """
-    Передаємо Claude нормалізовані назви + ВЕСЬ каталог (або топ кандидатів).
-    Claude обирає найкращий збіг для кожної позиції.
-    """
-    # Для великих каталогів (15к+) — спочатку фільтруємо кандидатів локально
-    # щоб не перевищити контекстне вікно
     всі_результати = []
 
     for поз in позиції:
         normalized = поз.get("normalized", "")
         qty = поз.get("qty", "")
         original = поз.get("original", "")
+        category = поз.get("category", "")
 
-        # Локальна фільтрація — беремо топ-30 кандидатів по ключових словах
-        слова = [s.lower() for s in normalized.split() if len(s) > 2]
-        кандидати = []
-        for _, row in df_товари.iterrows():
-            назва = str(row['Наименование']).lower()
-            score = sum(1 for с in слова if с in назва)
-            if score > 0:
-                кандидати.append((score, row))
-        кандидати.sort(key=lambda x: -x[0])
-        топ = кандидати[:30]
+        # Визначаємо які каталоги шукати
+        if category and category in catalogs:
+            # Шукаємо спочатку у правильній категорії
+            пошук_каталоги = [(category, catalogs[category])]
+        else:
+            # Якщо категорія невідома — шукаємо у всіх
+            пошук_каталоги = list(catalogs.items())
 
-        if not топ:
-            всі_результати.append({
-                "original": original,
-                "normalized": normalized,
-                "знайдено": False,
-                "назва": "",
-                "артикул": "",
-                "код": "",
-                "кількість": qty
-            })
-            continue
+        кращий_результат = None
 
-        кандидати_текст = "\n".join(
-            f"{r['Наименование']} | WMS: {r['Артикул WMS']} | Код: {r['Код']}"
-            for _, r in топ
-        )
+        for cat_key, cat_info in пошук_каталоги:
+            df_cat = cat_info["df"]
 
-        prompt = f"""З цього списку товарів обери ОДИН найкращий збіг для запиту.
+            # Локальна фільтрація — топ-30 кандидатів
+            слова = [s.lower() for s in normalized.split() if len(s) > 2]
+            кандидати = []
+            for _, row in df_cat.iterrows():
+                назва = str(row['Наименование']).lower()
+                score = sum(1 for с in слова if с in назва)
+                if score > 0:
+                    кандидати.append((score, row))
+
+            кандидати.sort(key=lambda x: -x[0])
+            топ = кандидати[:30]
+
+            if not топ:
+                continue
+
+            кандидати_текст = "\n".join(
+                f"{r['Наименование']} | WMS: {r['Артикул WMS']} | Код: {r['Код']}"
+                for _, r in топ
+            )
+
+            prompt = f"""З цього списку товарів обери ОДИН найкращий збіг для запиту.
 
 ЗАПИТ: {normalized}
+КАТЕГОРІЯ: {cat_info['label']}
 
 СПИСОК:
 {кандидати_текст}
@@ -167,23 +241,40 @@ def знайти_у_каталозі(позиції):
 
 ТІЛЬКИ JSON, без пояснень."""
 
-        resp = client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=256,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        raw = resp.content[0].text.strip().replace('```json','').replace('```','').strip()
-        результат = json.loads(raw)
-        результат["original"] = original
-        результат["normalized"] = normalized
-        результат["кількість"] = qty
-        всі_результати.append(результат)
+            resp = client.messages.create(
+                model="claude-sonnet-4-5",
+                max_tokens=256,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            raw = resp.content[0].text.strip().replace('```json','').replace('```','').strip()
+            результат = json.loads(raw)
+
+            if результат.get("знайдено"):
+                кращий_результат = результат
+                кращий_результат["категорія"] = cat_info["label"]
+                break  # Знайшли у правильній категорії — зупиняємось
+
+        if кращий_результат:
+            кращий_результат["original"] = original
+            кращий_результат["normalized"] = normalized
+            кращий_результат["кількість"] = qty
+            всі_результати.append(кращий_результат)
+        else:
+            всі_результати.append({
+                "original": original,
+                "normalized": normalized,
+                "знайдено": False,
+                "назва": "",
+                "артикул": "",
+                "код": "",
+                "кількість": qty,
+                "категорія": ""
+            })
 
     return всі_результати
 
 
 # ─── EXCEL ───────────────────────────────────────────────────────────────────
-
 def створити_excel(результати):
     rows = []
     not_found = []
@@ -195,6 +286,7 @@ def створити_excel(результати):
                 'Артикул WMS': r.get('артикул', ''),
                 'Код': r.get('код', ''),
                 'Кількість': r.get('кількість', ''),
+                'Категорія': r.get('категорія', ''),
                 'Оригінал (від майстра)': r.get('original', ''),
             })
         else:
@@ -203,11 +295,10 @@ def створити_excel(результати):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_out = pd.DataFrame(rows) if rows else pd.DataFrame(
-            columns=['Наименование','Артикул WMS','Код','Кількість','Оригінал (від майстра)']
+            columns=['Наименование','Артикул WMS','Код','Кількість','Категорія','Оригінал (від майстра)']
         )
         df_out.to_excel(writer, index=False, sheet_name='Замовлення')
 
-        # Другий лист — не знайдені
         if not_found:
             df_nf = pd.DataFrame({'Не знайдено в базі': not_found})
             df_nf.to_excel(writer, index=False, sheet_name='Не знайдено')
@@ -217,7 +308,6 @@ def створити_excel(результати):
 
 
 # ─── ОСНОВНА ОБРОБКА БАТЧУ ───────────────────────────────────────────────────
-
 def process_batch(chat_id):
     batch = user_batches.pop(chat_id, None)
     if not batch:
@@ -227,10 +317,9 @@ def process_batch(chat_id):
     status_msg = bot.send_message(chat_id, f"🔄 Починаю обробку {len(items)} файл(ів)...")
     msg_id = status_msg.message_id
 
-    всі_позиції = []  # нормалізовані позиції з усіх файлів
+    всі_позиції = []
     errors = []
 
-    # ── КРОК 1: нормалізація всіх файлів ──
     for index, item in enumerate(items, 1):
         try:
             if item['type'] == 'photo':
@@ -256,9 +345,10 @@ def process_batch(chat_id):
         bot.edit_message_text("😕 Не вдалося розпізнати жодної позиції.", chat_id=chat_id, message_id=msg_id)
         return
 
-    # Показуємо що розпізнали — корисно для дебагу
     preview = "\n".join(
-        f"• {п['original']} → {п['normalized']}" + (f" ({п['qty']})" if п.get('qty') else "")
+        f"• {п['original']} → {п['normalized']}"
+        + (f" ({п['qty']})" if п.get('qty') else "")
+        + (f" [{п.get('category','')}]" if п.get('category') else "")
         for п in всі_позиції[:10]
     )
     if len(всі_позиції) > 10:
@@ -266,7 +356,6 @@ def process_batch(chat_id):
 
     bot.send_message(chat_id, f"✅ Розпізнано {len(всі_позиції)} позицій:\n\n{preview}\n\n🔍 Шукаю в базі...")
 
-    # ── КРОК 2: пошук у каталозі ──
     bot.edit_message_text(
         f"🔍 Крок 2: Шукаю {len(всі_позиції)} позицій у базі товарів...",
         chat_id=chat_id, message_id=msg_id
@@ -278,7 +367,6 @@ def process_batch(chat_id):
         bot.edit_message_text(f"❌ Помилка пошуку: {e}", chat_id=chat_id, message_id=msg_id)
         return
 
-    # ── КРОК 3: формуємо Excel ──
     bot.edit_message_text("📊 Формую Excel файл...", chat_id=chat_id, message_id=msg_id)
 
     excel, not_found = створити_excel(результати)
@@ -286,7 +374,6 @@ def process_batch(chat_id):
 
     bot.send_document(chat_id, excel, visible_file_name="замовлення.xlsx")
 
-    # Фінальний звіт
     звіт = f"✅ Знайдено: {len(знайдено)} з {len(результати)} позицій"
     if not_found:
         звіт += f"\n⚠️ Не знайдено ({len(not_found)} шт.) — дивись лист 'Не знайдено' в Excel:\n"
@@ -300,7 +387,6 @@ def process_batch(chat_id):
 
 
 # ─── БАТЧ ────────────────────────────────────────────────────────────────────
-
 def add_to_batch(chat_id, item):
     if chat_id not in user_batches:
         user_batches[chat_id] = {'items': []}
@@ -316,7 +402,6 @@ def add_to_batch(chat_id, item):
 
 
 # ─── ОБРОБНИКИ ───────────────────────────────────────────────────────────────
-
 @bot.message_handler(commands=['start', 'help'])
 def handle_start(message):
     bot.reply_to(message, """👋 Привіт! Я бот для підбору сантехніки.
