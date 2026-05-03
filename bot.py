@@ -1,5 +1,6 @@
 import telebot
 import anthropic
+import google.generativeai as genai
 import os
 import pandas as pd
 import base64
@@ -12,6 +13,10 @@ ANTHROPIC_KEY = os.environ.get("ANTHROPIC_KEY")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+
+GEMINI_KEY = os.environ.get("GEMINI_KEY")
+genai.configure(api_key=GEMINI_KEY)
+gemini = genai.GenerativeModel("gemini-2.0-flash")
 
 # ─── КАТАЛОГИ ПО ФАЙЛАХ ──────────────────────────────────────────────────────
 # Кожен файл = окрема категорія товарів
@@ -123,7 +128,7 @@ def нормалізувати_фото(image_b64, caption=""):
 
 СЛОВНИК СЛЕНГУ МАЙСТРІВ:
 - "кол", "кут", кутик намальований = Коліно
-- "рож", "рожон", "трійн" = Трійник  
+- "рож", "рожон", "трійн" = Трійник
 - "муф", "муфта" = Муфта
 - "тр", "труба", "д20", "ф20" = Труба (діаметр береться з числа)
 - "кр", "кран" = Кран кульовий
@@ -141,9 +146,9 @@ def нормалізувати_фото(image_b64, caption=""):
 - "плм", "PLM" = виробник PLM (утеплювач)
 
 ФОРМАТ НОРМАЛІЗОВАНОЇ НАЗВИ: коротко як в прайсі
-Приклади правильної нормалізації:
+Приклади:
 - "труба д 20 - 15м" → normalized: "Труба ППР PN20 20мм", qty: "15"
-- "кутник 25х20" → normalized: "Коліно ППР 25х20мм"  
+- "кутник 25х20" → normalized: "Коліно ППР 25мм"
 - "рожонці 25х20х25" → normalized: "Трійник ППР 25х20х25мм"
 - "муфта 20х1/2" → normalized: "Муфта ППР 20х1/2 вн.різьба"
 - "кол 110" → normalized: "Коліно каналізаційне 110мм"
@@ -163,15 +168,13 @@ def нормалізувати_фото(image_b64, caption=""):
   }}
 ]"""
 
-    resp = client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=2048,
-        messages=[{"role": "user", "content": [
-            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_b64}},
-            {"type": "text", "text": prompt}
-        ]}]
-    )
-    raw = resp.content[0].text.strip().replace('```json','').replace('```','').strip()
+    import PIL.Image, io
+    image_bytes = __import__('base64').b64decode(image_b64)
+    pil_image = PIL.Image.open(io.BytesIO(image_bytes))
+    resp = gemini.generate_content([prompt, pil_image])
+    raw = resp.text.strip().replace('```json', '').replace('```', '').strip()
+    if '[' in raw:
+        raw = raw[raw.index('['):raw.rindex(']')+1]
     return json.loads(raw)
 
 
