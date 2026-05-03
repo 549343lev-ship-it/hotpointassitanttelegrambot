@@ -182,96 +182,166 @@ def нормалізувати_текст(текст):
     return json.loads(raw)
 
 
-# ─── КРОК 2: ПОШУК У КАТАЛОЗІ ────────────────────────────────────────────────
+# ─── КРОК 2: ПОШУК У КАТАЛОЗІ (БАТЧ — 1 запит на категорію) ─────────────────
 def знайти_у_каталозі(позиції):
-    всі_результати = []
+    """
+    Групуємо позиції по категоріях → 1 API запит на категорію.
+    Замість 78 запитів — 3-5 запитів. Економія ~95% коштів.
+    """
+    # Групуємо по категорії
+    grouped = {}  # category_key -> [поз, ...]
+    unknown = []  # позиції без категорії
 
     for поз in позиції:
-        normalized = поз.get("normalized", "")
-        qty = поз.get("qty", "")
-        original = поз.get("original", "")
-        category = поз.get("category", "")
-
-        # Визначаємо які каталоги шукати
-        if category and category in catalogs:
-            # Шукаємо спочатку у правильній категорії
-            пошук_каталоги = [(category, catalogs[category])]
+        cat = поз.get("category", "")
+        if cat and cat in catalogs:
+            grouped.setdefault(cat, []).append(поз)
         else:
-            # Якщо категорія невідома — шукаємо у всіх
-            пошук_каталоги = list(catalogs.items())
+            unknown.append(поз)
 
-        кращий_результат = None
+    всі_результати_map = {}  # original -> результат
 
-        for cat_key, cat_info in пошук_каталоги:
-            df_cat = cat_info["df"]
+    # ── Обробка груп по категоріях ──
+    for cat_key, група in grouped.items():
+        cat_info = catalogs[cat_key]
+        df_cat = cat_info["df"]
 
-            # Локальна фільтрація — топ-30 кандидатів
+        # Збираємо всіх кандидатів для всієї групи одним проходом
+        всі_кандидати = set()
+        for поз in група:
+            normalized = поз.get("normalized", "")
             слова = [s.lower() for s in normalized.split() if len(s) > 2]
-            кандидати = []
             for _, row in df_cat.iterrows():
+                назва = str(row['Наименование']).lower()
+                if any(с in назва for с in слова):
+                    всі_кандидати.add(row['Наименование'])
+
+        # Топ-60 унікальних кандидатів для всієї групи
+        кандидати_рядки = []
+        for _, row in df_cat.iterrows():
+            if row['Наименование'] in всі_кандидати:
+                кандидати_рядки.append(
+                    f"{row['Наименование']} | WMS: {row['Артикул WMS']} | Код: {row['Код']}"
+                )
+            if len(кандидати_рядки) >= 60:
+                break
+
+        if not кандидати_рядки:
+            for поз in група:
+                всі_результати_map[поз['original']] = {
+                    "original": поз['original'],
+                    "normalized": поз.get('normalized', ''),
+                    "знайдено": False,
+                    "назва": "", "артикул": "", "код": "",
+                    "кількість": поз.get('qty', ''),
+                    "категорія": cat_info['label']
+                }
+            continue
+
+        # Формуємо список запитів для батчу
+        запити_текст = "\n".join(
+            f"{i+1}. {поз.get('normalized','')}"
+            for i, поз in enumerate(група)
+        )
+        кандидати_текст = "\n".join(кандидати_рядки)
+
+        prompt = f"""Ти — експерт із сантехніки. Знайди найкращий збіг з каталогу для кожного запиту.
+
+КАТЕГОРІЯ: {cat_info['label']}
+
+ЗАПИТИ:
+{запити_текст}
+
+КАТАЛОГ:
+{кандидати_текст}
+
+Для кожного запиту обери ОДИН найкращий збіг або постав знайдено: false.
+
+ВІДПОВІДАЙ ТІЛЬКИ JSON масивом (порядок як у запитах):
+[
+  {{"знайдено": true, "назва": "точна назва з каталогу", "артикул": "WMS артикул", "код": "код"}},
+  {{"знайдено": false}}
+]"""
+
+        resp = client.messages.create(
+            model="claude-sonnet-4-5",
+            max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = resp.content[0].text.strip().replace('```json','').replace('```','').strip()
+        результати_батч = json.loads(raw)
+
+        for i, поз in enumerate(група):
+            r = результати_батч[i] if i < len(результати_батч) else {"знайдено": False}
+            всі_результати_map[поз['original']] = {
+                "original": поз['original'],
+                "normalized": поз.get('normalized', ''),
+                "знайдено": r.get("знайдено", False),
+                "назва": r.get("назва", ""),
+                "артикул": r.get("артикул", ""),
+                "код": r.get("код", ""),
+                "кількість": поз.get('qty', ''),
+                "категорія": cat_info['label']
+            }
+
+    # ── Невідомі категорії — шукаємо по всіх каталогах батчем ──
+    for поз in unknown:
+        normalized = поз.get("normalized", "")
+        слова = [s.lower() for s in normalized.split() if len(s) > 2]
+        кандидати = []
+        for cat_key, cat_info in catalogs.items():
+            for _, row in cat_info["df"].iterrows():
                 назва = str(row['Наименование']).lower()
                 score = sum(1 for с in слова if с in назва)
                 if score > 0:
-                    кандидати.append((score, row))
+                    кандидати.append((score, row, cat_info['label']))
+        кандидати.sort(key=lambda x: -x[0])
+        топ = кандидати[:30]
 
-            кандидати.sort(key=lambda x: -x[0])
-            топ = кандидати[:30]
+        if not топ:
+            всі_результати_map[поз['original']] = {
+                "original": поз['original'], "normalized": normalized,
+                "знайдено": False, "назва": "", "артикул": "", "код": "",
+                "кількість": поз.get('qty', ''), "категорія": ""
+            }
+            continue
 
-            if not топ:
-                continue
-
-            кандидати_текст = "\n".join(
-                f"{r['Наименование']} | WMS: {r['Артикул WMS']} | Код: {r['Код']}"
-                for _, r in топ
-            )
-
-            prompt = f"""З цього списку товарів обери ОДИН найкращий збіг для запиту.
+        кандидати_текст = "\n".join(
+            f"{r['Наименование']} | WMS: {r['Артикул WMS']} | Код: {r['Код']}"
+            for _, r, _ in топ
+        )
+        prompt = f"""З цього списку товарів обери ОДИН найкращий збіг.
 
 ЗАПИТ: {normalized}
-КАТЕГОРІЯ: {cat_info['label']}
 
 СПИСОК:
 {кандидати_текст}
 
-Якщо є збіг — відповідай JSON:
-{{"знайдено": true, "назва": "точна назва з списку", "артикул": "артикул", "код": "код"}}
+JSON відповідь:
+{{"знайдено": true, "назва": "...", "артикул": "...", "код": "..."}}
+або {{"знайдено": false}}"""
 
-Якщо нічого підходящого немає:
-{{"знайдено": false}}
+        resp = client.messages.create(
+            model="claude-sonnet-4-5",
+            max_tokens=256,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = resp.content[0].text.strip().replace('```json','').replace('```','').strip()
+        r = json.loads(raw)
+        всі_результати_map[поз['original']] = {
+            "original": поз['original'], "normalized": normalized,
+            "знайдено": r.get("знайдено", False),
+            "назва": r.get("назва", ""), "артикул": r.get("артикул", ""),
+            "код": r.get("код", ""), "кількість": поз.get('qty', ''),
+            "категорія": топ[0][2] if r.get("знайдено") else ""
+        }
 
-ТІЛЬКИ JSON, без пояснень."""
-
-            resp = client.messages.create(
-                model="claude-sonnet-4-5",
-                max_tokens=256,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            raw = resp.content[0].text.strip().replace('```json','').replace('```','').strip()
-            результат = json.loads(raw)
-
-            if результат.get("знайдено"):
-                кращий_результат = результат
-                кращий_результат["категорія"] = cat_info["label"]
-                break  # Знайшли у правильній категорії — зупиняємось
-
-        if кращий_результат:
-            кращий_результат["original"] = original
-            кращий_результат["normalized"] = normalized
-            кращий_результат["кількість"] = qty
-            всі_результати.append(кращий_результат)
-        else:
-            всі_результати.append({
-                "original": original,
-                "normalized": normalized,
-                "знайдено": False,
-                "назва": "",
-                "артикул": "",
-                "код": "",
-                "кількість": qty,
-                "категорія": ""
-            })
-
-    return всі_результати
+    # Повертаємо в оригінальному порядку
+    return [всі_результати_map.get(п['original'], {
+        "original": п['original'], "normalized": п.get('normalized',''),
+        "знайдено": False, "назва": "", "артикул": "", "код": "",
+        "кількість": п.get('qty',''), "категорія": ""
+    }) for п in позиції]
 
 
 # ─── EXCEL ───────────────────────────────────────────────────────────────────
