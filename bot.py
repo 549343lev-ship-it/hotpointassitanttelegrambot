@@ -16,7 +16,7 @@ client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
 GEMINI_KEY = os.environ.get("GEMINI_KEY")
 genai.configure(api_key=GEMINI_KEY)
-gemini = genai.GenerativeModel("gemini-2.0-flash")
+gemini = genai.GenerativeModel("gemini-1.5-flash")
 
 # ─── КАТАЛОГИ ПО ФАЙЛАХ ──────────────────────────────────────────────────────
 # Кожен файл = окрема категорія товарів
