@@ -218,7 +218,7 @@ def нормалізувати_текст(текст):
 
 
 # ─── КРОК 2: ПОШУК У КАТАЛОЗІ (БАТЧ — 1 запит на категорію) ─────────────────
-def знайти_у_каталозі(позиції):
+def знайти_у_каталозі(позиції, chat_id=None, msg_id=None, bot_ref=None):
     """
     Групуємо позиції по категоріях → 1 API запит на категорію.
     Замість 78 запитів — 3-5 запитів. Економія ~95% коштів.
@@ -237,7 +237,18 @@ def знайти_у_каталозі(позиції):
     всі_результати_map = {}  # original -> результат
 
     # ── Обробка груп по категоріях ──
+    total_cats = len(grouped)
+    done_cats = [0]
     for cat_key, група in grouped.items():
+        done_cats[0] += 1
+        if chat_id and msg_id and bot_ref:
+            try:
+                bot_ref.edit_message_text(
+                    f"🔍 Шукаю категорію {done_cats[0]}/{total_cats}: {catalogs[cat_key]['label']} ({len(група)} позицій)...",
+                    chat_id=chat_id, message_id=msg_id
+                )
+            except Exception:
+                pass
         cat_info = catalogs[cat_key]
         df_cat = cat_info["df"]
 
@@ -485,26 +496,38 @@ def process_batch(chat_id):
         bot.edit_message_text("🛑 Зупинено.", chat_id=chat_id, message_id=msg_id)
         return
 
-    # Таймер — повідомляємо якщо пошук іде довго
-    def notify_slow():
+    # Пошук з таймером прогресу
+    прогрес = [0]
+    def notify_progress():
+        прогрес[0] += 1
+        хв = прогрес[0] * 30
         try:
             bot.edit_message_text(
-                f"⏳ Шукаю {len(всі_позиції)} позицій... це може зайняти 1-2 хв.",
+                f"⏳ Шукаю {len(всі_позиції)} позицій... ({хв} сек)",
                 chat_id=chat_id, message_id=msg_id
             )
         except Exception:
             pass
-    slow_timer = threading.Timer(15.0, notify_slow)
-    slow_timer.start()
+        if прогрес[0] < 6:  # максимум 3 хв
+            progress_timer = threading.Timer(30.0, notify_progress)
+            progress_timer.daemon = True
+            progress_timer.start()
+    
+    progress_timer = threading.Timer(30.0, notify_progress)
+    progress_timer.daemon = True
+    progress_timer.start()
 
+    результати = []
     try:
-        результати = знайти_у_каталозі(всі_позиції)
+        результати = знайти_у_каталозі(всі_позиції, chat_id, msg_id, bot)
     except Exception as e:
-        slow_timer.cancel()
-        bot.edit_message_text(f"❌ Помилка пошуку: {e}", chat_id=chat_id, message_id=msg_id)
+        try:
+            bot.edit_message_text(f"❌ Помилка пошуку: {e}", chat_id=chat_id, message_id=msg_id)
+        except Exception:
+            bot.send_message(chat_id, f"❌ Помилка пошуку: {e}")
         return
     finally:
-        slow_timer.cancel()
+        прогрес[0] = 99  # зупиняємо таймер
 
     bot.edit_message_text("📊 Формую Excel файл...", chat_id=chat_id, message_id=msg_id)
 
