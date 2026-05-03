@@ -19,7 +19,7 @@ df_товари = df[['Наименование', 'Артикул WMS', 'Код'
 df_товари = df_товари[df_товари['Наименование'].astype(str).str.strip() != '']
 df_товари = df_товари.reset_index(drop=True)
 
-def локальний_пошук(запит, топ=15): # Зменшено до 15 для економії токенів і уникнення помилки 429
+def локальний_пошук(запит, топ=15): 
     слова = [s.lower() for s in запит.split() if len(s) > 2]
     результати = []
     for _, row in df_товари.iterrows():
@@ -45,7 +45,7 @@ def знайти_товари(текст_запиту, попередній_по
     ])
     
     response = client.messages.create(
-        model="claude-3-5-sonnet-latest", # Оновлена правильна модель
+        model="claude-sonnet-4-5", # ПОВЕРНУТО СТАРУ МОДЕЛЬ
         max_tokens=2048,
         messages=[{
             "role": "user",
@@ -63,7 +63,6 @@ def знайти_товари(текст_запиту, попередній_по
     return json.loads(raw)
 
 def створити_excel(результати):
-    # Жорстко задаємо колонки на випадок, якщо результати порожні
     columns = ['Наименование', 'Артикул WMS', 'Код', 'Кількість']
     
     if not результати:
@@ -87,13 +86,11 @@ def handle_photo(message):
         downloaded = bot.download_file(file_info.file_path)
         image_b64 = base64.b64encode(downloaded).decode('utf-8')
         
-        # Беремо текст з підпису до фото
         user_caption = message.caption if message.caption else ""
         
         bot.edit_message_text("⏳ Розпізнаю текст (це може зайняти трохи часу)...", 
                               chat_id=message.chat.id, message_id=status_msg.message_id)
         
-        # Жорсткий промпт, щоб бот не галюцинував електрикою
         prompt_text = f"""Ти експерт із сантехнічних систем. Уважно прочитай рукописний текст на фото. 
 Це список матеріалів для водопостачання, опалення, каналізації тощо. 
 Користувач також залишив таку підказку щодо брендів/категорій: '{user_caption}'.
@@ -101,7 +98,7 @@ def handle_photo(message):
 Виведи кожен товар з кількістю у форматі: назва - кількість"""
 
         ocr = client.messages.create(
-            model="claude-3-5-sonnet-latest",
+            model="claude-sonnet-4-5", # ПОВЕРНУТО СТАРУ МОДЕЛЬ
             max_tokens=1024,
             messages=[{"role": "user", "content": [
                 {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_b64}},
@@ -136,12 +133,10 @@ def handle_photo(message):
              bot.edit_message_text(f"❌ Ой, сталась помилка, все-таки я це не зроблю.\nПричина: {error_msg}", 
                                    chat_id=message.chat.id, message_id=status_msg.message_id)
 
-# Реагує ТІЛЬКИ якщо текст починається зі слова "пошук" або "Пошук"
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('пошук'))
 def handle_text(message):
     status_msg = bot.reply_to(message, "⏳ Починаю пошук...")
     
-    # Відрізаємо слово "Пошук" з початку тексту (перші 6 символів зі зміщенням)
     запит = message.text[5:].strip()
     
     try:
