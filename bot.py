@@ -89,6 +89,7 @@ CATALOG_DESCRIPTIONS = "\n".join(
 
 # ─── ПРАВИЛА ─────────────────────────────────────────────────────────────────
 user_batches = {}
+stop_flags = {}   # chat_id -> True якщо юзер хоче зупинити
 RULES_FILE = "rules.txt"
 
 def get_rules():
@@ -384,6 +385,7 @@ def process_batch(chat_id):
         return
 
     items = batch['items']
+    stop_flags.pop(chat_id, None)  # скидаємо флаг на початку
     status_msg = bot.send_message(chat_id, f"🔄 Починаю обробку {len(items)} файл(ів)...")
     msg_id = status_msg.message_id
 
@@ -391,6 +393,9 @@ def process_batch(chat_id):
     errors = []
 
     for index, item in enumerate(items, 1):
+        if stop_flags.get(chat_id):
+            bot.edit_message_text("🛑 Зупинено.", chat_id=chat_id, message_id=msg_id)
+            return
         try:
             if item['type'] == 'photo':
                 bot.edit_message_text(
@@ -430,6 +435,10 @@ def process_batch(chat_id):
         f"🔍 Крок 2: Шукаю {len(всі_позиції)} позицій у базі товарів...",
         chat_id=chat_id, message_id=msg_id
     )
+
+    if stop_flags.get(chat_id):
+        bot.edit_message_text("🛑 Зупинено.", chat_id=chat_id, message_id=msg_id)
+        return
 
     try:
         результати = знайти_у_каталозі(всі_позиції)
@@ -495,17 +504,22 @@ def handle_rule(message):
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
-    try:
-        file_info = bot.get_file(message.photo[-1].file_id)
-        downloaded = bot.download_file(file_info.file_path)
-        image_b64 = base64.b64encode(downloaded).decode('utf-8')
-        add_to_batch(message.chat.id, {
-            'type': 'photo',
-            'data': image_b64,
-            'caption': message.caption or ""
-        })
-    except Exception as e:
-        bot.reply_to(message, f"❌ Помилка завантаження фото: {e}")
+    for attempt in range(3):
+        try:
+            file_info = bot.get_file(message.photo[-1].file_id)
+            downloaded = bot.download_file(file_info.file_path)
+            image_b64 = base64.b64encode(downloaded).decode('utf-8')
+            add_to_batch(message.chat.id, {
+                'type': 'photo',
+                'data': image_b64,
+                'caption': message.caption or ""
+            })
+            return
+        except Exception as e:
+            if attempt == 2:
+                bot.reply_to(message, f"❌ Не вдалося завантажити фото після 3 спроб: {e}")
+            else:
+                import time; time.sleep(2)
 
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('пошук'))
@@ -516,5 +530,15 @@ def handle_text(message):
     else:
         bot.reply_to(message, "Напиши запит після слова 'пошук'.\nНаприклад: `пошук труба 50`", parse_mode="Markdown")
 
+
+@bot.message_handler(commands=['stop'])
+def handle_stop(message):
+    chat_id = message.chat.id
+    stop_flags[chat_id] = True
+    if chat_id in user_batches:
+        if 'timer' in user_batches[chat_id]:
+            user_batches[chat_id]['timer'].cancel()
+        user_batches.pop(chat_id, None)
+    bot.reply_to(message, "🛑 Зупинено. Надсилай нове фото коли будеш готовий.")
 
 bot.polling(none_stop=True)
