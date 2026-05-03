@@ -177,7 +177,7 @@ def нормалізувати_фото(image_b64, caption=""):
             genai_types.Part.from_text(text=prompt)
         ]
     )
-    raw = resp.text.strip().replace('```json', '').replace('```', '').strip()
+    raw = resp.text.strip().replace("`"*3 + "json", "").replace("`"*3, "").strip()
     if '[' in raw:
         raw = raw[raw.index('['):raw.rindex(']')+1]
     return json.loads(raw)
@@ -221,8 +221,7 @@ def нормалізувати_текст(текст):
         max_tokens=2048,
         messages=[{"role": "user", "content": prompt}]
     )
-    raw = resp.content[0].text.strip().replace('```json','').replace('
-```','').strip()
+    raw = resp.content[0].text.strip().replace("`"*3 + "json", "").replace("`"*3, "").strip()
     return json.loads(raw)
 
 
@@ -323,7 +322,7 @@ def знайти_у_каталозі(позиції, chat_id=None, msg_id=None, 
             max_tokens=2048,
             messages=[{"role": "user", "content": prompt}]
         )
-        raw = resp.content[0].text.strip().replace('```json','').replace('```','').strip()
+        raw = resp.content[0].text.strip().replace("`"*3 + "json", "").replace("`"*3, "").strip()
         # Витягуємо тільки JSON масив якщо є зайвий текст
         if '[' in raw:
             raw = raw[raw.index('['):raw.rindex(']')+1]
@@ -387,8 +386,7 @@ JSON відповідь:
             max_tokens=256,
             messages=[{"role": "user", "content": prompt}]
         )
-        raw = resp.content[0].text.strip().replace('```json','').replace('
-```','').strip()
+        raw = resp.content[0].text.strip().replace("`"*3 + "json", "").replace("`"*3, "").strip()
         if '{' in raw:
             raw = raw[raw.index('{'):raw.rindex('}')+1]
         try:
