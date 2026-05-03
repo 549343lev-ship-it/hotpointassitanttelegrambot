@@ -81,7 +81,9 @@ def process_batch(chat_id):
     if not batch: return
     
     items = batch['items']
-    bot.send_message(chat_id, f"🔄 Починаю обробку {len(items)} файлів/запитів. Це займе певний час...")
+    # Зберігаємо ID повідомлення, щоб потім його редагувати
+    status_msg = bot.send_message(chat_id, f"🔄 Починаю обробку {len(items)} файлів/запитів. Це займе певний час...")
+    msg_id = status_msg.message_id
     
     all_results = []
     errors = []
@@ -92,7 +94,9 @@ def process_batch(chat_id):
     for index, item in enumerate(items, 1):
         try:
             if item['type'] == 'photo':
-                # Тепер бот бере правила не з коду, а з файлу
+                # Оновлюємо статус: Читання фото
+                bot.edit_message_text(f"⏳ Файл {index} з {len(items)}: Читаю текст з фото (може зайняти 15-30 сек)...", chat_id=chat_id, message_id=msg_id)
+                
                 prompt_text = f"""Ти експерт із сантехніки. Прочитай рукописний текст.
                 ВРАХУЙ ЦІ ПРАВИЛА ВІД КОРИСТУВАЧА ДЛЯ РОЗПІЗНАВАННЯ (СЛЕНГ/АБРЕВІАТУРИ):
                 {rules_text}
@@ -110,6 +114,10 @@ def process_batch(chat_id):
                     ]}]
                 )
                 текст = ocr.content[0].text
+                
+                # Оновлюємо статус: Пошук у базі
+                bot.edit_message_text(f"⏳ Файл {index} з {len(items)}: Шукаю розпізнані товари у твоїй базі...", chat_id=chat_id, message_id=msg_id)
+                
                 кандидати = локальний_пошук(текст, топ=15)
                 результати = знайти_товари(текст, кандидати)
                 
@@ -119,6 +127,8 @@ def process_batch(chat_id):
                     errors.append(f"⚠️ Фото {index}: розпізнано ({текст[:30]}...), але не знайдено в базі.")
             
             elif item['type'] == 'text':
+                bot.edit_message_text(f"⏳ Текст {index} з {len(items)}: Аналізую та шукаю...", chat_id=chat_id, message_id=msg_id)
+                
                 запит = item['text']
                 кандидати = локальний_пошук(запит, топ=15)
                 результати = знайти_товари(запит, кандидати)
@@ -131,22 +141,28 @@ def process_batch(chat_id):
             errors.append(f"❌ Помилка на елементі {index}: {str(e)}")
 
     if all_results:
+        # Оновлюємо статус: Формування файлу
+        bot.edit_message_text("✅ Обробку всіх файлів завершено! Формую Excel таблицю...", chat_id=chat_id, message_id=msg_id)
+        
         excel = створити_excel(all_results)
         bot.send_document(chat_id, excel, visible_file_name="загальне_замовлення.xlsx")
         
-        status_msg = f"✅ Успішно зібрано товарів: {len(all_results)} шт."
+        # Фінальний звіт
+        status_text = f"✅ Успішно зібрано товарів: {len(all_results)} шт."
         if errors:
-            status_msg += "\n\nДеякі проблеми під час обробки:\n" + "\n".join(errors)
-        bot.send_message(chat_id, status_msg)
+            status_text += "\n\nДеякі проблеми під час обробки:\n" + "\n".join(errors)
+        bot.edit_message_text(status_text, chat_id=chat_id, message_id=msg_id)
     else:
-        bot.send_message(chat_id, "🤷‍♂️ Жодного товару не вдалося знайти в базі.\n\nДеталі:\n" + "\n".join(errors))
+        error_text = "🤷‍♂️ Жодного товару не вдалося знайти в базі.\n\nДеталі:\n" + "\n".join(errors)
+        bot.edit_message_text(error_text, chat_id=chat_id, message_id=msg_id)
 
 def add_to_batch(chat_id, item):
-    if chat_id in user_batches:
-        user_batches[chat_id]['timer'].cancel()
-    else:
+    if chat_id not in user_batches:
         user_batches[chat_id] = {'items': []}
         bot.send_message(chat_id, "📥 Отримав дані. Чекаю 4 секунди, чи будуть ще файли...")
+        
+    if 'timer' in user_batches[chat_id]:
+        user_batches[chat_id]['timer'].cancel()
         
     user_batches[chat_id]['items'].append(item)
     timer = threading.Timer(4.0, process_batch, args=[chat_id])
@@ -155,19 +171,15 @@ def add_to_batch(chat_id, item):
 
 # === ОБРОБНИКИ ПОВІДОМЛЕНЬ ===
 
-# 1. Обробник для навчання (Нова функція!)
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('правило'))
 def handle_rule(message):
-    # Відрізаємо слово "Правило" або "правило" (перші 7 символів)
     new_rule = message.text[7:].strip()
-    
     if new_rule:
         add_rule(new_rule)
         bot.reply_to(message, f"✅ Зрозумів і записав у базу знань:\n{new_rule}\n\nТепер я буду враховувати це при кожному наступному фото.")
     else:
         bot.reply_to(message, "Напиши правило після слова 'Правило'.\nНаприклад:\n`Правило якщо бачиш 'кол' — це коліно каналізаційне`", parse_mode="Markdown")
 
-# 2. Обробник фото
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     try:
@@ -184,7 +196,6 @@ def handle_photo(message):
     except Exception as e:
         bot.reply_to(message, f"Помилка завантаження фото: {e}")
 
-# 3. Обробник пошуку по тексту
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('пошук'))
 def handle_text(message):
     запит = message.text[5:].strip()
