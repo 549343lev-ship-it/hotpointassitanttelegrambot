@@ -171,14 +171,13 @@ def нормалізувати_фото(image_b64, caption=""):
     from google.genai import types as genai_types
     image_bytes = __import__('base64').b64decode(image_b64)
     resp = gemini_client.models.generate_content(
-        model="gemini-1.5-flash-002",
+        model="gemini-2.5-flash",
         contents=[
             genai_types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
             genai_types.Part.from_text(text=prompt)
         ]
     )
-    raw = resp.text.strip().replace('
-```json', '').replace('```', '').strip()
+    raw = resp.text.strip().replace('```json', '').replace('```', '').strip()
     if '[' in raw:
         raw = raw[raw.index('['):raw.rindex(']')+1]
     return json.loads(raw)
@@ -387,8 +386,8 @@ JSON відповідь:
             max_tokens=256,
             messages=[{"role": "user", "content": prompt}]
         )
-        raw = resp.content[0].text.strip().replace('```json','').replace('
-```','').strip()
+        raw = resp.content[0].text.strip().replace('
+```json','').replace('```','').strip()
         if '{' in raw:
             raw = raw[raw.index('{'):raw.rindex('}')+1]
         try:
