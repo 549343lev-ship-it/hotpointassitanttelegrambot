@@ -13,7 +13,7 @@ bot = telebot.TeleBot(TELEGRAM_TOKEN)
 client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
 # Завантаження списку товарів
-df = pd.read_excel("Список.xlsx", header=0)
+df = pd.read_excel("products.xlsx", header=0)
 df.columns = ['Наименование', 'Артикул WMS', 'ОР', 'Резерв', 'Код'] + list(df.columns[5:])
 df_товари = df[['Наименование', 'Артикул WMS', 'Код']].dropna(subset=['Наименование'])
 df_товари = df_товари[df_товари['Наименование'].astype(str).str.strip() != '']
