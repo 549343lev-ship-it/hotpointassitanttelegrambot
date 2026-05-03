@@ -90,6 +90,7 @@ CATALOG_DESCRIPTIONS = "\n".join(
 # ─── ПРАВИЛА ─────────────────────────────────────────────────────────────────
 user_batches = {}
 stop_flags = {}   # chat_id -> True якщо юзер хоче зупинити
+pending_hints = {}  # chat_id -> текст-підказка для наступного фото
 RULES_FILE = "rules.txt"
 
 def get_rules():
@@ -511,10 +512,13 @@ def handle_photo(message):
             image_b64 = base64.b64encode(downloaded).decode('utf-8')
             # Якщо є caption — використовуємо, якщо forwarded — caption може бути порожнім
             caption = message.caption or ""
+            # Якщо є збережена підказка — додаємо до caption
+            hint = pending_hints.pop(message.chat.id, "")
+            full_caption = " | ".join(filter(None, [caption, hint]))
             add_to_batch(message.chat.id, {
                 'type': 'photo',
                 'data': image_b64,
-                'caption': caption
+                'caption': full_caption
             })
             return
         except Exception as e:
@@ -528,12 +532,18 @@ def handle_photo(message):
                      and not m.text.lower().startswith('пошук')
                      and not m.text.lower().startswith('правило'))
 def handle_forwarded_text(message):
-    """Обробляє forwarded текстові повідомлення як пошуковий запит"""
-    # Якщо це forwarded повідомлення з текстом — обробляємо як пошук
+    """Forwarded текст зберігаємо як підказку до наступного фото (10 сек)"""
     if message.forward_from or message.forward_from_chat or message.forward_sender_name:
         текст = message.text.strip()
         if текст:
-            add_to_batch(message.chat.id, {'type': 'text', 'text': текст})
+            pending_hints[message.chat.id] = текст
+            bot.reply_to(message, f"💬 Запам'ятав підказку: _{текст}_\n\nТепер кидай фото — врахую!", parse_mode="Markdown")
+            # Скидаємо підказку через 60 сек якщо фото не надійшло
+            def clear_hint(chat_id):
+                pending_hints.pop(chat_id, None)
+            t = threading.Timer(60.0, clear_hint, args=[message.chat.id])
+            t.daemon = True
+            t.start()
 
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('пошук'))
