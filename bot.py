@@ -221,7 +221,8 @@ def нормалізувати_текст(текст):
         max_tokens=2048,
         messages=[{"role": "user", "content": prompt}]
     )
-    raw = resp.content[0].text.strip().replace('```json','').replace('```','').strip()
+    raw = resp.content[0].text.strip().replace('```json','').replace('
+```','').strip()
     return json.loads(raw)
 
 
@@ -386,8 +387,8 @@ JSON відповідь:
             max_tokens=256,
             messages=[{"role": "user", "content": prompt}]
         )
-        raw = resp.content[0].text.strip().replace('
-```json','').replace('```','').strip()
+        raw = resp.content[0].text.strip().replace('```json','').replace('
+```','').strip()
         if '{' in raw:
             raw = raw[raw.index('{'):raw.rindex('}')+1]
         try:
