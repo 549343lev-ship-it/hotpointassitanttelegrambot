@@ -260,7 +260,7 @@ def нормалізувати_фото(image_b64, caption=""):
     from google.genai import types as genai_types
     image_bytes = __import__('base64').b64decode(image_b64)
     resp = gemini_client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-2.5-flash",
         contents=[
             genai_types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
             genai_types.Part.from_text(text=prompt)
@@ -371,13 +371,17 @@ def знайти_у_каталозі(позиції, chat_id=None, msg_id=None, 
         df_cat = cat_info["df"]
 
         # Збираємо всіх кандидатів для всієї групи одним проходом
+        import re
         всі_кандидати = set()
         for поз in група:
             normalized = поз.get("normalized", "")
-            слова = [s.lower() for s in normalized.split() if len(s) > 2]
+            слова = [s.lower() for s in normalized.split() if len(s) > 2 and not s.isdigit()]
+            числа = re.findall(r'\d+', normalized)
             for _, row in df_cat.iterrows():
                 назва = str(row['Наименование']).lower()
-                if any(с in назва for с in слова):
+                score = sum(1 for с in слова if с in назва)
+                score += sum(2 for n in числа if n in назва)
+                if score > 0:
                     всі_кандидати.add(row['Наименование'])
 
         # Топ-60 унікальних кандидатів для всієї групи
