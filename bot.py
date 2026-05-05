@@ -1,264 +1,152 @@
-import telebot
-import anthropic
-from google import genai as genai_new
-import os
-import pandas as pd
-import base64
-import json
-import threading
+"""
+bot.py — Telegram бот для підбору сантехніки
+Архітектура: Gemini 2.5 Flash (OCR) → keyword пошук по JSON → Claude Sonnet (фінальний вибір)
+
+ВСТАНОВЛЕННЯ:
+  pip install pytelegrambotapi anthropic google-genai openpyxl pandas
+
+ЗМІННІ СЕРЕДОВИЩА:
+  TELEGRAM_TOKEN  — токен бота
+  ANTHROPIC_KEY   — ключ Claude
+  GEMINI_KEY      — ключ Gemini
+
+ПІДГОТОВКА КАТАЛОГУ:
+  Запусти один раз: python build_catalog.py
+  Це перетворить всі xlsx файли в catalog.json
+"""
+
+import os, json, re, base64, threading, time
 from io import BytesIO
 
+import telebot
+import anthropic
+import pandas as pd
+from google import genai as genai_new
+from google.genai import types as genai_types
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ІНІЦІАЛІЗАЦІЯ
+# ═══════════════════════════════════════════════════════════════════════════════
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-ANTHROPIC_KEY = os.environ.get("ANTHROPIC_KEY")
+ANTHROPIC_KEY  = os.environ.get("ANTHROPIC_KEY")
+GEMINI_KEY     = os.environ.get("GEMINI_KEY")
 
-bot = telebot.TeleBot(TELEGRAM_TOKEN)
-client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-
-GEMINI_KEY = os.environ.get("GEMINI_KEY")
+bot           = telebot.TeleBot(TELEGRAM_TOKEN)
+claude        = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 gemini_client = genai_new.Client(api_key=GEMINI_KEY)
 
-# ─── КАТАЛОГИ ПО ФАЙЛАХ ──────────────────────────────────────────────────────
-# Кожен файл = окрема категорія товарів
-CATALOG_FILES = [
-    ("adapters_reducers.xlsx",   "Перехідники, редуктори, подовжувачі різьб"),
-    ("automation.xlsx",          "Автоматика для опалення та водопостачання"),
-    ("boilers.xlsx",             "Котли"),
-    ("fasteners_sealants.xlsx",  "Кріплення, ущільнювачі, розхідники"),
-    ("filtration.xlsx",          "Фільтри, колби, системи фільтрації, очистка води"),
-    ("heating.xlsx",             "Опалення загальне"),
-    ("hoses.xlsx",               "Шланги"),
-    ("insulation.xlsx",          "Утеплювач"),
-    ("metal_plastic.xlsx",       "Металопластикова система, труби і фітинги М/П"),
-    ("mixers_faucets.xlsx",      "Змішувачі, крани"),
-    ("plastic_ppr.xlsx",         "Пластик ППР, система пайки, труби і фітинги ППР"),
-    ("pumps.xlsx",               "Насосна техніка, насоси"),
-    ("push_systems.xlsx",        "Системи PUSH, прес-з'єднання"),
-    ("radiators_radiatorsvalve.xlsx", "Радіатори та арматура для радіаторів"),
-    ("safety_valves.xlsx",       "Арматура безпеки, клапани"),
-    ("sanitary_ware.xlsx",       "Санфаянс, унітази, інсталяції, умивальники"),
-    ("sewage.xlsx",              "Каналізація, труби та фітинги каналізаційні"),
-    ("shutoff_valves.xlsx",      "Запірна арматура, крани, вентилі"),
-    ("siphons_fittings.xlsx",    "Сифони та арматура"),
-    ("towel_warmers.xlsx",       "Полотенцесушителі"),
-    ("underfloor_heating.xlsx",  "Системи теплої підлоги"),
-    ("water_heaters.xlsx",       "Водонагрівачі"),
-    ("water_meters.xlsx",        "Водолічильники"),
-]
+CATALOG_PATH = "catalog.json"   # будується через build_catalog.py
+RULES_FILE   = "rules.txt"
 
-# ─── ЗАВАНТАЖЕННЯ ВСІХ КАТАЛОГІВ ─────────────────────────────────────────────
-# catalogs = { "sewage": {"label": "Каналізація", "df": DataFrame} }
-catalogs = {}
+# ═══════════════════════════════════════════════════════════════════════════════
+# ЗАВАНТАЖЕННЯ КАТАЛОГУ
+# ═══════════════════════════════════════════════════════════════════════════════
+print("📦 Завантажую каталог...")
+if not os.path.exists(CATALOG_PATH):
+    raise FileNotFoundError(
+        f"Файл {CATALOG_PATH} не знайдено!\n"
+        "Спочатку запусти: python build_catalog.py"
+    )
 
-def load_catalog(filename, label):
-    if not os.path.exists(filename):
-        print(f"⚠️  Файл не знайдено: {filename}")
-        return None
-    try:
-        df = pd.read_excel(filename, header=0)
-        # Перші 4 колонки завжди: Наименование, Артикул WMS, ОР, Код
-        cols = list(df.columns)
-        rename = {}
-        if len(cols) >= 1: rename[cols[0]] = 'Наименование'
-        if len(cols) >= 2: rename[cols[1]] = 'Артикул WMS'
-        if len(cols) >= 3: rename[cols[2]] = 'ОР'
-        if len(cols) >= 4: rename[cols[3]] = 'Код'
-        df = df.rename(columns=rename)
+with open(CATALOG_PATH, encoding="utf-8") as f:
+    CATALOG = json.load(f)
 
-        df = df[['Наименование', 'Артикул WMS', 'Код']].copy()
-        df = df.dropna(subset=['Наименование'])
-        df = df[df['Наименование'].astype(str).str.strip() != '']
-        df = df.reset_index(drop=True)
-        return df
-    except Exception as e:
-        print(f"❌ Помилка завантаження {filename}: {e}")
-        return None
+print(f"✅ Каталог завантажено: {len(CATALOG)} позицій")
 
-print("📦 Завантажую каталоги...")
-for filename, label in CATALOG_FILES:
-    key = filename.replace('.xlsx', '')
-    df = load_catalog(filename, label)
-    if df is not None:
-        catalogs[key] = {"label": label, "df": df}
-        print(f"  ✅ {filename}: {len(df)} позицій")
-    else:
-        print(f"  ⚠️  {filename}: пропущено")
+# Попередня індексація для швидкого пошуку
+# Токени: всі слова і числа з назви товару
+def tokenize(text: str) -> set:
+    return set(re.findall(r'[а-яёіїєґa-z0-9]+', text.lower()))
 
-print(f"📦 Завантажено {len(catalogs)} каталогів")
+print("🔨 Індексую токени...")
+for item in CATALOG:
+    item['_tokens'] = tokenize(item['name'])
+print("✅ Індексація завершена")
 
-# Будуємо текстовий опис каталогів для Claude (для визначення категорії)
-CATALOG_DESCRIPTIONS = "\n".join(
-    f"- {key}: {info['label']}"
-    for key, info in catalogs.items()
-)
-
-# ─── ПРАВИЛА ─────────────────────────────────────────────────────────────────
-user_batches = {}
-stop_flags = {}   # chat_id -> True якщо юзер хоче зупинити
-pending_hints = {}  # chat_id -> текст-підказка для наступного фото
-RULES_FILE = "rules.txt"
-
-def get_rules():
+# ═══════════════════════════════════════════════════════════════════════════════
+# ПРАВИЛА КОРИСТУВАЧА
+# ═══════════════════════════════════════════════════════════════════════════════
+def get_rules() -> str:
     if not os.path.exists(RULES_FILE):
         return ""
-    with open(RULES_FILE, "r", encoding="utf-8") as f:
+    with open(RULES_FILE, encoding="utf-8") as f:
         return f.read().strip()
 
-def add_rule(new_rule):
+def add_rule(new_rule: str):
     with open(RULES_FILE, "a", encoding="utf-8") as f:
         f.write(f"- {new_rule}\n")
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# КРОК 1: OCR + НОРМАЛІЗАЦІЯ (Gemini 2.5 Flash)
+# ═══════════════════════════════════════════════════════════════════════════════
+ЗНАННЯ_САНТЕХНІКИ = """
+КАНАЛІЗАЦІЯ (HTR/ASG або HT Safe/OSTENDORF):
+  90° = 87,5° у каталозі! Завжди пиши 87,5°
+  умивальник=40мм, ванна/душ=50мм, унітаз/стояк=110мм
+  ASG = HTR (сіра), OSTENDORF = HT Safe (сіра), S-LINE = безшумна (біла)
 
-# ─── КРОК 1: OCR + НОРМАЛІЗАЦІЯ ──────────────────────────────────────────────
-def нормалізувати_фото(image_b64, caption=""):
+PPR (ASG, RAFTEC, Wavin Ekoplastik):
+  PN20 / Faser HOT = гаряча вода і опалення
+  PN25 / Nano Ag Composite = армована скловолокном
+  МРЗ = Муфта різьба зовнішня | МРВ = Муфта різьба внутрішня
+  РЗ = з зовнішньою різьбою | РВ = з внутрішньою (настінне)
+
+МЕТАЛОПЛАСТИК (RAFTEC): 16x2, 20x2, 26x3 мм — прес або компресійні
+
+СЛЕНГ:
+  кол/кут = Коліно | трій/рожон = Трійник | муф = Муфта
+  пер/перехід = Перехідник-редукція | амер = Американка
+  кр/шар = Кран кульовий | косий/у = Фільтр груб. очистки
+  хлопушка = Зворотний клапан пелюстковий
+  під термо = Кран кутовий під термоголовку
+  єврокон = Євроконус для теплої підлоги
+  циркуль = Насос циркуляційний | бойлер = Водонагрівач
+  пакля/льон = Льон сантехнічний UNIPAK
+  мультипак/паста = Паста для різьб UNIPAK
+  демферна = Демпферна стрічка теплої підлоги
+  +ізол = додати утеплювач PLM (синій і червоний)
+  ізол ф22 = PLM ф22х6мм | ізол ф28 = PLM ф28х6мм
+  гачки/хомут для труб = Дюбель гак подвійний Penoroll
+  мастило/вазелін = Технічний вазелін вн. канал. Valrom
+"""
+
+def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
+    """OCR + нормалізація фото через Gemini 2.5 Flash"""
     rules = get_rules()
-    rules_block = f"\nДодаткові правила від користувача:\n{rules}" if rules else ""
+    rules_block = f"\nДодаткові правила від менеджера:\n{rules}" if rules else ""
 
-    prompt = f"""Ти — експерт із сантехніки України. На фото рукописний список замовлення від майстра-сантехніка.
+    prompt = f"""Ти — експерт із сантехніки України. На фото рукописний список замовлення від майстра.
 
-ПІДКАЗКА ВІД МЕНЕДЖЕРА: {caption}
-(якщо вказано виробника — використовуй його для ВСІХ позицій списку)
-(якщо вказано тип системи — застосовуй до всіх підходящих позицій){rules_block}
+ПІДКАЗКА: {caption}
+(виробник з підказки — застосовуй до ВСІХ позицій){rules_block}
+
+БАЗА ЗНАНЬ:
+{ЗНАННЯ_САНТЕХНІКИ}
 
 ЗАВДАННЯ:
-1. Прочитай кожен рядок — ТІЛЬКИ сантехніка/опалення/водопостачання, ігноруй електрику
-2. Нормалізуй до короткої торгової назви БЕЗ зайвих слів
-3. Витягни кількість
-4. Визнач категорію
+1. Прочитай кожен рядок (тільки сантехніка/опалення/водопостачання)
+2. Нормалізуй до короткої назви як в прайсі
+3. Витягни кількість (число + одиниця: шт, м, м.п., пак)
+4. Якщо рядок нечитабельний або не сантехніка — пропусти
 
-СЛОВНИК СЛЕНГУ МАЙСТРІВ:
+ФОРМАТ НАЗВИ:
+- Труба PPR ф25 PN25 ASG → "Труба PPR Nano Ag Composite, ф 25x4,2 мм, PP-RCT, PN25, ASG"
+- Труба PPR ф20 PN20 → "Труба PPR Faser HOT ф 20х2,8 мм, PN20, PP-RCT, ASG"
+- Коліно 25 90° → "Коліно PPR 90° ф 25, PP-RCT, ASG" (або Ekoplastik/RAFTEC якщо вказано)
+- Трійник 25х20х25 → "Трійник редукційний PPR ф 25х20, PP-RCT, ASG"
+- Труба канал ф50 1м сіра → "Труба внут. канал. ф 50 х 1,8 мм, L = 1 м., сіра, HTR, ASG"
+- Коліно канал 110 90° → "Коліно внут. канал. ф110 х 87,5°, сіре, HTR, ASG"
+- Трійник канал 110х50 87,5° → "Трійник вн. канал. ф110 х 50 х 87,5°, сірий, HTR, ASG"
+- Заглушка PPR ф25 → "Заглушка PPR ф 25, RAFTEC" (або відповідний бренд)
+- Утеплювач ф28 синій PLM → "Утеплювач ламін. для труб ф 28х6 мм, синій, PLM"
+- Вазелін → "Технічний вазелин вн. канал. 150 гр., Valrom"
 
-Скорочення фітингів ППР:
-- "кол", "кут", кутик намальований = Коліно PPR
-- "рож", "рожон", "рожонці" = Трійник редукційний PPR
-- "трійн" = Трійник однозначний рівний PPR
-- "муф" = Муфта з'єднувальна PPR
-- "пер", "перехід пп" = Перехідник-редукція PPR
-- "амер", "американка" = Американка PPR (роз'ємне з'єднання)
-- "МРЗ", "мрз" = Муфта PPR МРЗ (з різьбою зовнішньою)
-- "МРВ", "мрв" = Муфта PPR МРВ (з різьбою внутрішньою)
-- "РЗ", "рз" в кутнику = Коліно PPR РЗ (з різьбою зовнішньою)
-- "РВ", "рв" в кутнику = Коліно PPR РВ (з різьбою внутрішньою, настінне)
-- "вухастий", "вушастий", "настінне" = Коліно PPR настінне РВ
-- "футорка" = Футорка шестигранна з ущільнювачем
-- "заглушка корок" = Заглушка різьбова PPR
-
-Скорочення фітингів каналізація:
-- "діжка", "бочонок" = Ніпель або Муфта
-- "бутилка", "пляшка" = Редукція коротка каналізаційна
-- "хомут метал", "хомут сталь" = Хомут металевий для кріплення труб
-- "компенсатор", "муфта компенсатор" = Муфта довга (компенсаційний патрубок)
-
-Скорочення кранів і арматури:
-- "кр", "шар", "шаровий" = Кран кульовий
-- "кран американка" = Кран кульовий з американкою
-- "кран п/м" = Кран кульовий прямий муфтовий
-- "мінік", "кран на злив" = Кран дренажний (спускний)
-- "зат", "засувка" = Засувка BB
-- "батерфляй" = Засувка тип метелик
-- "вентиль" = Вентиль
-- "хлопушка", "лепісковий", "пелюстковий" = Зворотний клапан пелюстковий
-- "зв.кл", "зворотній" = Зворотний клапан
-- "косий", "косий фільтр", "у-подібний", "у" = Фільтр грубої очистки
-- "байпас" = Байпас (обвідна лінія)
-- "кран під термо", "під термоголов" = Кран кутовий під термоголовку
-- "термоголов", "термоголовка з датчиком" = Термоголовка з виносним датчиком
-
-Колектори і тепла підлога:
-- "колектор з витратомірами", "колектор витрат" = Колектор з витратомірами нержавійка RAFTEC STEEL
-- "єврокон", "єврокон ф16", "єврокон ф20" = Євроконус для труби теплої підлоги
-- "кінцевий елемент" = Кінцевий елемент колектора
-- "термоголов", "термоголовка" = Термоголовка М30х1,5
-
-Труби:
-- "тр", "д20", "ф20" = Труба (діаметр з числа)
-- "pex", "пекс" = Труба зшитий поліетилен PEX
-- "stabi", "стабі" = Труба ППР армована алюмінієм Stabi
-- "композитна", "nano" = Труба PPR Nano Ag Composite армована PN25
-- "press steel", "прес сталь", "inox" = Прес-фітинги нержавійка тип V
-
-Різьба і з'єднання:
-- "вн", "вн.р", "рв" після діаметру = внутрішня різьба
-- "зовн", "зовн.р", "рз" після діаметру = зовнішня різьба
-- "вн.р ВЗ" = з'єднання зовні/внутрішня різьба
-- число після "х" або "x" = розмір (25х1/2 = 25мм на 1/2")
-- "ЗЗ", "зз" = з'єднання зовнішня різьба + зовнішня різьба (ніпель)
-- "ВЗ" = внутрішня + зовнішня різьба
-
-Системи:
-- PN20 або "вода", "faser hot" в заголовку = Труба PPR Faser HOT PN20 PP-RCT ASG
-- PN25 або "тепло", "опал", "армована", "nano" = Труба PPR Nano Ag Composite PN25 ASG
-- "+ізол" = додати утеплювач PLM для кожної труби (синій і червоний)
-- "ізоляція ф22" = Утеплювач ламін. для труб ф 22х6 мм, PLM
-- "ізоляція ф28" = Утеплювач ламін. для труб ф 28х6 мм, PLM
-
-Обладнання і матеріали:
-- "бойлер", "тен" = Водонагрівач електричний
-- "циркуль", "циркуляційний" = Насос циркуляційний
-- "сололіфт" = Каналізаційна насосна станція
-- "бінокль" = Вузол нижнього підключення радіатора
-- "елька" = Трубка декоративна для підключення радіатора
-- "мастило", "змазка для канал" = Силіконове мастило для каналізаційних труб Glidex
-- "пакля", "льон" = Льон сантехнічний Unigarn UNIPAK
-- "мультипак", "паста" = Паста для ущільнення різьбових з'єднань Multipak UNIPAK
-- "демферна стрічка", "демпферна" = Демпферна стрічка для теплої підлоги
-- "плівка з розміткою", "плівка" = Плівка з розміткою для теплої підлоги
-- "клей піна", "піна" = Клей-піна монтажна Budmonster
-- "інсталяція", "інсталяція унітаз" = Інсталяційна система Rapid SL Grohe
-- "мінеральна вата", "мікопласт екструдер" = Мінераловатний утеплювач (уточни розмір)
-
-Каналізація:
-- "розтруб" = розширена частина труби для з'єднання
-- "ревізія" = Трійник зі знімною кришкою для прочищення
-- "фанова" = Фанова труба (вентиляція каналізації)
-
-Виробники (якщо вказано — додай до КОЖНОЇ позиції):
-- "асг", "asg" = ASG
-- "рафтек", "raftec" = RAFTEC
-- "рафтек блек", "raftec black" = RAFTEC BLACK
-- "рафтек голд", "raftec gold" = RAFTEC GOLD
-- "плм", "plm" = PLM (утеплювач)
-- "екопластик", "wavin", "вавін" = Wavin Ekoplastik
-- "остендорф", "ostendorf" = OSTENDORF
-- "unipak", "юніпак" = UNIPAK
-- "grohe", "гроє" = Grohe
-
-КРИТИЧНО ВАЖЛИВО — нормалізуй ТОЧНО в стилі каталогу:
-
-ППР пластик (ASG, Wavin, RAFTEC):
-- "тр 20 PN20 ASG" → "Труба PPR Faser HOT ф 20х2,8 мм, PN20 , PP-RCT, ASG"
-- "тр 32 PN20 ASG" → "Труба PPR Faser HOT ф 32х4,4 мм, PN20 , PP-RCT, ASG"
-- "тр 25 PN25 ASG" → "Труба PPR Nano Ag Composite, ф 25x4,2 мм, PP-RCT, PN25, ASG"
-- "кол 90 25" → "Коліно PPR 90° ф 25, PP-RCT, ASG" (шукай виробника з контексту)
-- "трійник 25х20х25" → "Трійник редукційний PPR ф 25х20х25, PP-RCT, ASG"
-- "муфта 32х1" → "Муфта PPR з зовн.різьбою ф 32х1", PP-RCT, ASG"
-
-Каналізація (ASG, OSTENDORF):
-- "тр 50 2м ASG" → "Труба внут. канал. ф 50 x 1,8 мм, L = 2,0 м, сіра, HTR, ASG"
-- "тр 50 1м ASG" → "Труба внут. канал. ф 50 x 1,8 мм, L = 1,0 м, сіра, HTR, ASG"
-- "кол 50 90 ASG" → "Коліно каналізаційне ф50х90°, ASG"
-- "кол 50 45 ASG" → "Коліно каналізаційне ф50х45°, ASG"
-- "трійник 50х50х45 ASG" → "Трійник каналізаційний ф50х50х45°, ASG"
-- "редукція 50х32 ASG" → "Редукція каналізаційна ф50х32, ASG"
-
-ПРАВИЛО: якщо виробник вказаний в підказці — ОБОВ'ЯЗКОВО додай його в кожну назву!
-ПРАВИЛО: довжину труби завжди вказуй як "L = Xм" або окремим qty"
-
-ДОСТУПНІ КАТЕГОРІЇ:
-{CATALOG_DESCRIPTIONS}
-
-ВІДПОВІДАЙ ТІЛЬКИ JSON масивом, без пояснень:
+ВІДПОВІДАЙ ТІЛЬКИ JSON масивом:
 [
-  {{
-    "original": "що написано на фото",
-    "normalized": "коротка торгова назва",
-    "qty": "кількість або пусто",
-    "category": "ключ категорії або пусто"
-  }}
+  {{"original": "що написано на фото", "normalized": "нормалізована назва для пошуку", "qty": "кількість"}}
 ]"""
 
-    import io
-    from google.genai import types as genai_types
-    image_bytes = __import__('base64').b64decode(image_b64)
+    image_bytes = base64.b64decode(image_b64)
     resp = gemini_client.models.generate_content(
         model="gemini-2.5-flash",
         contents=[
@@ -272,401 +160,269 @@ def нормалізувати_фото(image_b64, caption=""):
     return json.loads(raw)
 
 
-def нормалізувати_текст(текст):
+def normalize_text(text: str) -> list[dict]:
+    """Нормалізація текстового запиту через Claude"""
     rules = get_rules()
     rules_block = f"\nДодаткові правила:\n{rules}" if rules else ""
 
-    prompt = f"""Ти — експерт із сантехніки України. Майстер надіслав список текстом:{rules_block}
+    prompt = f"""Ти — експерт із сантехніки України. Нормалізуй список товарів.{rules_block}
+
+БАЗА ЗНАНЬ:
+{ЗНАННЯ_САНТЕХНІКИ}
 
 ТЕКСТ:
-{текст}
+{text}
 
-СЛОВНИК СЛЕНГУ:
-- "кол", "кут", "вухастий" = Коліно (вухастий/настінне = Коліно PPR настінне РВ)
-- "рож", "рожон", "рожонці" = Трійник редукційний PPR
-- "муф" = Муфта з'єднувальна PPR
-- "МРЗ"/"мрз" = Муфта PPR МРЗ зовнішня різьба
-- "МРВ"/"мрв" = Муфта PPR МРВ внутрішня різьба
-- "пер", "перехід пп" = Перехідник-редукція PPR
-- "тр", "д20", "ф20" = Труба (діаметр з числа)
-- "кр", "шар", "кран американка" = Кран кульовий (з американкою)
-- "кран п/м" = Кран кульовий прямий муфтовий
-- "косий", "у" = Фільтр грубої очистки
-- "хлопушка", "лепісковий" = Зворотний клапан пелюстковий
-- "під термо" = Кран кутовий під термоголовку
-- "термоголов" = Термоголовка з виносним датчиком
-- "єврокон" = Євроконус для теплої підлоги
-- "кінцевий елемент" = Кінцевий елемент колектора
-- "амер", "американка" = Американка роз'ємне з'єднання
-- "байпас" = Байпас
-- "циркуль" = Насос циркуляційний
-- "бойлер", "тен" = Водонагрівач електричний
-- "сололіфт" = Каналізаційна насосна станція
-- "пакля", "льон" = Льон сантехнічний UNIPAK
-- "мультипак" = Паста для різьб UNIPAK
-- "демферна", "демпферна" = Демпферна стрічка
-- "плівка" = Плівка з розміткою для теплої підлоги
-- "інсталяція" = Інсталяційна система для унітазу
-- PN20/вода/faser = PPR PN20 Faser HOT ASG
-- PN25/тепло/nano = PPR PN25 Nano Ag Composite ASG
-- "+ізол" = додати утеплювач PLM синій і червоний
-
-ДОСТУПНІ КАТЕГОРІЇ:
-{CATALOG_DESCRIPTIONS}
-
-ЗАВДАННЯ: нормалізуй кожну позицію до короткої торгової назви як в прайсі, витягни кількість і визнач категорію.
+Нормалізуй кожну позицію до назви як в прайсі, витягни кількість.
 
 ВІДПОВІДАЙ ТІЛЬКИ JSON масивом:
-[
-  {{
-    "original": "оригінальний рядок",
-    "normalized": "коротка торгова назва",
-    "qty": "кількість або пусто",
-    "category": "ключ категорії або пусто"
-  }}
-]"""
+[{{"original": "...", "normalized": "...", "qty": "..."}}]"""
 
-    resp = client.messages.create(
+    resp = claude.messages.create(
         model="claude-sonnet-4-5",
         max_tokens=2048,
         messages=[{"role": "user", "content": prompt}]
     )
     raw = resp.content[0].text.strip().replace('```json','').replace('```','').strip()
+    if '[' in raw:
+        raw = raw[raw.index('['):raw.rindex(']')+1]
     return json.loads(raw)
 
 
-# ─── КРОК 2: ПОШУК У КАТАЛОЗІ (БАТЧ — 1 запит на категорію) ─────────────────
-def знайти_у_каталозі(позиції, chat_id=None, msg_id=None, bot_ref=None):
+# ═══════════════════════════════════════════════════════════════════════════════
+# КРОК 2: KEYWORD ПОШУК ПО КАТАЛОГУ (швидкий, безкоштовний)
+# ═══════════════════════════════════════════════════════════════════════════════
+def keyword_search(query: str, top_n: int = 8) -> list[dict]:
     """
-    Групуємо позиції по категоріях → 1 API запит на категорію.
-    Замість 78 запитів — 3-5 запитів. Економія ~95% коштів.
+    Швидкий пошук за токенами.
+    Рахує скільки токенів запиту є в назві товару.
+    Числа (діаметри, кути) мають подвійну вагу.
     """
-    # Групуємо по категорії
-    grouped = {}  # category_key -> [поз, ...]
-    unknown = []  # позиції без категорії
+    q_tokens = tokenize(query)
+    q_numbers = set(re.findall(r'\d+', query.lower()))
+    q_words   = q_tokens - q_numbers
 
-    for поз in позиції:
-        cat = поз.get("category", "")
-        if cat and cat in catalogs:
-            grouped.setdefault(cat, []).append(поз)
-        else:
-            unknown.append(поз)
+    scores = []
+    for item in CATALOG:
+        it = item['_tokens']
+        # Числа важливіші (діаметр, кут, довжина)
+        num_score  = len(q_numbers & it) * 2
+        word_score = len(q_words & it)
+        total = num_score + word_score
+        if total > 0:
+            # Штраф за надто довгу назву (менш точне співпадіння)
+            precision = total / max(len(q_tokens), 1)
+            scores.append((total + precision, item))
 
-    всі_результати_map = {}  # original -> результат
+    scores.sort(key=lambda x: -x[0])
+    return [item for _, item in scores[:top_n]]
 
-    # ── Обробка груп по категоріях ──
-    total_cats = len(grouped)
-    done_cats = [0]
-    for cat_key, група in grouped.items():
-        done_cats[0] += 1
-        if chat_id and msg_id and bot_ref:
-            try:
-                bot_ref.edit_message_text(
-                    f"🔍 Шукаю категорію {done_cats[0]}/{total_cats}: {catalogs[cat_key]['label']} ({len(група)} позицій)...",
-                    chat_id=chat_id, message_id=msg_id
-                )
-            except Exception:
-                pass
-        cat_info = catalogs[cat_key]
-        df_cat = cat_info["df"]
 
-        # Збираємо всіх кандидатів для всієї групи одним проходом
-        import re
-        всі_кандидати = set()
-        for поз in група:
-            normalized = поз.get("normalized", "")
-            слова = [s.lower() for s in normalized.split() if len(s) > 2 and not s.isdigit()]
-            числа = re.findall(r'\d+', normalized)
-            for _, row in df_cat.iterrows():
-                назва = str(row['Наименование']).lower()
-                score = sum(1 for с in слова if с in назва)
-                score += sum(2 for n in числа if n in назва)
-                if score > 0:
-                    всі_кандидати.add(row['Наименование'])
-
-        # Топ-60 унікальних кандидатів для всієї групи
-        кандидати_рядки = []
-        for _, row in df_cat.iterrows():
-            if row['Наименование'] in всі_кандидати:
-                кандидати_рядки.append(
-                    f"{row['Наименование']} | WMS: {row['Артикул WMS']} | Код: {row['Код']}"
-                )
-            if len(кандидати_рядки) >= 80:
-                break
-
-        if not кандидати_рядки:
-            for поз in група:
-                всі_результати_map[поз['original']] = {
-                    "original": поз['original'],
-                    "normalized": поз.get('normalized', ''),
-                    "знайдено": False,
-                    "назва": "", "артикул": "", "код": "",
-                    "кількість": поз.get('qty', ''),
-                    "категорія": cat_info['label']
-                }
-            continue
-
-        # Формуємо список запитів для батчу
-        запити_текст = "\n".join(
-            f"{i+1}. {поз.get('normalized','')}"
-            for i, поз in enumerate(група)
+# ═══════════════════════════════════════════════════════════════════════════════
+# КРОК 3: ФІНАЛЬНИЙ ВИБІР (Claude Sonnet — тільки коли потрібно)
+# ═══════════════════════════════════════════════════════════════════════════════
+def claude_pick_batch(позиції_з_кандидатами: list[dict]) -> list[dict]:
+    """
+    Один запит до Claude на весь батч позицій.
+    Передаємо нормалізовані назви + топ кандидатів → Claude вибирає найкращий.
+    """
+    запити = []
+    for i, пос in enumerate(позиції_з_кандидатами):
+        кандидати = "\n".join(
+            f"  {j+1}. {c['name']}"
+            for j, c in enumerate(пос['candidates'])
         )
-        кандидати_текст = "\n".join(кандидати_рядки)
+        запити.append(f"{i+1}. ЗАПИТ: {пос['normalized']}\n   КАНДИДАТИ:\n{кандидати}")
 
-        prompt = f"""Ти — експерт із сантехніки. Знайди найкращий збіг з каталогу для кожного запиту.
+    prompt = f"""Ти — експерт із сантехніки. Для кожного запиту обери ОДИН найкращий збіг з кандидатів.
 
-КАТЕГОРІЯ: {cat_info['label']}
+{chr(10).join(запити)}
 
-ЗАПИТИ:
-{запити_текст}
-
-КАТАЛОГ:
-{кандидати_текст}
-
-Для кожного запиту обери ОДИН найкращий збіг або постав знайдено: false.
+Правила вибору:
+- Діаметр ОБОВ'ЯЗКОВО повинен збігатися
+- Кут/довжина — якщо вказано, повинні збігатися  
+- Виробник — якщо вказано в запиті, пріоритет йому
+- Якщо жоден не підходить — знайдено: false
 
 ВІДПОВІДАЙ ТІЛЬКИ JSON масивом (порядок як у запитах):
 [
-  {{"знайдено": true, "назва": "точна назва з каталогу", "артикул": "WMS артикул", "код": "код"}},
+  {{"знайдено": true, "номер_кандидата": 1}},
   {{"знайдено": false}}
 ]"""
 
-        resp = client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=2048,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        raw = resp.content[0].text.strip().replace('```json','').replace('```','').strip()
-        # Витягуємо тільки JSON масив якщо є зайвий текст
-        if '[' in raw:
-            raw = raw[raw.index('['):raw.rindex(']')+1]
-        try:
-            результати_батч = json.loads(raw)
-        except Exception:
-            результати_батч = [{"знайдено": False}] * len(група)
+    resp = claude.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=1024,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    raw = resp.content[0].text.strip().replace('```json','').replace('```','').strip()
+    if '[' in raw:
+        raw = raw[raw.index('['):raw.rindex(']')+1]
+    try:
+        return json.loads(raw)
+    except Exception:
+        return [{"знайдено": False}] * len(позиції_з_кандидатами)
 
-        for i, поз in enumerate(група):
-            r = результати_батч[i] if i < len(результати_батч) else {"знайдено": False}
-            всі_результати_map[поз['original']] = {
-                "original": поз['original'],
-                "normalized": поз.get('normalized', ''),
-                "знайдено": r.get("знайдено", False),
-                "назва": r.get("назва", ""),
-                "артикул": r.get("артикул", ""),
-                "код": r.get("код", ""),
-                "кількість": поз.get('qty', ''),
-                "категорія": cat_info['label']
-            }
 
-    # ── Невідомі категорії — шукаємо по всіх каталогах батчем ──
-    for поз in unknown:
-        normalized = поз.get("normalized", "")
-        import re
-        слова = [s.lower() for s in normalized.split() if len(s) > 2 and not s.isdigit()]
-        числа = re.findall(r'\d+', normalized)
-        кандидати = []
-        for cat_key, cat_info in catalogs.items():
-            for _, row in cat_info["df"].iterrows():
-                назва = str(row['Наименование']).lower()
-                score = sum(1 for с in слова if с in назва)
-                score += sum(2 for n in числа if n in назва)
-                if score > 0:
-                    кандидати.append((score, row, cat_info['label']))
-        кандидати.sort(key=lambda x: -x[0])
-        топ = кандидати[:30]
+def find_items(позиції: list[dict]) -> list[dict]:
+    """
+    Головна функція пошуку.
+    Стратегія:
+    1. Keyword пошук → топ-8 кандидатів
+    2. Якщо є тільки 1 кандидат з високим score → автоматично
+    3. Інакше → Claude вибирає з кандидатів (батчем)
+    """
+    потребують_claude = []
+    результати = [None] * len(позиції)
 
-        if not топ:
-            всі_результати_map[поз['original']] = {
-                "original": поз['original'], "normalized": normalized,
-                "знайдено": False, "назва": "", "артикул": "", "код": "",
-                "кількість": поз.get('qty', ''), "категорія": ""
-            }
+    for i, пос in enumerate(позиції):
+        normalized = пос.get('normalized', '')
+        кандидати = keyword_search(normalized, top_n=8)
+
+        if not кандидати:
+            результати[i] = {**пос, 'знайдено': False, 'назва': '', 'бренд': ''}
             continue
 
-        кандидати_текст = "\n".join(
-            f"{r['Наименование']} | WMS: {r['Артикул WMS']} | Код: {r['Код']}"
-            for _, r, _ in топ
-        )
-        prompt = f"""З цього списку товарів обери ОДИН найкращий збіг.
+        потребують_claude.append({'idx': i, 'normalized': normalized,
+                                   'candidates': кандидати, 'qty': пос.get('qty',''),
+                                   'original': пос.get('original','')})
 
-ЗАПИТ: {normalized}
+    # Батчевий запит до Claude
+    if потребують_claude:
+        відповіді = claude_pick_batch(потребують_claude)
+        for j, пос in enumerate(потребують_claude):
+            r = відповіді[j] if j < len(відповіді) else {'знайдено': False}
+            idx = пос['idx']
+            if r.get('знайдено') and r.get('номер_кандидата'):
+                n = int(r['номер_кандидата']) - 1
+                n = max(0, min(n, len(пос['candidates'])-1))
+                found = пос['candidates'][n]
+                результати[idx] = {
+                    'original':  пос['original'],
+                    'normalized': пос['normalized'],
+                    'знайдено':  True,
+                    'назва':     found['name'],
+                    'бренд':     found.get('brand', ''),
+                    'ціна':      found.get('price', ''),
+                    'qty':       пос['qty'],
+                }
+            else:
+                результати[idx] = {
+                    'original':  пос['original'],
+                    'normalized': пос['normalized'],
+                    'знайдено':  False,
+                    'назва':     '',
+                    'qty':       пос['qty'],
+                }
 
-СПИСОК:
-{кандидати_текст}
-
-JSON відповідь:
-{{"знайдено": true, "назва": "...", "артикул": "...", "код": "..."}}
-або {{"знайдено": false}}"""
-
-        resp = client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=256,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        raw = resp.content[0].text.strip().replace('```json','').replace('```','').strip()
-        if '{' in raw:
-            raw = raw[raw.index('{'):raw.rindex('}')+1]
-        try:
-            r = json.loads(raw)
-        except Exception:
-            r = {"знайдено": False}
-        всі_результати_map[поз['original']] = {
-            "original": поз['original'], "normalized": normalized,
-            "знайдено": r.get("знайдено", False),
-            "назва": r.get("назва", ""), "артикул": r.get("артикул", ""),
-            "код": r.get("код", ""), "кількість": поз.get('qty', ''),
-            "категорія": топ[0][2] if r.get("знайдено") else ""
-        }
-
-    # Повертаємо в оригінальному порядку
-    return [всі_результати_map.get(п['original'], {
-        "original": п['original'], "normalized": п.get('normalized',''),
-        "знайдено": False, "назва": "", "артикул": "", "код": "",
-        "кількість": п.get('qty',''), "категорія": ""
-    }) for п in позиції]
+    return результати
 
 
-# ─── EXCEL ───────────────────────────────────────────────────────────────────
-def створити_excel(результати):
+# ═══════════════════════════════════════════════════════════════════════════════
+# EXCEL
+# ═══════════════════════════════════════════════════════════════════════════════
+def create_excel(результати: list[dict]) -> tuple[BytesIO, list[str]]:
     rows = []
     not_found = []
 
     for r in результати:
-        if r.get("знайдено"):
+        if r and r.get('знайдено'):
             rows.append({
                 'Наименование': r.get('назва', ''),
-                'Артикул WMS': r.get('артикул', ''),
-                'Код': r.get('код', ''),
-                'Кількість': r.get('кількість', ''),
-                'Категорія': r.get('категорія', ''),
-                'Оригінал (від майстра)': r.get('original', ''),
+                'Кількість':    r.get('qty', ''),
+                'Ціна':         r.get('ціна', ''),
+                'Оригінал':     r.get('original', ''),
             })
-        else:
+        elif r:
             not_found.append(r.get('normalized') or r.get('original', ''))
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_out = pd.DataFrame(rows) if rows else pd.DataFrame(
-            columns=['Наименование','Артикул WMS','Код','Кількість','Категорія','Оригінал (від майстра)']
-        )
-        df_out.to_excel(writer, index=False, sheet_name='Замовлення')
-
+        df = pd.DataFrame(rows) if rows else pd.DataFrame(
+            columns=['Наименование', 'Кількість', 'Ціна', 'Оригінал'])
+        df.to_excel(writer, index=False, sheet_name='Замовлення')
         if not_found:
-            df_nf = pd.DataFrame({'Не знайдено в базі': not_found})
-            df_nf.to_excel(writer, index=False, sheet_name='Не знайдено')
+            pd.DataFrame({'Не знайдено': not_found}).to_excel(
+                writer, index=False, sheet_name='Не знайдено')
 
     output.seek(0)
     return output, not_found
 
 
-# ─── ОСНОВНА ОБРОБКА БАТЧУ ───────────────────────────────────────────────────
-def process_batch(chat_id):
+# ═══════════════════════════════════════════════════════════════════════════════
+# БАТЧ-МЕНЕДЖЕР
+# ═══════════════════════════════════════════════════════════════════════════════
+user_batches  = {}   # chat_id -> {items, timer}
+stop_flags    = {}   # chat_id -> bool
+pending_hints = {}   # chat_id -> str (підказка до наступного фото)
+
+def process_batch(chat_id: int):
     batch = user_batches.pop(chat_id, None)
     if not batch:
         return
 
+    stop_flags.pop(chat_id, None)
     items = batch['items']
-    stop_flags.pop(chat_id, None)  # скидаємо флаг на початку
-    status_msg = bot.send_message(chat_id, f"🔄 Починаю обробку {len(items)} файл(ів)...")
-    msg_id = status_msg.message_id
+    status = bot.send_message(chat_id, f"🔄 Обробляю {len(items)} файл(ів)...")
+    msg_id = status.message_id
 
     всі_позиції = []
     errors = []
 
-    for index, item in enumerate(items, 1):
+    for idx, item in enumerate(items, 1):
         if stop_flags.get(chat_id):
             bot.edit_message_text("🛑 Зупинено.", chat_id=chat_id, message_id=msg_id)
             return
         try:
             if item['type'] == 'photo':
                 bot.edit_message_text(
-                    f"📖 Крок 1/{len(items)}: Читаю і нормалізую фото {index}...",
-                    chat_id=chat_id, message_id=msg_id
-                )
-                позиції = нормалізувати_фото(item['data'], item.get('caption', ''))
+                    f"📖 Читаю фото {idx}/{len(items)}...",
+                    chat_id=chat_id, message_id=msg_id)
+                позиції = normalize_photo(item['data'], item.get('caption', ''))
                 всі_позиції.extend(позиції)
-
             elif item['type'] == 'text':
                 bot.edit_message_text(
-                    f"📝 Крок 1: Нормалізую текстовий запит...",
-                    chat_id=chat_id, message_id=msg_id
-                )
-                позиції = нормалізувати_текст(item['text'])
+                    f"📝 Нормалізую текст...",
+                    chat_id=chat_id, message_id=msg_id)
+                позиції = normalize_text(item['text'])
                 всі_позиції.extend(позиції)
-
         except Exception as e:
-            errors.append(f"❌ Помилка нормалізації елемента {index}: {e}")
+            errors.append(f"❌ Помилка {idx}: {e}")
 
     if not всі_позиції:
-        err_text = "😕 Не вдалося розпізнати жодної позиції."
-        if errors:
-            err_text += "\n\n" + "\n".join(errors)
-        bot.edit_message_text(err_text, chat_id=chat_id, message_id=msg_id)
+        bot.edit_message_text(
+            "😕 Не вдалося розпізнати позиції.\n" + "\n".join(errors),
+            chat_id=chat_id, message_id=msg_id)
         return
 
+    # Прев'ю розпізнаного
     preview = "\n".join(
-        f"• {п['original']} → {п['normalized']}"
-        + (f" ({п['qty']})" if п.get('qty') else "")
-        + (f" [{п.get('category','')}]" if п.get('category') else "")
-        for п in всі_позиції[:10]
+        f"• {п.get('original','')} → {п.get('normalized','')} ({п.get('qty','')})"
+        for п in всі_позиції[:8]
     )
-    if len(всі_позиції) > 10:
-        preview += f"\n... та ще {len(всі_позиції)-10} позицій"
-
-    bot.send_message(chat_id, f"✅ Розпізнано {len(всі_позиції)} позицій:\n\n{preview}\n\n🔍 Шукаю в базі...")
+    if len(всі_позиції) > 8:
+        preview += f"\n... та ще {len(всі_позиції)-8}"
+    bot.send_message(chat_id, f"✅ Розпізнано {len(всі_позиції)} позицій:\n\n{preview}")
 
     bot.edit_message_text(
-        f"🔍 Крок 2: Шукаю {len(всі_позиції)} позицій у базі товарів...",
-        chat_id=chat_id, message_id=msg_id
-    )
+        f"🔍 Шукаю {len(всі_позиції)} позицій у базі...",
+        chat_id=chat_id, message_id=msg_id)
 
-    if stop_flags.get(chat_id):
-        bot.edit_message_text("🛑 Зупинено.", chat_id=chat_id, message_id=msg_id)
-        return
-
-    # Пошук з таймером прогресу
-    прогрес = [0]
-    def notify_progress():
-        прогрес[0] += 1
-        хв = прогрес[0] * 30
-        try:
-            bot.edit_message_text(
-                f"⏳ Шукаю {len(всі_позиції)} позицій... ({хв} сек)",
-                chat_id=chat_id, message_id=msg_id
-            )
-        except Exception:
-            pass
-        if прогрес[0] < 6:  # максимум 3 хв
-            progress_timer = threading.Timer(30.0, notify_progress)
-            progress_timer.daemon = True
-            progress_timer.start()
-    
-    progress_timer = threading.Timer(30.0, notify_progress)
-    progress_timer.daemon = True
-    progress_timer.start()
-
-    результати = []
     try:
-        результати = знайти_у_каталозі(всі_позиції, chat_id, msg_id, bot)
+        результати = find_items(всі_позиції)
     except Exception as e:
-        try:
-            bot.edit_message_text(f"❌ Помилка пошуку: {e}", chat_id=chat_id, message_id=msg_id)
-        except Exception:
-            bot.send_message(chat_id, f"❌ Помилка пошуку: {e}")
+        bot.edit_message_text(f"❌ Помилка пошуку: {e}", chat_id=chat_id, message_id=msg_id)
         return
-    finally:
-        прогрес[0] = 99  # зупиняємо таймер
 
-    bot.edit_message_text("📊 Формую Excel файл...", chat_id=chat_id, message_id=msg_id)
+    bot.edit_message_text("📊 Формую Excel...", chat_id=chat_id, message_id=msg_id)
+    excel, not_found = create_excel(результати)
 
-    excel, not_found = створити_excel(результати)
-    знайдено = [r for r in результати if r.get("знайдено")]
-
+    знайдено = [r for r in результати if r and r.get('знайдено')]
     bot.send_document(chat_id, excel, visible_file_name="замовлення.xlsx")
 
-    звіт = f"✅ Знайдено: {len(знайдено)} з {len(результати)} позицій"
+    звіт = f"✅ Знайдено: {len(знайдено)}/{len(результати)} позицій"
     if not_found:
-        звіт += f"\n⚠️ Не знайдено ({len(not_found)} шт.) — дивись лист 'Не знайдено' в Excel:\n"
+        звіт += f"\n⚠️ Не знайдено ({len(not_found)} шт.):\n"
         звіт += "\n".join(f"• {n}" for n in not_found[:5])
         if len(not_found) > 5:
             звіт += f"\n... та ще {len(not_found)-5}"
@@ -676,11 +432,10 @@ def process_batch(chat_id):
     bot.edit_message_text(звіт, chat_id=chat_id, message_id=msg_id)
 
 
-# ─── БАТЧ ────────────────────────────────────────────────────────────────────
-def add_to_batch(chat_id, item):
+def add_to_batch(chat_id: int, item: dict):
     if chat_id not in user_batches:
         user_batches[chat_id] = {'items': []}
-        bot.send_message(chat_id, "📥 Отримав! Чекаю 4 сек, чи будуть ще файли...")
+        bot.send_message(chat_id, "📥 Отримав! Чекаю 4 сек на наступні файли...")
 
     if 'timer' in user_batches[chat_id]:
         user_batches[chat_id]['timer'].cancel()
@@ -691,26 +446,29 @@ def add_to_batch(chat_id, item):
     timer.start()
 
 
-# ─── ОБРОБНИКИ ───────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# TELEGRAM ХЕНДЛЕРИ
+# ═══════════════════════════════════════════════════════════════════════════════
 @bot.message_handler(commands=['start', 'help'])
 def handle_start(message):
-    bot.reply_to(message, """👋 Привіт! Я бот для підбору сантехніки.
+    bot.reply_to(message, """👋 Привіт! Бот для підбору сантехніки.
 
-📸 Кинь фото рукописного списку — я розпізнаю і знайду товари в базі
-📝 Напиши *пошук <текст>* — для текстового запиту
-📋 Напиши *правило <текст>* — щоб навчити мене сленгу
+📸 Кинь фото рукописного списку — знайду в базі
+📝 *пошук <текст>* — текстовий запит  
+📋 *правило <текст>* — навчи мене новому сленгу
+🛑 /stop — зупинити обробку
 
-Приклад: `правило кол = коліно каналізаційне`""", parse_mode="Markdown")
+Приклад: `правило рожон = трійник редукційний`""", parse_mode="Markdown")
 
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('правило'))
 def handle_rule(message):
-    new_rule = message.text[7:].strip()
-    if new_rule:
-        add_rule(new_rule)
-        bot.reply_to(message, f"✅ Записав правило:\n_{new_rule}_\n\nВраховуватиму при наступних фото.", parse_mode="Markdown")
+    rule = message.text[7:].strip()
+    if rule:
+        add_rule(rule)
+        bot.reply_to(message, f"✅ Записав:\n_{rule}_", parse_mode="Markdown")
     else:
-        bot.reply_to(message, "Напиши правило після слова 'Правило'.\nНаприклад:\n`Правило кол = коліно каналізаційне`", parse_mode="Markdown")
+        bot.reply_to(message, "Напиши правило після слова 'правило'.")
 
 
 @bot.message_handler(content_types=['photo'])
@@ -720,49 +478,43 @@ def handle_photo(message):
             file_info = bot.get_file(message.photo[-1].file_id)
             downloaded = bot.download_file(file_info.file_path)
             image_b64 = base64.b64encode(downloaded).decode('utf-8')
-            # Якщо є caption — використовуємо, якщо forwarded — caption може бути порожнім
             caption = message.caption or ""
-            # Якщо є збережена підказка — додаємо до caption
             hint = pending_hints.pop(message.chat.id, "")
             full_caption = " | ".join(filter(None, [caption, hint]))
             add_to_batch(message.chat.id, {
-                'type': 'photo',
-                'data': image_b64,
-                'caption': full_caption
+                'type': 'photo', 'data': image_b64, 'caption': full_caption
             })
             return
         except Exception as e:
             if attempt == 2:
-                bot.reply_to(message, f"❌ Не вдалося завантажити фото після 3 спроб: {e}")
+                bot.reply_to(message, f"❌ Не вдалося завантажити фото: {e}")
             else:
-                import time; time.sleep(2)
-
-
-@bot.message_handler(func=lambda m: m.text and not m.text.startswith('/') 
-                     and not m.text.lower().startswith('пошук')
-                     and not m.text.lower().startswith('правило'))
-def handle_forwarded_text(message):
-    """Forwarded текст зберігаємо як підказку до наступного фото (10 сек)"""
-    if message.forward_from or message.forward_from_chat or message.forward_sender_name:
-        текст = message.text.strip()
-        if текст:
-            pending_hints[message.chat.id] = текст
-            bot.reply_to(message, f"💬 Запам'ятав підказку: _{текст}_\n\nТепер кидай фото — врахую!", parse_mode="Markdown")
-            # Скидаємо підказку через 60 сек якщо фото не надійшло
-            def clear_hint(chat_id):
-                pending_hints.pop(chat_id, None)
-            t = threading.Timer(60.0, clear_hint, args=[message.chat.id])
-            t.daemon = True
-            t.start()
+                time.sleep(2)
 
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('пошук'))
-def handle_text(message):
+def handle_text_search(message):
     запит = message.text[5:].strip()
     if запит:
         add_to_batch(message.chat.id, {'type': 'text', 'text': запит})
     else:
-        bot.reply_to(message, "Напиши запит після слова 'пошук'.\nНаприклад: `пошук труба 50`", parse_mode="Markdown")
+        bot.reply_to(message, "Напиши запит після слова 'пошук'.")
+
+
+@bot.message_handler(func=lambda m: m.text and not m.text.startswith('/')
+                     and not m.text.lower().startswith('пошук')
+                     and not m.text.lower().startswith('правило'))
+def handle_text_hint(message):
+    """Звичайний текст зберігаємо як підказку до наступного фото"""
+    text = message.text.strip()
+    if text:
+        pending_hints[message.chat.id] = text
+        bot.reply_to(message, f"💬 Підказка збережена: _{text}_\nТепер кидай фото!",
+                     parse_mode="Markdown")
+        def clear(cid): pending_hints.pop(cid, None)
+        t = threading.Timer(120.0, clear, args=[message.chat.id])
+        t.daemon = True
+        t.start()
 
 
 @bot.message_handler(commands=['stop'])
@@ -773,6 +525,9 @@ def handle_stop(message):
         if 'timer' in user_batches[chat_id]:
             user_batches[chat_id]['timer'].cancel()
         user_batches.pop(chat_id, None)
-    bot.reply_to(message, "🛑 Зупинено. Надсилай нове фото коли будеш готовий.")
+    bot.reply_to(message, "🛑 Зупинено.")
 
-bot.polling(none_stop=True)
+
+if __name__ == "__main__":
+    print("🤖 Бот запущено!")
+    bot.polling(none_stop=True)
