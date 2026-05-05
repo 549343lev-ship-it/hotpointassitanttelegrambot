@@ -32,14 +32,14 @@ CATALOG_FILES = [
     ("insulation",               "Утеплювач (мерилон)"),
     ("metal_plastic",            "Металопластик"),
     ("mixers_faucets",           "Змішувачі та крани"),
-    ("plastic_ppr",              "Пластик ППР (пайка, труби, фітинги)"),
+    ("plastic_ppr",              "Пластик ППР (пайка, труби, фітинги, опори/кліпси)"),
     ("pumps",                    "Насоси"),
     ("push_systems",             "Системи PUSH"),
     ("radiators_radiatorsvalve", "Радіатори та арматура до них"),
     ("safety_valves",            "Арматура безпеки"),
     ("sanitary_ware",            "Санфаянс (інсталяції)"),
     ("sewage",                   "Каналізація"),
-    ("shutoff_valves",           "Запірна арматура"),
+    ("shutoff_valves",           "Запірна арматура (включаючи металеві/латунні АМЕРИКАНКИ)"),
     ("siphons_fittings",         "Сифони та арматура"),
     ("towel_warmers",            "Полотенцесушителі"),
     ("underfloor_heating",       "Тепла підлога"),
@@ -53,12 +53,15 @@ CATALOG = []
 IS_READY = False
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# РОЗУМНИЙ ТОКЕНІЗАТОР (Витягує чисті розміри 25, 3/4)
+# РОЗУМНИЙ ТОКЕНІЗАТОР
 # ═══════════════════════════════════════════════════════════════════════════════
 def smart_tokenize(text: str) -> tuple[set, set]:
     text = str(text).lower()
     text = text.replace('х', ' ').replace('x', ' ').replace('*', ' ').replace(',', '.')
     text = re.sub(r'[^\w\s/.]', ' ', text)
+    
+    # Видаляємо DN, бо для хомутів він заважає
+    text = re.sub(r'\bdn\s*\d+\b', ' ', text)
     
     numbers = set(re.findall(r'\b\d+(?:\.\d+)?(?:/\d+)?\b', text))
     words = set(re.findall(r'\b[а-яёіїєґa-z]+\b', text))
@@ -114,7 +117,7 @@ def build_catalog_from_xlsx() -> list[dict]:
                             'artikul':  str(artikul).strip() if str(artikul).strip() != 'nan' else '',
                             'kod':      str(kod).strip() if str(kod).strip() != 'nan' else '',
                             'category': label,
-                            'file_key': key,  # ВАЖЛИВО: Маркер для ізоляції пошуку
+                            'file_key': key,
                             'price':    price,
                             '_words':   list(words),
                             '_numbers': list(numbers)
@@ -158,13 +161,14 @@ def add_rule(new_rule: str):
     with open(RULES_FILE, "a", encoding="utf-8") as f: f.write(f"- {new_rule}\n")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# КРОК 1: ІЗОЛЬОВАНА НОРМАЛІЗАЦІЯ
+# КРОК 1: ІЗОЛЬОВАНА НОРМАЛІЗАЦІЯ (З ОНОВЛЕНОЮ БАЗОЮ ЗНАНЬ)
 # ═══════════════════════════════════════════════════════════════════════════════
 ЗНАННЯ_САНТЕХНІКИ = """
-1. КАНАЛІЗАЦІЯ: 90° = 87,5°. ASG = HTR (сіра), OSTENDORF = HT Safe.
-2. ПАЙКА (PPR): Якщо 2 розміри (напр. 25х3/4) - це перехід з труби на різьбу (МРВ/МРЗ). Якщо 1 розмір (напр. 25) - це чистий пластик.
-3. МЕТАЛ/ЛАТУНЬ: Якщо тільки дюйми (напр. 3/4) - це метал (звичайна американка, футорка, кран).
-4. СЛЕНГ: кол/кут=Коліно, трій/рожон=Трійник, муф=Муфта, пер=Перехідник, шар=Кран кульовий, єврокон=Євроконус, ізол=Утеплювач PLM.
+1. АМЕРИКАНКИ: Звичайна "американка 3/4" (метал/латунь) — це категорія "shutoff_valves" (Запірна арматура). Бувають прямі і кутові.
+2. ПАЙКА (PPR): Якщо написано "мрн 25х3/4" або "американка 25х3/4" — це перехід з труби на різьбу, шукати в "plastic_ppr".
+3. ОПОРИ/КЛІПСИ: Якщо написано "опора" — це означає "кліпса", шукати в "plastic_ppr".
+4. ХОМУТИ: Для хомутів ігноруй "DN", дивись тільки на реальні розміри в міліметрах (напр. 48-53 мм).
+5. СЛЕНГ: кол/кут=Коліно, трій/рожон=Трійник, муф=Муфта, пер=Перехідник, шар=Кран кульовий, єврокон=Євроконус, ізол=Утеплювач PLM.
 """
 
 def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
@@ -173,7 +177,7 @@ def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
 
     prompt = f"""Ти — експерт із сантехніки України. На фото рукописний список замовлення.
 ПІДКАЗКА МЕНЕДЖЕРА: {caption}
-(ОБОВ'ЯЗКОВО! Якщо в підказці вказано бренд або тип труби, примусово впиши його в clean_name для відповідних позицій).
+(ОБОВ'ЯЗКОВО! Враховуй виробників/бренди з підказки для відповідних категорій товару).
 
 БАЗА ЗНАНЬ: {ЗНАННЯ_САНТЕХНІКИ}{rules_block}
 
@@ -182,21 +186,23 @@ def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
 
 ЗАВДАННЯ ДЛЯ КОЖНОГО РЯДКА:
 1. Визнач правильну категорію (category_key).
-   - "американка 3/4" (метал) -> "mixers_faucets" або "adapters_reducers"
-   - "мрв 25х3/4", "коліно 25" (пайка) -> "plastic_ppr"
-   - "кліпси 25" -> "fasteners_sealants"
-   - "каналізація" -> "sewage"
-2. Витягни ВСІ цифри розмірів у масив sizes (напр. ["25"], ["3/4"], ["25", "3/4"], ["110", "50", "87.5"]).
-3. Сформуй clean_name: ТІЛЬКИ тип деталі та бренд (якщо є в підказці). БЕЗ розмірів у назві!
+   - "американка 3/4" (метал) -> "shutoff_valves"
+   - "мрн 25х3/4", "американка 25х3/4" (пайка) -> "plastic_ppr"
+   - "опора 25" -> "plastic_ppr" (замінити на "Кліпса")
+   - "хомут" -> "fasteners_sealants" (ігнорувати літери DN)
+2. Сформуй clean_name: ТІЛЬКИ тип деталі. БЕЗ розмірів і БЕЗ бренду! (напр. "Коліно PPR", "Кліпса").
+3. Витягни ВСІ цифри розмірів у масив sizes (напр. ["25", "3/4"]).
+4. ВИТЯГНИ БРЕНД (виробника) в окреме поле "brand". Якщо він є в підказці (напр. "Пайка рафтек") — пиши ЛАТИНИЦЕЮ "RAFTEC". Якщо немає, пиши "".
 
 ВІДПОВІДАЙ ТІЛЬКИ JSON масивом:
 [
   {{
-    "original": "кліпси 25",
-    "category_key": "fasteners_sealants",
-    "clean_name": "Кліпса для труб PPR ASG", // ASG якщо було в підказці
-    "sizes": ["25"],
-    "qty": "50"
+    "original": "американка 3/4",
+    "category_key": "shutoff_valves",
+    "clean_name": "Американка пряма",
+    "brand": "",
+    "sizes": ["3/4"],
+    "qty": "5"
   }}
 ]"""
 
@@ -216,43 +222,69 @@ def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
     except: return []
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# КРОК 2: СУВОРИЙ МАТЕМАТИЧНИЙ ПОШУК З ІЗОЛЯЦІЄЮ
+# КРОК 2: СУВОРИЙ МАТЕМАТИЧНИЙ ПОШУК З ОЦІНКОЮ
 # ═══════════════════════════════════════════════════════════════════════════════
 def smart_keyword_search(parsed_item: dict, top_n: int = 5) -> list[dict]:
     target_category = parsed_item.get('category_key', '')
     q_words, _ = smart_tokenize(parsed_item.get('clean_name', ''))
     q_sizes = set(parsed_item.get('sizes', []))
+    q_brand = str(parsed_item.get('brand', '')).lower().strip()
     
-    # 1. ІЗОЛЯЦІЯ: Шукаємо тільки у вказаному файлі
     subset = [i for i in CATALOG if i.get('file_key') == target_category] if target_category else CATALOG
-    if not subset: subset = CATALOG # Fallback, якщо категорія хибна
+    if not subset: subset = CATALOG 
 
     scores = []
     for item in subset:
         i_words = set(item.get('_words', []))
         i_numbers = set(item.get('_numbers', []))
         
-        # 2. ЖОРСТКИЙ ФІЛЬТР: Всі розміри з запиту ПОВИННІ бути в товарі
+        # 1. ЖОРСТКИЙ ФІЛЬТР РОЗМІРУ
         if q_sizes and not q_sizes.issubset(i_numbers):
             continue 
             
         word_match = len(q_words & i_words)
         if word_match > 0 or not q_words:
-            # 3. ШТРАФ ЗА ЗАЙВІ РОЗМІРИ: 
-            # Якщо шукаємо "3/4", то товар "20х3/4" отримає штраф, а чистий "3/4" виграє!
+            # 2. РАХУЄМО БАЛИ І ВІДСОТОК ЗБІГУ
             num_penalty = (len(i_numbers) - len(q_sizes)) * 0.2
             precision = word_match / max(len(i_words), 1)
             
             score = (word_match * 2) + precision - num_penalty
+            
+            # Підрахунок відсотка збігу (Confidence)
+            confidence = min(100, int((word_match / max(len(q_words), 1)) * 100))
+            if num_penalty > 0: confidence -= min(20, int(num_penalty * 10))
+            
+            # 3. СУПЕР-ПРІОРИТЕТ БРЕНДУ
+            if q_brand:
+                item_name_lower = item['name'].lower()
+                if q_brand in item_name_lower:
+                    score += 100 
+                    confidence = min(100, confidence + 15) # Бонус до впевненості
+                elif "raftec" in q_brand and "asg" in item_name_lower:
+                    score -= 50
+                    confidence -= 30
+                elif "asg" in q_brand and "raftec" in item_name_lower:
+                    score -= 50
+                    confidence -= 30
+                    
+            item['_confidence'] = f"{max(10, confidence)}%"
             scores.append((score, item))
 
-    # Якщо суворий пошук нічого не дав, робимо м'який пошук без жорсткого фільтру
+    # М'який пошук (якщо суворий провалився)
     if not scores:
         for item in subset:
             i_words = set(item.get('_words', []))
             word_match = len(q_words & i_words)
             if word_match > 0:
-                scores.append((word_match / max(len(i_words), 1), item))
+                score = word_match / max(len(i_words), 1)
+                confidence = min(60, int((word_match / max(len(q_words), 1)) * 100)) # М'який пошук не може дати 100%
+                
+                if q_brand and q_brand in item['name'].lower():
+                    score += 100
+                    confidence += 10
+                    
+                item['_confidence'] = f"{confidence}%"
+                scores.append((score, item))
 
     scores.sort(key=lambda x: -x[0])
     return [item for _, item in scores[:top_n]]
@@ -264,7 +296,7 @@ def claude_pick_batch(позиції_з_кандидатами: list[dict]) -> l
     запити = []
     for i, пос in enumerate(позиції_з_кандидатами):
         кандидати = "\n".join(f"  {j+1}. {c['name']}" for j, c in enumerate(пос['candidates']))
-        запити.append(f"{i+1}. ЗАПИТ: {пос['normalized']} (Розміри: {пос.get('sizes')})\n   КАНДИДАТИ:\n{кандидати}")
+        запити.append(f"{i+1}. ЗАПИТ: {пос['normalized']} (Розміри: {пос.get('sizes')}, Бренд: {пос.get('brand')})\n   КАНДИДАТИ:\n{кандидати}")
 
     prompt = f"""Ти — експерт із сантехніки. Для кожного запиту обери ОДИН найкращий збіг з кандидатів.
 {chr(10).join(запити)}
@@ -281,7 +313,7 @@ def claude_pick_batch(позиції_з_кандидатами: list[dict]) -> l
         if '[' in raw and ']' in raw: raw = raw[raw.index('['):raw.rindex(']')+1]
         return json.loads(raw)
     except Exception as e:
-        print(f"⚠️ Claude API Error: {e}. Вмикаю автоматичний математичний вибір!")
+        print(f"⚠️ Claude API Error. Вмикаю fallback!")
         return []
 
 def find_items(позиції: list[dict]) -> list[dict]:
@@ -292,12 +324,11 @@ def find_items(позиції: list[dict]) -> list[dict]:
         кандидати = smart_keyword_search(пос, top_n=5)
 
         if not кандидати:
-            результати[i] = {**пос, 'знайдено': False, 'назва': ''}
+            результати[i] = {**пос, 'знайдено': False, 'назва': '', 'оцінка': '0%'}
             continue
 
-        # Збираємо для Claude
         normalized_str = f"[{пос.get('category_key', 'Всі')}] {пос.get('clean_name', '')}"
-        потребують_claude.append({'idx': i, 'normalized': normalized_str, 'sizes': пос.get('sizes', []), 'candidates': кандидати, 'qty': пос.get('qty',''), 'original': пос.get('original','')})
+        потребують_claude.append({'idx': i, 'normalized': normalized_str, 'sizes': пос.get('sizes', []), 'brand': пос.get('brand', ''), 'candidates': кандидати, 'qty': пос.get('qty',''), 'original': пос.get('original','')})
 
     if потребують_claude:
         відповіді = claude_pick_batch(потребують_claude)
@@ -305,24 +336,28 @@ def find_items(позиції: list[dict]) -> list[dict]:
             idx = пос['idx']
             r = відповіді[j] if j < len(відповіді) else {}
             
-            # АВТОМАТИЧНИЙ РЯТІВНИК (Fallback): Якщо Claude впав або сказав false, але у нас є хороший кандидат з математики!
+            confidence = "Claude (AI)" # За замовчуванням, якщо вибрав Claude
+            
             if r.get('знайдено') and r.get('номер_кандидата'):
                 n = max(0, min(int(r['номер_кандидата']) - 1, len(пос['candidates'])-1))
                 found = пос['candidates'][n]
+                # Якщо Claude вибрав першого кандидата, то довіряємо математичній оцінці
+                if n == 0: confidence = found.get('_confidence', '100%')
             elif len(пос['candidates']) > 0:
                 found = пос['candidates'][0]
+                confidence = found.get('_confidence', '100%')
             else:
                 found = None
 
             if found:
                 результати[idx] = {
                     'original':  пос['original'], 'normalized': пос['normalized'],
-                    'знайдено':  True, 'назва': found['name'], 'ціна': found.get('price', ''), 'qty': пос['qty']
+                    'знайдено':  True, 'назва': found['name'], 'ціна': found.get('price', ''), 'qty': пос['qty'], 'оцінка': confidence
                 }
             else:
                 результати[idx] = {
                     'original':  пос['original'], 'normalized': пос['normalized'],
-                    'знайдено':  False, 'назва': '', 'qty': пос['qty']
+                    'знайдено':  False, 'назва': '', 'qty': пос['qty'], 'оцінка': '0%'
                 }
 
     return результати
@@ -334,13 +369,13 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list[str]]:
     rows, not_found = [], []
     for r in результати:
         if r and r.get('знайдено'):
-            rows.append({'Наименование': r.get('назва', ''), 'Кількість': r.get('qty', ''), 'Ціна': r.get('ціна', ''), 'Оригінал': r.get('original', '')})
+            rows.append({'Наименование': r.get('назва', ''), 'Кількість': r.get('qty', ''), 'Ціна': r.get('ціна', ''), 'Оцінка підбору': r.get('оцінка', ''), 'Оригінал': r.get('original', '')})
         elif r:
             not_found.append(r.get('normalized') or r.get('original', ''))
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=['Наименование', 'Кількість', 'Ціна', 'Оригінал'])
+        df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=['Наименование', 'Кількість', 'Ціна', 'Оцінка підбору', 'Оригінал'])
         df.to_excel(writer, index=False, sheet_name='Замовлення')
         if not_found:
             pd.DataFrame({'Не знайдено': not_found}).to_excel(writer, index=False, sheet_name='Не знайдено')
@@ -374,10 +409,10 @@ def process_batch(chat_id: int):
         bot.edit_message_text("😕 Нічого не знайдено.", chat_id=chat_id, message_id=msg_id)
         return
 
-    preview = "\n".join(f"• {п.get('original','')} → [{п.get('category_key','')}] {п.get('clean_name','')} (Розміри: {п.get('sizes',[])})" for п in всі_позиції[:8])
+    preview = "\n".join(f"• {п.get('original','')} → [{п.get('category_key','')}] {п.get('clean_name','')} (Розміри: {п.get('sizes',[])}, Бренд: {п.get('brand','')})" for п in всі_позиції[:8])
     if len(всі_позиції) > 8: preview += f"\n... та ще {len(всі_позиції)-8}"
     
-    bot.send_message(chat_id, f"✅ Маршрутизація завершена:\n\n{preview}")
+    bot.send_message(chat_id, f"✅ Розпізнано (З урахуванням логіки менеджера):\n\n{preview}")
     bot.edit_message_text(f"🔍 Шукаю {len(всі_позиції)} позицій в ізольованих каталогах...", chat_id=chat_id, message_id=msg_id)
 
     результати = find_items(всі_позиції)
