@@ -1,8 +1,3 @@
-"""
-bot.py — Telegram бот для підбору сантехніки
-Архітектура: Gemini 2.5 Flash (OCR) → Векторний пошук (text-embedding-004) → Claude Sonnet (фінальний вибір)
-"""
-
 import os, json, re, base64, threading, time, math
 from io import BytesIO
 
@@ -23,7 +18,7 @@ bot           = telebot.TeleBot(TELEGRAM_TOKEN)
 claude        = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 gemini_client = genai_new.Client(api_key=GEMINI_KEY)
 
-CATALOG_PATH = "catalog_vectors.json" # Змінено назву для уникнення конфліктів зі старим файлом
+CATALOG_PATH = "catalog_vectors.json"
 RULES_FILE   = "rules.txt"
 
 CATALOG_FILES = [
@@ -52,14 +47,17 @@ CATALOG_FILES = [
     ("water_meters",             "Водолічильники"),
 ]
 
+# Глобальні змінні для фонового завантаження
+CATALOG = []
+IS_READY = False
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # ВЕКТОРНА МАТЕМАТИКА
 # ═══════════════════════════════════════════════════════════════════════════════
 def get_embedding(text: str) -> list[float]:
-    """Генерує векторний ембединг через Gemini API."""
     try:
         resp = gemini_client.models.embed_content(
-            model="text-embedding-004",
+            model="embedding-001",  # Змінено на безвідмовну модель
             contents=text
         )
         return resp.embeddings[0].values
@@ -68,7 +66,6 @@ def get_embedding(text: str) -> list[float]:
         return []
 
 def cosine_similarity(v1: list[float], v2: list[float]) -> float:
-    """Обчислює косинусну подібність між двома векторами."""
     if not v1 or not v2:
         return 0.0
     dot_product = sum(a * b for a, b in zip(v1, v2))
@@ -143,14 +140,13 @@ def build_catalog_from_xlsx() -> list[dict]:
             print(f"  ⚠️  {key}.xlsx не знайдено")
             
     print("🧠 Генерую векторні ембединги (це робиться один раз, обходимо ліміти API)...")
-    # Батчимо запити, щоб уникнути помилок 429 (Too Many Requests) під час холодного старту конвеєра
     batch_size = 50
     for i in range(0, len(catalog), batch_size):
         chunk = catalog[i:i+batch_size]
-        texts = [f"{item['category']} {item['name']}" for item in chunk] # Векторизуємо категорію + назву для кращого контексту
+        texts = [f"{item['category']} {item['name']}" for item in chunk]
         try:
             resp = gemini_client.models.embed_content(
-                model="text-embedding-004",
+                model="embedding-001", # Змінено на безвідмовну модель
                 contents=texts
             )
             for j, item in enumerate(chunk):
@@ -158,34 +154,39 @@ def build_catalog_from_xlsx() -> list[dict]:
         except Exception as e:
             print(f"⚠️ Помилка батч-векторизації (пауза 5 сек): {e}")
             time.sleep(5)
-            # Фолбек на поштучну генерацію при помилках
             for item in chunk:
                 item['vector'] = get_embedding(f"{item['category']} {item['name']}")
                 time.sleep(0.5)
                 
         print(f"  Векторизовано {min(i+batch_size, len(catalog))}/{len(catalog)}")
-        time.sleep(1) # Затримка між батчами
+        time.sleep(1)
 
     return catalog
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ЗАВАНТАЖЕННЯ КАТАЛОГУ
+# ФОНОВЕ ЗАВАНТАЖЕННЯ КАТАЛОГУ
 # ═══════════════════════════════════════════════════════════════════════════════
-print("📦 Завантажую каталог...")
-if not os.path.exists(CATALOG_PATH):
-    print("⚙️ Векторний каталог не знайдено — будую з xlsx файлів...")
-    CATALOG = build_catalog_from_xlsx()
-    if CATALOG:
-        with open(CATALOG_PATH, "w", encoding="utf-8") as f:
-            json.dump(CATALOG, f, ensure_ascii=False)
-        print(f"✅ Векторний каталог збережено: {len(CATALOG)} позицій")
+def init_catalog_background():
+    global CATALOG, IS_READY
+    print("📦 Завантажую каталог у фоні...")
+    if not os.path.exists(CATALOG_PATH):
+        print("⚙️ Векторний каталог не знайдено — будую з xlsx файлів...")
+        CATALOG = build_catalog_from_xlsx()
+        if CATALOG:
+            with open(CATALOG_PATH, "w", encoding="utf-8") as f:
+                json.dump(CATALOG, f, ensure_ascii=False)
+            print(f"✅ Векторний каталог збережено: {len(CATALOG)} позицій")
     else:
-        print("❌ Не знайдено жодного xlsx файлу!")
-        CATALOG = []
-else:
-    with open(CATALOG_PATH, encoding="utf-8") as f:
-        CATALOG = json.load(f)
-    print(f"✅ Векторний каталог завантажено: {len(CATALOG)} позицій")
+        with open(CATALOG_PATH, encoding="utf-8") as f:
+            CATALOG = json.load(f)
+        print(f"✅ Векторний каталог завантажено: {len(CATALOG)} позицій")
+    
+    IS_READY = True
+    print("🚀 БАЗА ДАНИХ ГОТОВА! Бот може приймати запити.")
+
+# Запускаємо завантаження в окремому потоці
+threading.Thread(target=init_catalog_background, daemon=True).start()
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ПРАВИЛА КОРИСТУВАЧА
@@ -201,7 +202,7 @@ def add_rule(new_rule: str):
         f.write(f"- {new_rule}\n")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# КРОК 1: OCR + НОРМАЛІЗАЦІЯ (Gemini 2.5 Flash) - РОЗШИРЕНИЙ ФОРМАТ
+# КРОК 1: OCR + НОРМАЛІЗАЦІЯ
 # ═══════════════════════════════════════════════════════════════════════════════
 ЗНАННЯ_САНТЕХНІКИ = """
 КАНАЛІЗАЦІЯ (HTR/ASG або HT Safe/OSTENDORF):
@@ -297,7 +298,7 @@ def normalize_text(text: str) -> list[dict]:
 [{{"original": "...", "normalized": "...", "qty": "..."}}]"""
 
     resp = claude.messages.create(
-        model="claude-sonnet-4-5",
+        model="claude-3-5-sonnet-20240620",
         max_tokens=2048,
         messages=[{"role": "user", "content": prompt}]
     )
@@ -315,15 +316,11 @@ def normalize_text(text: str) -> list[dict]:
 # КРОК 2: ВЕКТОРНИЙ ПОШУК (Semantic Search)
 # ═══════════════════════════════════════════════════════════════════════════════
 def vector_search(query: str, top_n: int = 8) -> list[dict]:
-    """
-    Шукає найближчі товари у багатовимірному просторі за допомогою косинусної подібності.
-    """
     query_vector = get_embedding(query)
     if not query_vector:
         return []
 
     scores = []
-    # Додатковий бонус для точного збігу чисел (наприклад, щоб 50мм не сплутало з 40мм)
     q_numbers = set(re.findall(r'\d+', query.lower()))
 
     for item in CATALOG:
@@ -332,7 +329,6 @@ def vector_search(query: str, top_n: int = 8) -> list[dict]:
         
         sim_score = cosine_similarity(query_vector, item['vector'])
         
-        # Легкий штраф/бонус за точні числа, щоб покращити результати векторів
         item_numbers = set(re.findall(r'\d+', item['name'].lower()))
         num_match_bonus = len(q_numbers & item_numbers) * 0.05
         
@@ -371,7 +367,7 @@ def claude_pick_batch(позиції_з_кандидатами: list[dict]) -> l
 ]"""
 
     resp = claude.messages.create(
-        model="claude-sonnet-4-5",
+        model="claude-3-5-sonnet-20240620",
         max_tokens=1024,
         messages=[{"role": "user", "content": prompt}]
     )
@@ -392,7 +388,6 @@ def find_items(позиції: list[dict]) -> list[dict]:
 
     for i, пос in enumerate(позиції):
         normalized = пос.get('normalized', '')
-        # Використовуємо новий векторний пошук замість keyword
         кандидати = vector_search(normalized, top_n=8)
 
         if not кандидати:
@@ -470,6 +465,11 @@ stop_flags    = {}
 pending_hints = {}   
 
 def process_batch(chat_id: int):
+    if not IS_READY:
+        bot.send_message(chat_id, "⏳ База даних ще генерується (зазвичай 5-10 хв після оновлення). Будь ласка, зачекайте.")
+        user_batches.pop(chat_id, None)
+        return
+
     batch = user_batches.pop(chat_id, None)
     if not batch:
         return
@@ -545,6 +545,10 @@ def process_batch(chat_id: int):
 
 
 def add_to_batch(chat_id: int, item: dict):
+    if not IS_READY:
+        bot.send_message(chat_id, "⏳ База даних ще генерується (векторизація). Будь ласка, зачекайте кілька хвилин.")
+        return
+
     if chat_id not in user_batches:
         user_batches[chat_id] = {'items': []}
         bot.send_message(chat_id, "📥 Отримав! Чекаю 4 сек на наступні файли...")
@@ -562,6 +566,9 @@ def add_to_batch(chat_id: int, item: dict):
 # ═══════════════════════════════════════════════════════════════════════════════
 @bot.message_handler(commands=['start', 'help'])
 def handle_start(message):
+    if not IS_READY:
+        bot.reply_to(message, "⏳ Бот запускається. Зачекайте кілька хвилин, поки згенеруються вектори бази даних...")
+        return
     bot.reply_to(message, """👋 Привіт! Бот для підбору сантехніки (Векторний пошук).
 
 📸 Кинь фото рукописного списку — знайду в базі
@@ -582,6 +589,10 @@ def handle_rule(message):
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
+    if not IS_READY:
+        bot.reply_to(message, "⏳ База даних ще генерується (векторизація). Зачекайте пару хвилин, перш ніж кидати фото.")
+        return
+        
     for attempt in range(3):
         try:
             file_info = bot.get_file(message.photo[-1].file_id)
@@ -612,6 +623,10 @@ def handle_text_search(message):
                      and not m.text.lower().startswith('пошук')
                      and not m.text.lower().startswith('правило'))
 def handle_text_hint(message):
+    if not IS_READY:
+        bot.reply_to(message, "⏳ База ще генерується, підказки тимчасово недоступні. Зачекайте хвилину.")
+        return
+        
     text = message.text.strip()
     if text:
         pending_hints[message.chat.id] = text
@@ -633,5 +648,5 @@ def handle_stop(message):
     bot.reply_to(message, "🛑 Зупинено.")
 
 if __name__ == "__main__":
-    print("🤖 Бот запущено!")
+    print("🤖 Бот підключився до Telegram! (Очікуємо побудову векторів у фоні...)")
     bot.polling(none_stop=True)
