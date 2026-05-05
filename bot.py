@@ -53,7 +53,7 @@ CATALOG = []
 IS_READY = False
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# РОЗУМНИЙ ТОКЕНІЗАТОР (Оминає PN та DN)
+# РОЗУМНИЙ ТОКЕНІЗАТОР
 # ═══════════════════════════════════════════════════════════════════════════════
 def smart_tokenize(text: str) -> tuple[set, set]:
     text = str(text).lower()
@@ -164,7 +164,7 @@ def add_rule(new_rule: str):
 ЗНАННЯ_САНТЕХНІКИ = """
 1. АМЕРИКАНКИ: Звичайна "американка 3/4" (метал/латунь) — це категорія "shutoff_valves" (Запірна арматура). Бувають прямі і кутові.
 2. ПАЙКА (PPR): Якщо написано "мрн 25х3/4" або "американка 25х3/4" — це перехід з труби на різьбу, шукати в "plastic_ppr".
-3. ОПОРИ/КЛІПСИ: Якщо написано "опора" — це означає "кліпса", шукати в "plastic_ppr".
+3. ОПОРИ/КЛІПСИ: Якщо написано "опора" або "кліпса" — це "Опора PPR", шукати в "plastic_ppr".
 4. ХОМУТИ: Для хомутів ігноруй "DN", дивись тільки на реальні розміри в міліметрах (напр. 48-53 мм).
 5. СЛЕНГ: кол/кут=Коліно, трій/рожон=Трійник, муф=Муфта, пер=Перехідник, шар=Кран кульовий, єврокон=Євроконус, ізол=Утеплювач PLM.
 """
@@ -184,7 +184,7 @@ def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
 
 ЗАВДАННЯ ДЛЯ КОЖНОГО РЯДКА:
 1. Визнач правильну категорію (category_key).
-2. Сформуй clean_name: ТІЛЬКИ тип деталі. БЕЗ розмірів і БЕЗ бренду! (напр. "Коліно PPR", "Кліпса").
+2. Сформуй clean_name: ТІЛЬКИ тип деталі. БЕЗ розмірів і БЕЗ бренду! (напр. "Коліно PPR", "Опора").
 3. Витягни ВСІ цифри розмірів у масив sizes (напр. ["25", "3/4"]).
 4. ВИТЯГНИ БРЕНД (виробника) в окреме поле "brand". Якщо він є в підказці (напр. "Пайка рафтек") — пиши ЛАТИНИЦЕЮ "RAFTEC". Якщо немає, пиши "".
 
@@ -216,7 +216,7 @@ def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
     except: return []
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# КРОК 2: СУВОРИЙ МАТЕМАТИЧНИЙ ПОШУК (Бренди, PN, Різьба)
+# КРОК 2: КАСКАДНИЙ ПОШУК (3 СПРОБИ)
 # ═══════════════════════════════════════════════════════════════════════════════
 def smart_keyword_search(parsed_item: dict, top_n: int = 5) -> list[dict]:
     target_category = parsed_item.get('category_key', '')
@@ -229,82 +229,97 @@ def smart_keyword_search(parsed_item: dict, top_n: int = 5) -> list[dict]:
     subset = [i for i in CATALOG if i.get('file_key') == target_category] if target_category else CATALOG
     if not subset: subset = CATALOG 
 
-    scores = []
-    for item in subset:
+    # Допоміжна функція для оцінки 1 товару
+    def evaluate_item(item, require_brand: bool, require_sizes: bool):
         i_words = set(item.get('_words', []))
         i_numbers = set(item.get('_numbers', []))
         item_name_lower = item['name'].lower()
         
-        # 1. ЖОРСТКЕ ВІДСІКАННЯ ПО БРЕНДУ (АБСОЛЮТНИЙ ФІЛЬТР)
-        if q_brand:
+        # Перевірка Бренду
+        if require_brand and q_brand:
             valid_brand = False
-            if q_brand in item_name_lower:
-                valid_brand = True
-            # Обробка синонімів для популярних брендів
-            elif q_brand in ["еко", "eco", "ekoplastik"] and any(b in item_name_lower for b in ["eco", "ekoplastik"]):
-                valid_brand = True
-            elif q_brand == "asg" and "асг" in item_name_lower:
-                valid_brand = True
-                
-            if not valid_brand:
-                continue # ПРОПУСКАЄМО ТОВАР: Виробник не збігається!
-        
-        # 2. ЖОРСТКИЙ ФІЛЬТР РОЗМІРУ (Геометрія)
-        if q_sizes and not q_sizes.issubset(i_numbers):
-            continue 
+            if q_brand in item_name_lower: valid_brand = True
+            elif q_brand in ["еко", "eco", "ekoplastik"] and any(b in item_name_lower for b in ["eco", "ekoplastik"]): valid_brand = True
+            elif q_brand == "asg" and "асг" in item_name_lower: valid_brand = True
+            if not valid_brand: return None
+            
+        # Перевірка Розміру
+        if require_sizes and q_sizes:
+            if not q_sizes.issubset(i_numbers): return None
             
         word_match = len(q_words & i_words)
-        if word_match > 0 or not q_words:
-            num_penalty = (len(i_numbers) - len(q_sizes)) * 0.2
-            precision = word_match / max(len(i_words), 1)
+        if word_match == 0 and len(q_words) > 0:
+            return None # Хоч якесь слово має збігатися
             
-            score = (word_match * 2) + precision - num_penalty
-            confidence = min(100, int((word_match / max(len(q_words), 1)) * 100))
-            if num_penalty > 0: confidence -= min(20, int(num_penalty * 10))
-            
-            # ПРІОРИТЕТ ТИСКУ (PN)
-            if q_pn:
-                if q_pn in item_name_lower:
-                    score += 50
-                    confidence = min(100, confidence + 20)
-                else:
-                    if "pn20" in item_name_lower or "pn16" in item_name_lower or "pn25" in item_name_lower:
-                        score -= 40
-                        confidence -= 30
-                        
-            # ПРІОРИТЕТ РІЗЬБИ (РВ/РЗ)
-            if q_thread:
-                if q_thread == "рв" and ("рв" in item_name_lower or "вв" in item_name_lower or "внутр" in item_name_lower):
-                    score += 20
-                elif q_thread == "рз" and ("рз" in item_name_lower or "зз" in item_name_lower or "зовн" in item_name_lower or "наруж" in item_name_lower):
-                    score += 20
-                else:
-                    score -= 10
-                    
-            item['_confidence'] = f"{max(10, confidence)}%"
-            scores.append((score, item))
-
-    # М'який пошук (якщо суворий провалився) - ТАКОЖ ІЗ ЖОРСТКИМ БРЕНДОМ
-    if not scores:
-        for item in subset:
-            item_name_lower = item['name'].lower()
-            
-            if q_brand:
-                valid_brand = False
-                if q_brand in item_name_lower: valid_brand = True
-                elif q_brand in ["еко", "eco", "ekoplastik"] and any(b in item_name_lower for b in ["eco", "ekoplastik"]): valid_brand = True
-                if not valid_brand: continue # Пропускаємо і тут
+        num_penalty = (len(i_numbers) - len(q_sizes)) * 0.2 if require_sizes else 0
+        precision = word_match / max(len(i_words), 1)
+        
+        score = (word_match * 2) + precision - num_penalty
+        confidence = min(100, int((word_match / max(len(q_words), 1)) * 100))
+        
+        # Бонуси та штрафи
+        if q_pn:
+            if q_pn in item_name_lower:
+                score += 20; confidence = min(100, confidence + 10)
+            elif "pn" in item_name_lower:
+                score -= 20; confidence -= 15 # Є інший PN
                 
-            i_words = set(item.get('_words', []))
-            word_match = len(q_words & i_words)
-            if word_match > 0:
-                score = word_match / max(len(i_words), 1)
-                confidence = min(60, int((word_match / max(len(q_words), 1)) * 100))
-                item['_confidence'] = f"{confidence}%"
-                scores.append((score, item))
+        if q_thread:
+            if q_thread == "рв" and ("рв" in item_name_lower or "вв" in item_name_lower or "внутр" in item_name_lower):
+                score += 10; confidence += 5
+            elif q_thread == "рз" and ("рз" in item_name_lower or "зз" in item_name_lower or "зовн" in item_name_lower or "наруж" in item_name_lower):
+                score += 10; confidence += 5
+                
+        # Бонус за бренд (якщо ми його не вимагали жорстко, але він зійшовся)
+        if not require_brand and q_brand and q_brand in item_name_lower:
+            score += 30; confidence += 10
+            
+        return score, confidence
 
-    scores.sort(key=lambda x: -x[0])
-    return [item for _, item in scores[:top_n]]
+    scores = []
+    search_type = ""
+
+    # СПРОБА 1: Ідеальний збіг (Суворий Розмір + Суворий Бренд)
+    for item in subset:
+        res = evaluate_item(item, require_brand=True, require_sizes=True)
+        if res: scores.append((*res, item))
+    
+    if scores:
+        search_type = "Ідеально"
+    else:
+        # СПРОБА 2: Інший Бренд (Суворий Розмір + Будь-який Бренд)
+        for item in subset:
+            res = evaluate_item(item, require_brand=False, require_sizes=True)
+            if res: scores.append((*res, item))
+        
+        if scores:
+            search_type = "Інший бренд"
+        else:
+            # СПРОБА 3: Останній шанс / М'який пошук (Ігноруємо розміри і бренд)
+            for item in subset:
+                res = evaluate_item(item, require_brand=False, require_sizes=False)
+                if res: scores.append((*res, item))
+            if scores: search_type = "М'який пошук"
+
+    # Форматуємо результат
+    final_candidates = []
+    scores.sort(key=lambda x: -x[0]) # Сортуємо по балах
+    
+    for score, conf, item in scores[:top_n]:
+        # Маркуємо впевненість залежно від того, на якій спробі знайшли
+        if search_type == "Ідеально":
+            item['_confidence'] = f"{max(10, conf)}%"
+        elif search_type == "Інший бренд":
+            # Зрізаємо впевненість, бо бренд не той
+            item['_confidence'] = f"{max(10, conf - 25)}% (Аналог)"
+        else:
+            # М'який пошук - низька впевненість
+            item['_confidence'] = f"{max(10, conf - 40)}% (М'який)"
+            
+        item['_score'] = score
+        final_candidates.append(item)
+
+    return final_candidates
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # КРОК 3: CLAUDE + РЯТІВНИК (Fallback)
@@ -312,7 +327,7 @@ def smart_keyword_search(parsed_item: dict, top_n: int = 5) -> list[dict]:
 def claude_pick_batch(позиції_з_кандидатами: list[dict]) -> list[dict]:
     запити = []
     for i, пос in enumerate(позиції_з_кандидатами):
-        кандидати = "\n".join(f"  {j+1}. {c['name']}" for j, c in enumerate(пос['candidates']))
+        кандидати = "\n".join(f"  {j+1}. {c['name']} [{c.get('_confidence','')}]" for j, c in enumerate(пос['candidates']))
         info = f"Розміри: {пос.get('sizes')}, PN: {пос.get('pn')}, Бренд: {пос.get('brand')}, Різьба: {пос.get('thread_type')}"
         запити.append(f"{i+1}. ЗАПИТ: {пос['normalized']} ({info})\n   КАНДИДАТИ:\n{кандидати}")
 
@@ -371,17 +386,17 @@ def find_items(позиції: list[dict]) -> list[dict]:
             else:
                 found = None
 
-            # 5. ПОРІГ ВПЕВНЕНОСТІ 50% (ВІДСІКАННЯ)
+            # ПОРОГОВЕ ВІДСІКАННЯ: Зменшено до 30%, щоб пропускати "Аналоги" і "М'який пошук"
             if found:
                 try:
-                    conf_val = int(confidence_str.replace('%', ''))
+                    conf_val = int(re.search(r'\d+', confidence_str).group())
                 except:
-                    conf_val = 100 # Якщо не змогли розпізнати, довіряємо
+                    conf_val = 100 
                     
-                if conf_val < 50:
-                    found = None # Відхиляємо сумнівний товар
+                if conf_val <= 30:
+                    found = None # Занадто низька впевненість
                 else:
-                    confidence = f"{conf_val}% (Claude)" if r.get('знайдено') else f"{conf_val}%"
+                    confidence = f"{confidence_str} (Claude)" if r.get('знайдено') else confidence_str
 
             if found:
                 результати[idx] = {
@@ -391,7 +406,7 @@ def find_items(позиції: list[dict]) -> list[dict]:
             else:
                 результати[idx] = {
                     'original':  пос['original'], 'normalized': пос['normalized'],
-                    'знайдено':  False, 'назва': '', 'qty': пос['qty'], 'оцінка': '<50% (Відхилено)'
+                    'знайдено':  False, 'назва': '', 'qty': пос['qty'], 'оцінка': '<30% (Відхилено)'
                 }
 
     return результати
@@ -447,7 +462,7 @@ def process_batch(chat_id: int):
     if len(всі_позиції) > 8: preview += f"\n... та ще {len(всі_позиції)-8}"
     
     bot.send_message(chat_id, f"✅ Маршрутизація завершена:\n\n{preview}")
-    bot.edit_message_text(f"🔍 Шукаю {len(всі_позиції)} позицій в ізольованих каталогах...", chat_id=chat_id, message_id=msg_id)
+    bot.edit_message_text(f"🔍 Шукаю {len(всі_позиції)} позицій (Каскадний пошук)...", chat_id=chat_id, message_id=msg_id)
 
     результати = find_items(всі_позиції)
 
