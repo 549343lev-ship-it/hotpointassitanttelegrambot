@@ -1,4 +1,4 @@
-import os, json, re, base64, threading, time
+import os, json, re, base64, threading, time, traceback
 from io import BytesIO
 
 import telebot
@@ -53,10 +53,63 @@ CATALOG = []
 IS_READY = False
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# МОДУЛЬ ЖИВОГО СТАТУСУ ТА ПОМИЛОК
+# ═══════════════════════════════════════════════════════════════════════════════
+class LiveStatus:
+    def __init__(self, bot_instance, chat_id, message_id):
+        self.bot = bot_instance
+        self.chat_id = chat_id
+        self.message_id = message_id
+        self.text = "Ініціалізація..."
+        self.running = True
+        self.start_time = time.time()
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread.start()
+
+    def _loop(self):
+        dots = 0
+        while self.running:
+            time.sleep(4) 
+            if not self.running: break
+            dots = (dots + 1) % 4
+            elapsed = int(time.time() - self.start_time)
+            try:
+                self.bot.edit_message_text(
+                    f"{self.text}{'.' * dots}\n⏱ Минуло: {elapsed} сек",
+                    chat_id=self.chat_id,
+                    message_id=self.message_id
+                )
+            except Exception:
+                pass 
+
+    def update(self, new_text):
+        self.text = new_text
+        try:
+            self.bot.edit_message_text(
+                f"{self.text}\n⏱ Минуло: {int(time.time() - self.start_time)} сек",
+                chat_id=self.chat_id,
+                message_id=self.message_id
+            )
+        except Exception:
+            pass
+
+    def stop(self, final_text):
+        self.running = False
+        try:
+            self.bot.edit_message_text(
+                final_text,
+                chat_id=self.chat_id,
+                message_id=self.message_id
+            )
+        except Exception:
+            pass
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # РОЗУМНИЙ ТОКЕНІЗАТОР ТА СИНОНІМАЙЗЕР БРЕНДІВ
 # ═══════════════════════════════════════════════════════════════════════════════
 def smart_tokenize(text: str) -> tuple[set, set]:
     text = str(text).lower()
+    text = text.replace('\\', '/') # ВИПРАВЛЕННЯ: "1\4" -> "1/4"
     text = re.sub(r'\bpn\s*\d+\b', ' ', text)
     text = re.sub(r'\bdn\s*\d+\b', ' ', text)
     text = text.replace('х', ' ').replace('x', ' ').replace('*', ' ').replace(',', '.')
@@ -69,11 +122,10 @@ def is_brand_match(q_brand: str, item_name_lower: str) -> bool:
     if not q_brand: return False
     q_brand = q_brand.lower().strip()
     
-    # РОЗДІЛЕНО ECO та EKOPLASTIK!
     brand_groups = [
         ["raftec", "рафтек", "raftek", "рафтэк"],
-        ["ekoplastik", "екопластик", "ekoplast", "экопластик"], # Тільки Екопластик
-        ["eco", "еко", "эко"], # Тільки ECO
+        ["ekoplastik", "екопластик", "ekoplast", "экопластик"], # Жорстко розділено
+        ["eco", "еко", "эко"],                                  # Жорстко розділено
         ["asg", "асг"],
         ["gebo", "гебо"],
         ["kan", "кан"],
@@ -185,18 +237,19 @@ def add_rule(new_rule: str):
     with open(RULES_FILE, "a", encoding="utf-8") as f: f.write(f"- {new_rule}\n")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# КРОК 1: ІЗОЛЬОВАНА НОРМАЛІЗАЦІЯ (З ОНОВЛЕНОЮ БАЗОЮ)
+# КРОК 1: ІЗОЛЬОВАНА НОРМАЛІЗАЦІЯ (ДЕТЕКТИВ)
 # ═══════════════════════════════════════════════════════════════════════════════
 ЗНАННЯ_САНТЕХНІКИ = """
-1. АМЕРИКАНКИ: Звичайна "американка 3/4" (метал) — це "shutoff_valves". Якщо "мрн розбірна" або "американка 25х3/4" (пайка) — це "Американка PPR" (plastic_ppr).
-2. ТЕРМІНОЛОГІЯ МРВ/МРЗ (СУВОРІ ПРАВИЛА!):
-   - "мрв кутове" або "мрв углове" = "Коліно МРВ" (Коліно різьбове внутрішнє).
-   - "мрз кутове", "мрн кутове" або "мрн углове" = "Коліно МРЗ" (Коліно різьбове зовнішнє).
-   - "мрн" або "мрз" (прямі) = "Муфта МРЗ" (Муфта різьбова зовнішня).
-   - "мрв" (пряме) = "Муфта МРВ" (Муфта різьбова внутрішня).
-3. ОПОРИ/КЛІПСИ: "опора" або "кліпса" — це "Опора PPR" (plastic_ppr).
-4. ХОМУТИ: Для хомутів ігноруй "DN", витягуй тільки розміри в міліметрах (напр. 48-53 мм).
-5. БРЕНДИ: "екопластик" - пиши "EKOPLASTIK". "еко" - пиши "ECO". Це РІЗНІ бренди!
+1. АМЕРИКАНКИ: Звичайна "американка 3/4" (метал) — "shutoff_valves". "мрн розбірна" або "американка 40х1 1/4" (пайка) — це "Американка PPR" (категорія "plastic_ppr"). Обов'язково вкажи thread_type (РЗ/РВ).
+2. ТЕРМІНОЛОГІЯ МРВ/МРЗ (ЖОРСТКІ ПРАВИЛА clean_name):
+   - "мрв кутове" або "мрв углове" = "Коліно МРВ". Обов'язково thread_type: "РВ".
+   - "мрз кутове", "мрн кутове" або "мрн углове" = "Коліно МРЗ". Обов'язково thread_type: "РЗ".
+   - "мрн" або "мрз" (прямі) = "Муфта МРЗ". thread_type: "РЗ".
+   - "мрв" (пряме) = "Муфта МРВ". thread_type: "РВ".
+3. ГЕБО: Якщо написано "гебо" -> clean_name = "Муфта затискна з'єднувальна". Якщо є слово "наруж", thread_type = "РЗ". Категорія: "adapters_reducers".
+4. ОПОРИ/КЛІПСИ: "опора" або "кліпса" = "Опора PPR", category: "plastic_ppr".
+5. ХОМУТИ: Ігноруй літери "DN", розміри тільки в міліметрах.
+6. БРЕНДИ: "екопластик" = "EKOPLASTIK". "еко" = "ECO". Це РІЗНІ бренди.
 """
 
 def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
@@ -205,34 +258,22 @@ def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
 
     prompt = f"""Ти — професійний менеджер з продажу сантехніки. Твоє завдання — перекласти сленг монтажника на точну структуру для алгоритму.
 ПІДКАЗКА МЕНЕДЖЕРА: {caption}
-(ОБОВ'ЯЗКОВО! Враховуй виробників/бренди з підказки).
 
-БАЗА ЗНАНЬ: {ЗНАННЯ_САНТЕХНІКИ}{rules_block}
+БАЗА ЗНАНЬ ПРОФЕСІОНАЛА: {ЗНАННЯ_САНТЕХНІКИ}{rules_block}
 
 КАТЕГОРІЇ ДЛЯ ІЗОЛЯЦІЇ:
 {CATALOG_KEYS_DESC}
 
 ЗАВДАННЯ ДЛЯ КОЖНОГО РЯДКА:
-1. category_key: Визнач папку.
-2. clean_name: Канонічна назва (напр. "Коліно МРВ", "Муфта МРЗ", "Американка PPR"). БЕЗ розмірів!
-3. sizes: Масив розмірів (напр. ["25", "3/4"]).
+1. category_key: Визнач папку згідно правил.
+2. clean_name: Канонічна назва (БЕЗ розмірів і брендів).
+3. sizes: Масив геометричних розмірів (замінюй "\" на "/").
 4. thread_type: "РВ" (внутрішня) або "РЗ" (зовнішня). Якщо немає - "".
 5. pn: Тиск ("PN20", "PN25").
-6. brand: Виробник латиницею ("RAFTEC", "EKOPLASTIK", "ECO"). Якщо немає, "".
+6. brand: Виробник латиницею ("RAFTEC", "EKOPLASTIK", "ECO", "GEBO").
 
 ВІДПОВІДАЙ ТІЛЬКИ JSON масивом:
-[
-  {{
-    "original": "мрв углова 25*3/4",
-    "category_key": "plastic_ppr",
-    "clean_name": "Коліно МРВ",
-    "thread_type": "РВ",
-    "pn": "",
-    "brand": "",
-    "sizes": ["25", "3/4"],
-    "qty": "1"
-  }}
-]"""
+[ {{"original": "...", "category_key": "...", "clean_name": "...", "thread_type": "...", "pn": "...", "brand": "...", "sizes": ["..."], "qty": "..."}} ]"""
 
     image_bytes = base64.b64decode(image_b64)
     resp = gemini_client.models.generate_content(
@@ -247,10 +288,11 @@ def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
     try:
         if '[' in raw and ']' in raw: raw = raw[raw.index('['):raw.rindex(']')+1]
         return json.loads(raw)
-    except: return []
+    except Exception as e: 
+        raise Exception(f"Gemini API Error (Не вдалося прочитати JSON відповідь): {e}\nОригінальна відповідь: {raw[:200]}...")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# КРОК 2: КАСКАДНИЙ ПОШУК (З ЧОРНИМ СПИСКОМ)
+# КРОК 2: КАСКАДНИЙ ПОШУК (З АБСОЛЮТНИМ ЧОРНИМ СПИСКОМ)
 # ═══════════════════════════════════════════════════════════════════════════════
 def smart_keyword_search(parsed_item: dict, top_n: int = 5) -> list[dict]:
     target_category = parsed_item.get('category_key', '')
@@ -266,8 +308,8 @@ def smart_keyword_search(parsed_item: dict, top_n: int = 5) -> list[dict]:
     def evaluate_item(item, require_brand: bool, require_sizes: bool):
         item_name_lower = item['name'].lower()
         
-        # ЧОРНИЙ СПИСОК: Миттєво відкидаємо сміття з прайсу
-        if any(bad_word in item_name_lower for bad_word in ["зразок", "пошкоджений", "уцінка", "брак"]):
+        # АБСОЛЮТНИЙ ЧОРНИЙ СПИСОК (БРАК/ЗРАЗКИ)
+        if any(bad_word in item_name_lower for bad_word in ["зразок", "пошкоджений", "уцінка", "брак", "розріз", "розрізі"]):
             return None
             
         i_words = set(item.get('_words', []))
@@ -297,11 +339,14 @@ def smart_keyword_search(parsed_item: dict, top_n: int = 5) -> list[dict]:
             elif "pn" in item_name_lower:
                 score -= 20; confidence -= 15
                 
+        # Розуміння типографії МРВ/МРЗ з латиницею (MPB/MP3)
         if q_thread:
-            if q_thread == "рв" and ("рв" in item_name_lower or "вв" in item_name_lower or "внутр" in item_name_lower):
-                score += 10; confidence += 5
-            elif q_thread == "рз" and ("рз" in item_name_lower or "зз" in item_name_lower or "зовн" in item_name_lower or "наруж" in item_name_lower or "мрн" in item_name_lower):
-                score += 10; confidence += 5
+            if q_thread == "рв" and any(t in item_name_lower for t in ["рв", "вв", "внутр", "мрв", "mpb"]):
+                score += 15; confidence += 10
+            elif q_thread == "рз" and any(t in item_name_lower for t in ["рз", "зз", "зовн", "наруж", "мрн", "мрз", "mp3"]):
+                score += 15; confidence += 10
+            else:
+                score -= 10
                 
         if not require_brand and q_brand and is_brand_match(q_brand, item_name_lower):
             score += 30; confidence += 10
@@ -311,7 +356,6 @@ def smart_keyword_search(parsed_item: dict, top_n: int = 5) -> list[dict]:
     scores = []
     search_type = ""
 
-    # СПРОБА 1: Ідеальний збіг
     for item in subset:
         res = evaluate_item(item, require_brand=True, require_sizes=True)
         if res: scores.append((*res, item))
@@ -319,7 +363,6 @@ def smart_keyword_search(parsed_item: dict, top_n: int = 5) -> list[dict]:
     if scores:
         search_type = "Ідеально"
     else:
-        # СПРОБА 2: Інший Бренд / Аналог
         for item in subset:
             res = evaluate_item(item, require_brand=False, require_sizes=True)
             if res: scores.append((*res, item))
@@ -327,7 +370,6 @@ def smart_keyword_search(parsed_item: dict, top_n: int = 5) -> list[dict]:
         if scores:
             search_type = "Аналог"
         else:
-            # СПРОБА 3: М'який пошук
             for item in subset:
                 res = evaluate_item(item, require_brand=False, require_sizes=False)
                 if res: scores.append((*res, item))
@@ -374,8 +416,7 @@ def claude_pick_batch(позиції_з_кандидатами: list[dict]) -> l
         if '[' in raw and ']' in raw: raw = raw[raw.index('['):raw.rindex(']')+1]
         return json.loads(raw)
     except Exception as e:
-        print(f"⚠️ Claude API Error. Вмикаю fallback!")
-        return []
+        raise Exception(f"Claude API Error (Можливо, вичерпано ліміти або проблеми з ключем):\n{str(e)}")
 
 def find_items(позиції: list[dict]) -> list[dict]:
     потребують_claude = []
@@ -471,37 +512,55 @@ def process_batch(chat_id: int):
     stop_flags.pop(chat_id, None)
     
     items = batch['items']
-    msg_id = bot.send_message(chat_id, f"🔄 Читаю {len(items)} фото...").message_id
+    msg = bot.send_message(chat_id, "🚀 Розпочинаю обробку замовлення...")
+    status = LiveStatus(bot, chat_id, msg.message_id)
 
-    всі_позиції, errors = [], []
-    for idx, item in enumerate(items, 1):
-        if stop_flags.get(chat_id): return
-        try:
-            bot.edit_message_text(f"📖 Аналізую фото {idx}/{len(items)}...", chat_id=chat_id, message_id=msg_id)
+    try:
+        status.update(f"📖 КРОК 1/4: ШІ Gemini читає {len(items)} фото...\n(Аналіз почерку, маршрутизація по категоріях, витягування брендів та розмірів)")
+        
+        всі_позиції = []
+        for idx, item in enumerate(items, 1):
+            if stop_flags.get(chat_id): raise Exception("Обробку зупинено користувачем.")
             всі_позиції.extend(normalize_photo(item['data'], item.get('caption', '')))
-        except Exception as e: errors.append(f"Помилка {idx}: {e}")
 
-    if not всі_позиції:
-        bot.edit_message_text("😕 Нічого не знайдено.", chat_id=chat_id, message_id=msg_id)
-        return
+        if not всі_позиції:
+            raise Exception("ШІ не знайшов сантехнічних позицій на фото або фото було нечітким.")
 
-    preview = "\n".join(f"• {п.get('original','')} → [{п.get('category_key','')}] {п.get('clean_name','')} (Розміри: {п.get('sizes',[])}, Бренд: {п.get('brand','')})" for п in всі_позиції[:8])
-    if len(всі_позиції) > 8: preview += f"\n... та ще {len(всі_позиції)-8}"
-    
-    bot.send_message(chat_id, f"✅ Маршрутизація завершена:\n\n{preview}")
-    bot.edit_message_text(f"🔍 Шукаю {len(всі_позиції)} позицій (Каскадний пошук)...", chat_id=chat_id, message_id=msg_id)
+        status.stop("✅ Крок 1 завершено.")
+        preview = "\n".join(f"• {п.get('original','')} → [{п.get('category_key','')}] {п.get('clean_name','')} (Розміри: {п.get('sizes',[])}, Бренд: {п.get('brand','')})" for п in всі_позиції[:8])
+        if len(всі_позиції) > 8: preview += f"\n... та ще {len(всі_позиції)-8}"
+        bot.send_message(chat_id, f"📝 Результат розпізнавання:\n\n{preview}")
 
-    результати = find_items(всі_позиції)
+        msg2 = bot.send_message(chat_id, "🔄 Продовжую...")
+        status2 = LiveStatus(bot, chat_id, msg2.message_id)
 
-    bot.edit_message_text("📊 Формую Excel...", chat_id=chat_id, message_id=msg_id)
-    excel, not_found = create_excel(результати)
+        status2.update(f"🔍 КРОК 2/4: Каскадний пошук {len(всі_позиції)} позицій...\n(Математична фільтрація по прайсам: відсікання сміття, перевірка розмірів)")
+        
+        status2.update(f"🧠 КРОК 3/4: Аналіз фінальних кандидатів через Claude AI...\n(Нейромережа обирає найкращий варіант з урахуванням логіки менеджера)")
+        результати = find_items(всі_позиції)
 
-    знайдено = [r for r in результати if r and r.get('знайдено')]
-    bot.send_document(chat_id, excel, visible_file_name="замовлення.xlsx")
+        status2.update("📊 КРОК 4/4: Формування фінального Excel-файлу...")
+        excel, not_found = create_excel(результати)
 
-    звіт = f"✅ Знайдено: {len(знайдено)}/{len(результати)} позицій"
-    if not_found: звіт += f"\n⚠️ Не знайдено ({len(not_found)} шт.):\n" + "\n".join(f"• {n}" for n in not_found[:5])
-    bot.edit_message_text(звіт, chat_id=chat_id, message_id=msg_id)
+        status2.stop("✅ Обробка успішно завершена! Файл готовий.")
+
+        знайдено = [r for r in результати if r and r.get('знайдено')]
+        bot.send_document(chat_id, excel, visible_file_name="замовлення.xlsx")
+
+        звіт = f"✅ Знайдено: {len(знайдено)}/{len(результати)} позицій"
+        if not_found: звіт += f"\n⚠️ Не знайдено ({len(not_found)} шт.):\n" + "\n".join(f"• {n}" for n in not_found[:5])
+        bot.send_message(chat_id, звіт)
+
+    except Exception as e:
+        error_details = traceback.format_exc()
+        err_msg = f"❌ СТАЛАСЯ КРИТИЧНА ПОМИЛКА!\n\nЩось пішло не так під час обробки. Ось деталі:\n\n`{str(e)}`\n\nТехнічна інформація (для розробника):\n`{error_details[-300:]}`"
+        try:
+            status.stop(err_msg)
+        except:
+            try:
+                status2.stop(err_msg)
+            except:
+                bot.send_message(chat_id, err_msg, parse_mode="Markdown")
 
 def add_to_batch(chat_id: int, item: dict):
     if not IS_READY:
