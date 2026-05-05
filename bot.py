@@ -35,23 +35,120 @@ bot           = telebot.TeleBot(TELEGRAM_TOKEN)
 claude        = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 gemini_client = genai_new.Client(api_key=GEMINI_KEY)
 
-CATALOG_PATH = "catalog.json"   # будується через build_catalog.py
+CATALOG_PATH = "catalog.json"
 RULES_FILE   = "rules.txt"
+
+CATALOG_FILES = [
+    ("adapters_reducers",        "Перехідники та редуктори"),
+    ("automation",               "Автоматика опалення"),
+    ("boilers",                  "Котли"),
+    ("fasteners_sealants",       "Кріплення та ущільнювачі"),
+    ("filtration",               "Фільтри та очистка"),
+    ("heating",                  "Опалення"),
+    ("hoses",                    "Шланги"),
+    ("insulation",               "Утеплювач"),
+    ("metal_plastic",            "Металопластик"),
+    ("mixers_faucets",           "Змішувачі та крани"),
+    ("plastic_ppr",              "Пластик ППР"),
+    ("pumps",                    "Насоси"),
+    ("push_systems",             "Системи PUSH"),
+    ("radiators_radiatorsvalve", "Радіатори та арматура"),
+    ("safety_valves",            "Арматура безпеки"),
+    ("sanitary_ware",            "Санфаянс"),
+    ("sewage",                   "Каналізація"),
+    ("shutoff_valves",           "Запірна арматура"),
+    ("siphons_fittings",         "Сифони та арматура"),
+    ("towel_warmers",            "Полотенцесушителі"),
+    ("underfloor_heating",       "Тепла підлога"),
+    ("water_heaters",            "Водонагрівачі"),
+    ("water_meters",             "Водолічильники"),
+]
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# АВТОБУДОВА КАТАЛОГУ (якщо catalog.json відсутній)
+# ═══════════════════════════════════════════════════════════════════════════════
+def is_header_row(name, artikul, or_val) -> bool:
+    """Заголовки мають ОР=0 і порожній артикул"""
+    name = str(name).strip()
+    if not name or name == 'nan':
+        return True
+    art = str(artikul).strip()
+    if art and art not in ('nan', '0', ''):
+        return False  # є артикул → товар
+    try:
+        if float(or_val) > 0:
+            return False  # є ціна → товар
+    except (ValueError, TypeError):
+        pass
+    return True  # інакше заголовок
+
+def build_catalog_from_xlsx() -> list[dict]:
+    catalog = []
+    # Шукаємо xlsx файли в поточній директорії та ./src/
+    search_dirs = ['.', 'src', os.path.dirname(os.path.abspath(__file__))]
+    for key, label in CATALOG_FILES:
+        found = False
+        for d in search_dirs:
+            path = os.path.join(d, f"{key}.xlsx")
+            if os.path.exists(path):
+                try:
+                    df = pd.read_excel(path, header=0)
+                    cols = list(df.columns)
+                    rename = {}
+                    if len(cols) >= 1: rename[cols[0]] = 'name'
+                    if len(cols) >= 2: rename[cols[1]] = 'artikul'
+                    if len(cols) >= 3: rename[cols[2]] = 'or_price'
+                    if len(cols) >= 4: rename[cols[3]] = 'kod'
+                    df = df.rename(columns=rename)
+                    count = 0
+                    for _, row in df.iterrows():
+                        name    = str(row.get('name', '')).strip()
+                        artikul = row.get('artikul', '')
+                        or_val  = row.get('or_price', 0)
+                        kod     = row.get('kod', '')
+                        if is_header_row(name, artikul, or_val):
+                            continue
+                        try:
+                            price = float(or_val)
+                        except (ValueError, TypeError):
+                            price = 0.0
+                        art_str = str(artikul).strip()
+                        kod_str = str(kod).strip()
+                        catalog.append({
+                            'name':     name,
+                            'artikul':  art_str if art_str != 'nan' else '',
+                            'kod':      kod_str if kod_str != 'nan' else '',
+                            'category': label,
+                            'price':    price,
+                        })
+                        count += 1
+                    print(f"  ✅ {path}: {count} товарів")
+                    found = True
+                    break
+                except Exception as e:
+                    print(f"  ❌ {path}: {e}")
+        if not found:
+            print(f"  ⚠️  {key}.xlsx не знайдено")
+    return catalog
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ЗАВАНТАЖЕННЯ КАТАЛОГУ
 # ═══════════════════════════════════════════════════════════════════════════════
 print("📦 Завантажую каталог...")
 if not os.path.exists(CATALOG_PATH):
-    raise FileNotFoundError(
-        f"Файл {CATALOG_PATH} не знайдено!\n"
-        "Спочатку запусти: python build_catalog.py"
-    )
-
-with open(CATALOG_PATH, encoding="utf-8") as f:
-    CATALOG = json.load(f)
-
-print(f"✅ Каталог завантажено: {len(CATALOG)} позицій")
+    print("⚙️  catalog.json не знайдено — будую з xlsx файлів...")
+    CATALOG = build_catalog_from_xlsx()
+    if CATALOG:
+        with open(CATALOG_PATH, "w", encoding="utf-8") as f:
+            json.dump(CATALOG, f, ensure_ascii=False)
+        print(f"✅ catalog.json збережено: {len(CATALOG)} позицій")
+    else:
+        print("❌ Не знайдено жодного xlsx файлу!")
+        CATALOG = []
+else:
+    with open(CATALOG_PATH, encoding="utf-8") as f:
+        CATALOG = json.load(f)
+    print(f"✅ Каталог завантажено: {len(CATALOG)} позицій")
 
 # Попередня індексація для швидкого пошуку
 # Токени: всі слова і числа з назви товару
