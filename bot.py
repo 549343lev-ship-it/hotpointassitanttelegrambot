@@ -57,13 +57,10 @@ IS_READY = False
 # ═══════════════════════════════════════════════════════════════════════════════
 def smart_tokenize(text: str) -> tuple[set, set]:
     text = str(text).lower()
-    # Спочатку забираємо PN (тиск) і DN, щоб вони не плуталися з діаметрами
     text = re.sub(r'\bpn\s*\d+\b', ' ', text)
     text = re.sub(r'\bdn\s*\d+\b', ' ', text)
-    
     text = text.replace('х', ' ').replace('x', ' ').replace('*', ' ').replace(',', '.')
     text = re.sub(r'[^\w\s/.]', ' ', text)
-    
     numbers = set(re.findall(r'\b\d+(?:\.\d+)?(?:/\d+)?\b', text))
     words = set(re.findall(r'\b[а-яёіїєґa-z]+\b', text))
     return words, numbers
@@ -162,19 +159,14 @@ def add_rule(new_rule: str):
     with open(RULES_FILE, "a", encoding="utf-8") as f: f.write(f"- {new_rule}\n")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# КРОК 1: ІЗОЛЬОВАНА НОРМАЛІЗАЦІЯ (ДЕТЕКТИВ)
+# КРОК 1: ІЗОЛЬОВАНА НОРМАЛІЗАЦІЯ
 # ═══════════════════════════════════════════════════════════════════════════════
 ЗНАННЯ_САНТЕХНІКИ = """
-1. КЛІПСИ/ОПОРИ: Слово "кліпса" або "опора" для пайки — це "Опора PPR", шукати в "plastic_ppr".
-2. АМЕРИКАНКИ МЕТАЛ: Тільки дюйми ("американка 3/4") — це метал, категорія "shutoff_valves".
-3. АМЕРИКАНКИ ПАЙКА: Якщо "мрн розбірна" або "американка 25х3/4" — це "Американка PPR", категорія "plastic_ppr". Вкажи thread_type: "РЗ" (якщо мрн/зовнішня) або "РВ" (якщо мрв/внутрішня).
-4. СПЕЦДЕТАЛІ: 
-   - "гебо" -> "Муфта затискна GEBO" (категорія: adapters_reducers)
-   - "обводка" -> "Перехрещення PPR" (категорія: plastic_ppr)
-   - "планка на ванну" -> "Коліно настінне подвійне" (категорія: plastic_ppr)
-5. ТРУБИ ПАЙКА: "пн 20" або "pn20" це тиск. Записуй його ТІЛЬКИ в поле "pn", і НЕ додавай 20 в поле sizes. "пн 25" -> pn: "PN25".
-6. БРЕНДИ: "еко" = ECO або Ekoplastik.
-7. ХОМУТИ: Ігноруй "DN". Якщо "кріплення радіатора 160", clean_name="Кронштейн радіаторний", розмір=["160"].
+1. АМЕРИКАНКИ: Звичайна "американка 3/4" (метал/латунь) — це категорія "shutoff_valves" (Запірна арматура). Бувають прямі і кутові.
+2. ПАЙКА (PPR): Якщо написано "мрн 25х3/4" або "американка 25х3/4" — це перехід з труби на різьбу, шукати в "plastic_ppr".
+3. ОПОРИ/КЛІПСИ: Якщо написано "опора" — це означає "кліпса", шукати в "plastic_ppr".
+4. ХОМУТИ: Для хомутів ігноруй "DN", дивись тільки на реальні розміри в міліметрах (напр. 48-53 мм).
+5. СЛЕНГ: кол/кут=Коліно, трій/рожон=Трійник, муф=Муфта, пер=Перехідник, шар=Кран кульовий, єврокон=Євроконус, ізол=Утеплювач PLM.
 """
 
 def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
@@ -182,42 +174,29 @@ def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
     rules_block = f"\nДодаткові правила:\n{rules}" if rules else ""
 
     prompt = f"""Ти — професійний менеджер з продажу сантехніки. Твоє завдання — перекласти сленг монтажника на точну структуру для алгоритму.
-ПІДКАЗКА: {caption}
+ПІДКАЗКА МЕНЕДЖЕРА: {caption}
+(ОБОВ'ЯЗКОВО! Враховуй виробників/бренди з підказки для відповідних категорій товару).
 
-БАЗА ЗНАНЬ ПРОФЕСІОНАЛА: {ЗНАННЯ_САНТЕХНІКИ}{rules_block}
+БАЗА ЗНАНЬ: {ЗНАННЯ_САНТЕХНІКИ}{rules_block}
 
-КАТЕГОРІЇ (ФАЙЛИ):
+КАТЕГОРІЇ (ФАЙЛИ) ДЛЯ ІЗОЛЯЦІЇ:
 {CATALOG_KEYS_DESC}
 
 ЗАВДАННЯ ДЛЯ КОЖНОГО РЯДКА:
-1. category_key: Обери правильну папку.
-2. clean_name: Канонічна назва товару (напр. "Опора PPR", "Муфта затискна GEBO", "Перехрещення PPR", "Американка PPR"). БЕЗ РОЗМІРІВ, БЕЗ БРЕНДІВ.
-3. sizes: Масив ТІЛЬКИ геометричних розмірів (діаметри, дюйми, кути). УВАГА: Значення PN (20, 25) сюди НЕ ПИСАТИ!
-4. thread_type: "РВ" (Внутрішня/МРВ) або "РЗ" (Зовнішня/МРН). Якщо немає - пусто "".
-5. pn: Якщо вказано "пн 20", "пн 25", "pn16" - пиши сюди "PN20", "PN25". Якщо ні - пусто "".
-6. brand: Виробник (напр. "RAFTEC", "ASG", "EKOPLASTIK", "GEBO").
+1. Визнач правильну категорію (category_key).
+2. Сформуй clean_name: ТІЛЬКИ тип деталі. БЕЗ розмірів і БЕЗ бренду! (напр. "Коліно PPR", "Кліпса").
+3. Витягни ВСІ цифри розмірів у масив sizes (напр. ["25", "3/4"]).
+4. ВИТЯГНИ БРЕНД (виробника) в окреме поле "brand". Якщо він є в підказці (напр. "Пайка рафтек") — пиши ЛАТИНИЦЕЮ "RAFTEC". Якщо немає, пиши "".
 
 ВІДПОВІДАЙ ТІЛЬКИ JSON масивом:
 [
   {{
-    "original": "мрн 40*1 1/4 розбірні",
-    "category_key": "plastic_ppr",
-    "clean_name": "Американка PPR",
-    "thread_type": "РЗ",
-    "pn": "",
+    "original": "американка 3/4",
+    "category_key": "shutoff_valves",
+    "clean_name": "Американка пряма",
     "brand": "",
-    "sizes": ["40", "1 1/4"],
-    "qty": "2"
-  }},
-  {{
-    "original": "труба 20 пн 25 стікло",
-    "category_key": "plastic_ppr",
-    "clean_name": "Труба PPR",
-    "thread_type": "",
-    "pn": "PN25",
-    "brand": "",
-    "sizes": ["20"],
-    "qty": "4"
+    "sizes": ["3/4"],
+    "qty": "5"
   }}
 ]"""
 
@@ -256,7 +235,21 @@ def smart_keyword_search(parsed_item: dict, top_n: int = 5) -> list[dict]:
         i_numbers = set(item.get('_numbers', []))
         item_name_lower = item['name'].lower()
         
-        # 1. ЖОРСТКИЙ ФІЛЬТР РОЗМІРУ (Геометрія)
+        # 1. ЖОРСТКЕ ВІДСІКАННЯ ПО БРЕНДУ (АБСОЛЮТНИЙ ФІЛЬТР)
+        if q_brand:
+            valid_brand = False
+            if q_brand in item_name_lower:
+                valid_brand = True
+            # Обробка синонімів для популярних брендів
+            elif q_brand in ["еко", "eco", "ekoplastik"] and any(b in item_name_lower for b in ["eco", "ekoplastik"]):
+                valid_brand = True
+            elif q_brand == "asg" and "асг" in item_name_lower:
+                valid_brand = True
+                
+            if not valid_brand:
+                continue # ПРОПУСКАЄМО ТОВАР: Виробник не збігається!
+        
+        # 2. ЖОРСТКИЙ ФІЛЬТР РОЗМІРУ (Геометрія)
         if q_sizes and not q_sizes.issubset(i_numbers):
             continue 
             
@@ -269,55 +262,44 @@ def smart_keyword_search(parsed_item: dict, top_n: int = 5) -> list[dict]:
             confidence = min(100, int((word_match / max(len(q_words), 1)) * 100))
             if num_penalty > 0: confidence -= min(20, int(num_penalty * 10))
             
-            # 2. ПРІОРИТЕТ ТИСКУ (PN)
+            # ПРІОРИТЕТ ТИСКУ (PN)
             if q_pn:
                 if q_pn in item_name_lower:
                     score += 50
                     confidence = min(100, confidence + 20)
                 else:
-                    # Якщо шукаємо PN25, а товар має PN20 - жорсткий штраф
                     if "pn20" in item_name_lower or "pn16" in item_name_lower or "pn25" in item_name_lower:
                         score -= 40
                         confidence -= 30
                         
-            # 3. ПРІОРИТЕТ РІЗЬБИ (РВ/РЗ)
+            # ПРІОРИТЕТ РІЗЬБИ (РВ/РЗ)
             if q_thread:
                 if q_thread == "рв" and ("рв" in item_name_lower or "вв" in item_name_lower or "внутр" in item_name_lower):
                     score += 20
                 elif q_thread == "рз" and ("рз" in item_name_lower or "зз" in item_name_lower or "зовн" in item_name_lower or "наруж" in item_name_lower):
                     score += 20
                 else:
-                    score -= 10 # Штраф за неспівпадіння різьби
-
-            # 4. СУПЕР-ПРІОРИТЕТ БРЕНДУ
-            if q_brand:
-                if q_brand in item_name_lower or (q_brand == "еко" and ("eco" in item_name_lower or "ekoplastik" in item_name_lower)):
-                    score += 100 
-                    confidence = min(100, confidence + 15)
-                elif "raftec" in q_brand and "asg" in item_name_lower:
-                    score -= 80
-                    confidence -= 40
-                elif "asg" in q_brand and "raftec" in item_name_lower:
-                    score -= 80
-                    confidence -= 40
+                    score -= 10
                     
             item['_confidence'] = f"{max(10, confidence)}%"
             scores.append((score, item))
 
-    # М'який пошук (якщо суворий провалився)
+    # М'який пошук (якщо суворий провалився) - ТАКОЖ ІЗ ЖОРСТКИМ БРЕНДОМ
     if not scores:
         for item in subset:
+            item_name_lower = item['name'].lower()
+            
+            if q_brand:
+                valid_brand = False
+                if q_brand in item_name_lower: valid_brand = True
+                elif q_brand in ["еко", "eco", "ekoplastik"] and any(b in item_name_lower for b in ["eco", "ekoplastik"]): valid_brand = True
+                if not valid_brand: continue # Пропускаємо і тут
+                
             i_words = set(item.get('_words', []))
             word_match = len(q_words & i_words)
             if word_match > 0:
                 score = word_match / max(len(i_words), 1)
                 confidence = min(60, int((word_match / max(len(q_words), 1)) * 100))
-                
-                item_name_lower = item['name'].lower()
-                if q_brand and (q_brand in item_name_lower or (q_brand == "еко" and "eco" in item_name_lower)):
-                    score += 100
-                    confidence += 10
-                    
                 item['_confidence'] = f"{confidence}%"
                 scores.append((score, item))
 
@@ -331,7 +313,6 @@ def claude_pick_batch(позиції_з_кандидатами: list[dict]) -> l
     запити = []
     for i, пос in enumerate(позиції_з_кандидатами):
         кандидати = "\n".join(f"  {j+1}. {c['name']}" for j, c in enumerate(пос['candidates']))
-        # Передаємо Claude всю знайдену інфу
         info = f"Розміри: {пос.get('sizes')}, PN: {пос.get('pn')}, Бренд: {пос.get('brand')}, Різьба: {пос.get('thread_type')}"
         запити.append(f"{i+1}. ЗАПИТ: {пос['normalized']} ({info})\n   КАНДИДАТИ:\n{кандидати}")
 
@@ -378,17 +359,29 @@ def find_items(позиції: list[dict]) -> list[dict]:
             idx = пос['idx']
             r = відповіді[j] if j < len(відповіді) else {}
             
-            confidence = "Claude (AI)"
+            confidence_str = "0%"
             
             if r.get('знайдено') and r.get('номер_кандидата'):
                 n = max(0, min(int(r['номер_кандидата']) - 1, len(пос['candidates'])-1))
                 found = пос['candidates'][n]
-                if n == 0: confidence = found.get('_confidence', '100%')
+                confidence_str = found.get('_confidence', '100%')
             elif len(пос['candidates']) > 0:
                 found = пос['candidates'][0]
-                confidence = found.get('_confidence', '100%')
+                confidence_str = found.get('_confidence', '100%')
             else:
                 found = None
+
+            # 5. ПОРІГ ВПЕВНЕНОСТІ 50% (ВІДСІКАННЯ)
+            if found:
+                try:
+                    conf_val = int(confidence_str.replace('%', ''))
+                except:
+                    conf_val = 100 # Якщо не змогли розпізнати, довіряємо
+                    
+                if conf_val < 50:
+                    found = None # Відхиляємо сумнівний товар
+                else:
+                    confidence = f"{conf_val}% (Claude)" if r.get('знайдено') else f"{conf_val}%"
 
             if found:
                 результати[idx] = {
@@ -398,7 +391,7 @@ def find_items(позиції: list[dict]) -> list[dict]:
             else:
                 результати[idx] = {
                     'original':  пос['original'], 'normalized': пос['normalized'],
-                    'знайдено':  False, 'назва': '', 'qty': пос['qty'], 'оцінка': '0%'
+                    'знайдено':  False, 'назва': '', 'qty': пос['qty'], 'оцінка': '<50% (Відхилено)'
                 }
 
     return результати
@@ -450,7 +443,7 @@ def process_batch(chat_id: int):
         bot.edit_message_text("😕 Нічого не знайдено.", chat_id=chat_id, message_id=msg_id)
         return
 
-    preview = "\n".join(f"• {п.get('original','')} → [{п.get('category_key','')}] {п.get('clean_name','')} (Розміри: {п.get('sizes',[])}, PN: {п.get('pn','')})" for п in всі_позиції[:8])
+    preview = "\n".join(f"• {п.get('original','')} → [{п.get('category_key','')}] {п.get('clean_name','')} (Розміри: {п.get('sizes',[])}, Бренд: {п.get('brand','')})" for п in всі_позиції[:8])
     if len(всі_позиції) > 8: preview += f"\n... та ще {len(всі_позиції)-8}"
     
     bot.send_message(chat_id, f"✅ Маршрутизація завершена:\n\n{preview}")
