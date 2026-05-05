@@ -252,9 +252,12 @@ def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
         ]
     )
     raw = resp.text.strip().replace('```json', '').replace('```', '').strip()
-    if '[' in raw:
-        raw = raw[raw.index('['):raw.rindex(']')+1]
-    return json.loads(raw)
+    try:
+        if '[' in raw and ']' in raw:
+            raw = raw[raw.index('['):raw.rindex(']')+1]
+        return json.loads(raw)
+    except Exception:
+        return []
 
 
 def normalize_text(text: str) -> list[dict]:
@@ -281,9 +284,12 @@ def normalize_text(text: str) -> list[dict]:
         messages=[{"role": "user", "content": prompt}]
     )
     raw = resp.content[0].text.strip().replace('```json','').replace('```','').strip()
-    if '[' in raw:
-        raw = raw[raw.index('['):raw.rindex(']')+1]
-    return json.loads(raw)
+    try:
+        if '[' in raw and ']' in raw:
+            raw = raw[raw.index('['):raw.rindex(']')+1]
+        return json.loads(raw)
+    except Exception:
+        return []
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -353,9 +359,9 @@ def claude_pick_batch(позиції_з_кандидатами: list[dict]) -> l
         messages=[{"role": "user", "content": prompt}]
     )
     raw = resp.content[0].text.strip().replace('```json','').replace('```','').strip()
-    if '[' in raw:
-        raw = raw[raw.index('['):raw.rindex(']')+1]
     try:
+        if '[' in raw and ']' in raw:
+            raw = raw[raw.index('['):raw.rindex(']')+1]
         return json.loads(raw)
     except Exception:
         return [{"знайдено": False}] * len(позиції_з_кандидатами)
