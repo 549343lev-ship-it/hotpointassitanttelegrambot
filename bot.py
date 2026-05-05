@@ -66,14 +66,14 @@ def smart_tokenize(text: str) -> tuple[set, set]:
     return words, numbers
 
 def is_brand_match(q_brand: str, item_name_lower: str) -> bool:
-    """Перевіряє збіг бренду з урахуванням кирилиці, транслітерації та скорочень."""
     if not q_brand: return False
     q_brand = q_brand.lower().strip()
     
-    # Групи абсолютних синонімів
+    # РОЗДІЛЕНО ECO та EKOPLASTIK!
     brand_groups = [
         ["raftec", "рафтек", "raftek", "рафтэк"],
-        ["ekoplastik", "екопластик", "eco", "еко", "ekoplast", "экопластик"],
+        ["ekoplastik", "екопластик", "ekoplast", "экопластик"], # Тільки Екопластик
+        ["eco", "еко", "эко"], # Тільки ECO
         ["asg", "асг"],
         ["gebo", "гебо"],
         ["kan", "кан"],
@@ -85,9 +85,7 @@ def is_brand_match(q_brand: str, item_name_lower: str) -> bool:
     if q_brand in item_name_lower: return True
     
     for group in brand_groups:
-        # Якщо те, що ми шукаємо (q_brand), належить до цієї групи синонімів...
         if any(alias == q_brand or alias in q_brand for alias in group):
-            # ...тоді перевіряємо, чи є БУДЬ-ЯКИЙ синонім з цієї групи в назві товару
             if any(alias in item_name_lower for alias in group):
                 return True
                 
@@ -187,14 +185,18 @@ def add_rule(new_rule: str):
     with open(RULES_FILE, "a", encoding="utf-8") as f: f.write(f"- {new_rule}\n")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# КРОК 1: ІЗОЛЬОВАНА НОРМАЛІЗАЦІЯ
+# КРОК 1: ІЗОЛЬОВАНА НОРМАЛІЗАЦІЯ (З ОНОВЛЕНОЮ БАЗОЮ)
 # ═══════════════════════════════════════════════════════════════════════════════
 ЗНАННЯ_САНТЕХНІКИ = """
-1. АМЕРИКАНКИ: Звичайна "американка 3/4" (метал/латунь) — це категорія "shutoff_valves" (Запірна арматура). Бувають прямі і кутові.
-2. ПАЙКА (PPR): Якщо написано "мрн 25х3/4" або "американка 25х3/4" — це перехід з труби на різьбу, шукати в "plastic_ppr".
-3. ОПОРИ/КЛІПСИ: Якщо написано "опора" або "кліпса" — це "Опора PPR", шукати в "plastic_ppr".
-4. ХОМУТИ: Для хомутів ігноруй "DN", дивись тільки на реальні розміри в міліметрах (напр. 48-53 мм).
-5. СЛЕНГ: кол/кут=Коліно, трій/рожон=Трійник, муф=Муфта, пер=Перехідник, шар=Кран кульовий, єврокон=Євроконус, ізол=Утеплювач PLM.
+1. АМЕРИКАНКИ: Звичайна "американка 3/4" (метал) — це "shutoff_valves". Якщо "мрн розбірна" або "американка 25х3/4" (пайка) — це "Американка PPR" (plastic_ppr).
+2. ТЕРМІНОЛОГІЯ МРВ/МРЗ (СУВОРІ ПРАВИЛА!):
+   - "мрв кутове" або "мрв углове" = "Коліно МРВ" (Коліно різьбове внутрішнє).
+   - "мрз кутове", "мрн кутове" або "мрн углове" = "Коліно МРЗ" (Коліно різьбове зовнішнє).
+   - "мрн" або "мрз" (прямі) = "Муфта МРЗ" (Муфта різьбова зовнішня).
+   - "мрв" (пряме) = "Муфта МРВ" (Муфта різьбова внутрішня).
+3. ОПОРИ/КЛІПСИ: "опора" або "кліпса" — це "Опора PPR" (plastic_ppr).
+4. ХОМУТИ: Для хомутів ігноруй "DN", витягуй тільки розміри в міліметрах (напр. 48-53 мм).
+5. БРЕНДИ: "екопластик" - пиши "EKOPLASTIK". "еко" - пиши "ECO". Це РІЗНІ бренди!
 """
 
 def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
@@ -203,28 +205,32 @@ def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
 
     prompt = f"""Ти — професійний менеджер з продажу сантехніки. Твоє завдання — перекласти сленг монтажника на точну структуру для алгоритму.
 ПІДКАЗКА МЕНЕДЖЕРА: {caption}
-(ОБОВ'ЯЗКОВО! Враховуй виробників/бренди з підказки для відповідних категорій товару).
+(ОБОВ'ЯЗКОВО! Враховуй виробників/бренди з підказки).
 
 БАЗА ЗНАНЬ: {ЗНАННЯ_САНТЕХНІКИ}{rules_block}
 
-КАТЕГОРІЇ (ФАЙЛИ) ДЛЯ ІЗОЛЯЦІЇ:
+КАТЕГОРІЇ ДЛЯ ІЗОЛЯЦІЇ:
 {CATALOG_KEYS_DESC}
 
 ЗАВДАННЯ ДЛЯ КОЖНОГО РЯДКА:
-1. Визнач правильну категорію (category_key).
-2. Сформуй clean_name: ТІЛЬКИ тип деталі. БЕЗ розмірів і БЕЗ бренду! (напр. "Коліно PPR", "Опора").
-3. Витягни ВСІ цифри розмірів у масив sizes (напр. ["25", "3/4"]).
-4. ВИТЯГНИ БРЕНД (виробника) в окреме поле "brand". Якщо він є в підказці (напр. "Пайка рафтек") — пиши ЛАТИНИЦЕЮ "RAFTEC". Якщо написано "екопластик" - пиши "EKOPLASTIK". Якщо немає, пиши "".
+1. category_key: Визнач папку.
+2. clean_name: Канонічна назва (напр. "Коліно МРВ", "Муфта МРЗ", "Американка PPR"). БЕЗ розмірів!
+3. sizes: Масив розмірів (напр. ["25", "3/4"]).
+4. thread_type: "РВ" (внутрішня) або "РЗ" (зовнішня). Якщо немає - "".
+5. pn: Тиск ("PN20", "PN25").
+6. brand: Виробник латиницею ("RAFTEC", "EKOPLASTIK", "ECO"). Якщо немає, "".
 
 ВІДПОВІДАЙ ТІЛЬКИ JSON масивом:
 [
   {{
-    "original": "американка 3/4",
-    "category_key": "shutoff_valves",
-    "clean_name": "Американка пряма",
+    "original": "мрв углова 25*3/4",
+    "category_key": "plastic_ppr",
+    "clean_name": "Коліно МРВ",
+    "thread_type": "РВ",
+    "pn": "",
     "brand": "",
-    "sizes": ["3/4"],
-    "qty": "5"
+    "sizes": ["25", "3/4"],
+    "qty": "1"
   }}
 ]"""
 
@@ -244,7 +250,7 @@ def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
     except: return []
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# КРОК 2: КАСКАДНИЙ ПОШУК (3 СПРОБИ З СИНОНІМАЙЗЕРОМ БРЕНДІВ)
+# КРОК 2: КАСКАДНИЙ ПОШУК (З ЧОРНИМ СПИСКОМ)
 # ═══════════════════════════════════════════════════════════════════════════════
 def smart_keyword_search(parsed_item: dict, top_n: int = 5) -> list[dict]:
     target_category = parsed_item.get('category_key', '')
@@ -258,23 +264,26 @@ def smart_keyword_search(parsed_item: dict, top_n: int = 5) -> list[dict]:
     if not subset: subset = CATALOG 
 
     def evaluate_item(item, require_brand: bool, require_sizes: bool):
-        i_words = set(item.get('_words', []))
-        i_numbers = set(item.get('_numbers', []))
         item_name_lower = item['name'].lower()
         
-        # 1. Перевірка Бренду (З використанням Синонімайзера)
+        # ЧОРНИЙ СПИСОК: Миттєво відкидаємо сміття з прайсу
+        if any(bad_word in item_name_lower for bad_word in ["зразок", "пошкоджений", "уцінка", "брак"]):
+            return None
+            
+        i_words = set(item.get('_words', []))
+        i_numbers = set(item.get('_numbers', []))
+        
         if require_brand and q_brand:
             if not is_brand_match(q_brand, item_name_lower):
-                return None # Пропускаємо товар, якщо бренд не зійшовся
+                return None 
                 
-        # 2. Перевірка Розміру
         if require_sizes and q_sizes:
             if not q_sizes.issubset(i_numbers): 
                 return None
             
         word_match = len(q_words & i_words)
         if word_match == 0 and len(q_words) > 0:
-            return None # Хоч одне слово (напр. "Коліно") має збігтися
+            return None 
             
         num_penalty = (len(i_numbers) - len(q_sizes)) * 0.2 if require_sizes else 0
         precision = word_match / max(len(i_words), 1)
@@ -282,21 +291,18 @@ def smart_keyword_search(parsed_item: dict, top_n: int = 5) -> list[dict]:
         score = (word_match * 2) + precision - num_penalty
         confidence = min(100, int((word_match / max(len(q_words), 1)) * 100))
         
-        # Бонуси за тиск (PN)
         if q_pn:
             if q_pn in item_name_lower:
                 score += 20; confidence = min(100, confidence + 10)
             elif "pn" in item_name_lower:
                 score -= 20; confidence -= 15
                 
-        # Бонуси за різьбу (РВ/РЗ)
         if q_thread:
             if q_thread == "рв" and ("рв" in item_name_lower or "вв" in item_name_lower or "внутр" in item_name_lower):
                 score += 10; confidence += 5
-            elif q_thread == "рз" and ("рз" in item_name_lower or "зз" in item_name_lower or "зовн" in item_name_lower or "наруж" in item_name_lower):
+            elif q_thread == "рз" and ("рз" in item_name_lower or "зз" in item_name_lower or "зовн" in item_name_lower or "наруж" in item_name_lower or "мрн" in item_name_lower):
                 score += 10; confidence += 5
                 
-        # Якщо ми на етапі "без обов'язкового бренду", але бренд випадково зійшовся — даємо бонус
         if not require_brand and q_brand and is_brand_match(q_brand, item_name_lower):
             score += 30; confidence += 10
             
@@ -305,7 +311,7 @@ def smart_keyword_search(parsed_item: dict, top_n: int = 5) -> list[dict]:
     scores = []
     search_type = ""
 
-    # СПРОБА 1: Ідеальний збіг (Розмір + Правильний Бренд/Синонім)
+    # СПРОБА 1: Ідеальний збіг
     for item in subset:
         res = evaluate_item(item, require_brand=True, require_sizes=True)
         if res: scores.append((*res, item))
@@ -313,7 +319,7 @@ def smart_keyword_search(parsed_item: dict, top_n: int = 5) -> list[dict]:
     if scores:
         search_type = "Ідеально"
     else:
-        # СПРОБА 2: Інший Бренд / Аналог (Суворий Розмір + Будь-який Бренд)
+        # СПРОБА 2: Інший Бренд / Аналог
         for item in subset:
             res = evaluate_item(item, require_brand=False, require_sizes=True)
             if res: scores.append((*res, item))
@@ -321,7 +327,7 @@ def smart_keyword_search(parsed_item: dict, top_n: int = 5) -> list[dict]:
         if scores:
             search_type = "Аналог"
         else:
-            # СПРОБА 3: М'який пошук (Ігноруємо жорсткі розміри і бренд)
+            # СПРОБА 3: М'який пошук
             for item in subset:
                 res = evaluate_item(item, require_brand=False, require_sizes=False)
                 if res: scores.append((*res, item))
@@ -331,7 +337,6 @@ def smart_keyword_search(parsed_item: dict, top_n: int = 5) -> list[dict]:
     scores.sort(key=lambda x: -x[0])
     
     for score, conf, item in scores[:top_n]:
-        # Маркуємо впевненість залежно від того, на якій спробі знайшли
         if search_type == "Ідеально":
             item['_confidence'] = f"{max(10, conf)}%"
         elif search_type == "Аналог":
@@ -409,7 +414,6 @@ def find_items(позиції: list[dict]) -> list[dict]:
             else:
                 found = None
 
-            # ПОРІГ ВІДСІКАННЯ: 30%
             if found:
                 try:
                     conf_val = int(re.search(r'\d+', confidence_str).group())
