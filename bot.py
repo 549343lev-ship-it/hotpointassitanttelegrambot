@@ -22,22 +22,22 @@ CATALOG_PATH = "catalog_smart.json"
 RULES_FILE   = "rules.txt"
 
 CATALOG_FILES = [
-    ("adapters_reducers",        "Перехідники та редуктори"),
+    ("adapters_reducers",        "Перехідники, латунь, редуктори"),
     ("automation",               "Автоматика опалення"),
     ("boilers",                  "Котли"),
-    ("fasteners_sealants",       "Кріплення та ущільнювачі"),
+    ("fasteners_sealants",       "Кріплення, кліпси, хомути, ущільнювачі"),
     ("filtration",               "Фільтри та очистка"),
-    ("heating",                  "Опалення"),
+    ("heating",                  "Опалення загальне"),
     ("hoses",                    "Шланги"),
-    ("insulation",               "Утеплювач"),
+    ("insulation",               "Утеплювач (мерилон)"),
     ("metal_plastic",            "Металопластик"),
     ("mixers_faucets",           "Змішувачі та крани"),
-    ("plastic_ppr",              "Пластик ППР"),
+    ("plastic_ppr",              "Пластик ППР (пайка, труби, фітинги)"),
     ("pumps",                    "Насоси"),
     ("push_systems",             "Системи PUSH"),
-    ("radiators_radiatorsvalve", "Радіатори та арматура"),
+    ("radiators_radiatorsvalve", "Радіатори та арматура до них"),
     ("safety_valves",            "Арматура безпеки"),
-    ("sanitary_ware",            "Санфаянс"),
+    ("sanitary_ware",            "Санфаянс (інсталяції)"),
     ("sewage",                   "Каналізація"),
     ("shutoff_valves",           "Запірна арматура"),
     ("siphons_fittings",         "Сифони та арматура"),
@@ -47,20 +47,21 @@ CATALOG_FILES = [
     ("water_meters",             "Водолічильники"),
 ]
 
+CATALOG_KEYS_DESC = "\n".join([f"- {k}: {desc}" for k, desc in CATALOG_FILES])
+
 CATALOG = []
 IS_READY = False
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# РОЗУМНИЙ ТОКЕНІЗАТОР
+# РОЗУМНИЙ ТОКЕНІЗАТОР (Витягує чисті розміри 25, 3/4)
 # ═══════════════════════════════════════════════════════════════════════════════
 def smart_tokenize(text: str) -> tuple[set, set]:
-    """Розбиває текст на слова та окремо на цифри. Знищує 'х', '*' для чистих розмірів."""
     text = str(text).lower()
-    text = text.replace('х', ' ').replace('x', ' ').replace('*', ' ').replace('-', ' ').replace(',', '.')
+    text = text.replace('х', ' ').replace('x', ' ').replace('*', ' ').replace(',', '.')
+    text = re.sub(r'[^\w\s/.]', ' ', text)
     
-    tokens = set(re.findall(r'[а-яёіїєґa-z]+|\d+(?:\.\d+)?', text))
-    numbers = set(re.findall(r'\d+(?:\.\d+)?', text))
-    words = tokens - numbers
+    numbers = set(re.findall(r'\b\d+(?:\.\d+)?(?:/\d+)?\b', text))
+    words = set(re.findall(r'\b[а-яёіїєґa-z]+\b', text))
     return words, numbers
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -113,6 +114,7 @@ def build_catalog_from_xlsx() -> list[dict]:
                             'artikul':  str(artikul).strip() if str(artikul).strip() != 'nan' else '',
                             'kod':      str(kod).strip() if str(kod).strip() != 'nan' else '',
                             'category': label,
+                            'file_key': key,  # ВАЖЛИВО: Маркер для ізоляції пошуку
                             'price':    price,
                             '_words':   list(words),
                             '_numbers': list(numbers)
@@ -156,12 +158,13 @@ def add_rule(new_rule: str):
     with open(RULES_FILE, "a", encoding="utf-8") as f: f.write(f"- {new_rule}\n")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# КРОК 1: ОЧИЩЕНА НОРМАЛІЗАЦІЯ
+# КРОК 1: ІЗОЛЬОВАНА НОРМАЛІЗАЦІЯ
 # ═══════════════════════════════════════════════════════════════════════════════
 ЗНАННЯ_САНТЕХНІКИ = """
-КАНАЛІЗАЦІЯ: 90° = 87,5°. ASG = HTR (сіра), OSTENDORF = HT Safe.
-PPR: PN20 = Faser HOT, PN25 = Nano Ag Composite. МРЗ/МРВ = Муфти.
-СЛЕНГ: кол/кут=Коліно, трій/рожон=Трійник, муф=Муфта, пер=Перехідник, шар=Кран кульовий, єврокон=Євроконус, ізол=Утеплювач PLM.
+1. КАНАЛІЗАЦІЯ: 90° = 87,5°. ASG = HTR (сіра), OSTENDORF = HT Safe.
+2. ПАЙКА (PPR): Якщо 2 розміри (напр. 25х3/4) - це перехід з труби на різьбу (МРВ/МРЗ). Якщо 1 розмір (напр. 25) - це чистий пластик.
+3. МЕТАЛ/ЛАТУНЬ: Якщо тільки дюйми (напр. 3/4) - це метал (звичайна американка, футорка, кран).
+4. СЛЕНГ: кол/кут=Коліно, трій/рожон=Трійник, муф=Муфта, пер=Перехідник, шар=Кран кульовий, єврокон=Євроконус, ізол=Утеплювач PLM.
 """
 
 def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
@@ -169,23 +172,33 @@ def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
     rules_block = f"\nДодаткові правила:\n{rules}" if rules else ""
 
     prompt = f"""Ти — експерт із сантехніки України. На фото рукописний список замовлення.
-ПІДКАЗКА МЕНЕДЖЕРА: {caption}{rules_block}
-БАЗА ЗНАНЬ: {ЗНАННЯ_САНТЕХНІКИ}
+ПІДКАЗКА МЕНЕДЖЕРА: {caption}
+(ОБОВ'ЯЗКОВО! Якщо в підказці вказано бренд або тип труби, примусово впиши його в clean_name для відповідних позицій).
 
-ЗАВДАННЯ:
-1. Прочитай кожен рядок.
-2. Нормалізуй до ІДЕАЛЬНО ЧИСТОГО ПОШУКОВОГО ЗАПИТУ. БЕЗ зайвих слів типу "градусів", "діаметр", "довжина", "мм". Тільки суха суть!
-3. Цифри розмірів (25х20) обов'язково розбивай пробілом (25 20).
+БАЗА ЗНАНЬ: {ЗНАННЯ_САНТЕХНІКИ}{rules_block}
 
-ПРИКЛАДИ ЧИСТОГО ФОРМАТУ:
-- "тр 50 1м" → "Труба каналізаційна 50 1м АСГ"
-- "коліно 25 90" → "Коліно PPR 25 90 RAFTEC"
-- "трійник 25х20" → "Трійник редукційний PPR 25 20 25 ASG"
-- "кліпси 25" → "Кліпса PPR 25 ASG"
-- "американка 3/4" → "Американка пряма PPR 3/4 RAFTEC"
+КАТЕГОРІЇ (ФАЙЛИ) ДЛЯ ІЗОЛЯЦІЇ:
+{CATALOG_KEYS_DESC}
+
+ЗАВДАННЯ ДЛЯ КОЖНОГО РЯДКА:
+1. Визнач правильну категорію (category_key).
+   - "американка 3/4" (метал) -> "mixers_faucets" або "adapters_reducers"
+   - "мрв 25х3/4", "коліно 25" (пайка) -> "plastic_ppr"
+   - "кліпси 25" -> "fasteners_sealants"
+   - "каналізація" -> "sewage"
+2. Витягни ВСІ цифри розмірів у масив sizes (напр. ["25"], ["3/4"], ["25", "3/4"], ["110", "50", "87.5"]).
+3. Сформуй clean_name: ТІЛЬКИ тип деталі та бренд (якщо є в підказці). БЕЗ розмірів у назві!
 
 ВІДПОВІДАЙ ТІЛЬКИ JSON масивом:
-[ {{"original": "що написано на фото", "normalized": "чистий пошуковий запит", "qty": "кількість"}} ]"""
+[
+  {{
+    "original": "кліпси 25",
+    "category_key": "fasteners_sealants",
+    "clean_name": "Кліпса для труб PPR ASG", // ASG якщо було в підказці
+    "sizes": ["25"],
+    "qty": "50"
+  }}
+]"""
 
     image_bytes = base64.b64decode(image_b64)
     resp = gemini_client.models.generate_content(
@@ -203,28 +216,43 @@ def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
     except: return []
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# КРОК 2: ЖОРСТКИЙ МАТЕМАТИЧНИЙ ПОШУК
+# КРОК 2: СУВОРИЙ МАТЕМАТИЧНИЙ ПОШУК З ІЗОЛЯЦІЄЮ
 # ═══════════════════════════════════════════════════════════════════════════════
-def smart_keyword_search(query: str, top_n: int = 5) -> list[dict]:
-    q_words, q_numbers = smart_tokenize(query)
-    if not q_words and not q_numbers: return []
+def smart_keyword_search(parsed_item: dict, top_n: int = 5) -> list[dict]:
+    target_category = parsed_item.get('category_key', '')
+    q_words, _ = smart_tokenize(parsed_item.get('clean_name', ''))
+    q_sizes = set(parsed_item.get('sizes', []))
+    
+    # 1. ІЗОЛЯЦІЯ: Шукаємо тільки у вказаному файлі
+    subset = [i for i in CATALOG if i.get('file_key') == target_category] if target_category else CATALOG
+    if not subset: subset = CATALOG # Fallback, якщо категорія хибна
 
     scores = []
-    for item in CATALOG:
+    for item in subset:
         i_words = set(item.get('_words', []))
         i_numbers = set(item.get('_numbers', []))
         
-        # ЖОРСТКИЙ ФІЛЬТР ЦИФР: Якщо в запиті є цифра (напр. 50), вона ПОВИННА бути в товарі!
-        if q_numbers and not q_numbers.issubset(i_numbers):
-            continue # Пропускаємо товар, якщо розміри не збігаються
+        # 2. ЖОРСТКИЙ ФІЛЬТР: Всі розміри з запиту ПОВИННІ бути в товарі
+        if q_sizes and not q_sizes.issubset(i_numbers):
+            continue 
             
         word_match = len(q_words & i_words)
-        if word_match > 0 or len(q_numbers) > 0:
-            # Даємо бали за збіг слів + пріоритет коротшим назвам каталогу (точніший збіг)
+        if word_match > 0 or not q_words:
+            # 3. ШТРАФ ЗА ЗАЙВІ РОЗМІРИ: 
+            # Якщо шукаємо "3/4", то товар "20х3/4" отримає штраф, а чистий "3/4" виграє!
+            num_penalty = (len(i_numbers) - len(q_sizes)) * 0.2
             precision = word_match / max(len(i_words), 1)
-            score = (word_match * 2) + precision
-            item['_score'] = score
+            
+            score = (word_match * 2) + precision - num_penalty
             scores.append((score, item))
+
+    # Якщо суворий пошук нічого не дав, робимо м'який пошук без жорсткого фільтру
+    if not scores:
+        for item in subset:
+            i_words = set(item.get('_words', []))
+            word_match = len(q_words & i_words)
+            if word_match > 0:
+                scores.append((word_match / max(len(i_words), 1), item))
 
     scores.sort(key=lambda x: -x[0])
     return [item for _, item in scores[:top_n]]
@@ -236,7 +264,7 @@ def claude_pick_batch(позиції_з_кандидатами: list[dict]) -> l
     запити = []
     for i, пос in enumerate(позиції_з_кандидатами):
         кандидати = "\n".join(f"  {j+1}. {c['name']}" for j, c in enumerate(пос['candidates']))
-        запити.append(f"{i+1}. ЗАПИТ: {пос['normalized']}\n   КАНДИДАТИ:\n{кандидати}")
+        запити.append(f"{i+1}. ЗАПИТ: {пос['normalized']} (Розміри: {пос.get('sizes')})\n   КАНДИДАТИ:\n{кандидати}")
 
     prompt = f"""Ти — експерт із сантехніки. Для кожного запиту обери ОДИН найкращий збіг з кандидатів.
 {chr(10).join(запити)}
@@ -244,7 +272,7 @@ def claude_pick_batch(позиції_з_кандидатами: list[dict]) -> l
 
     try:
         resp = claude.messages.create(
-            model="claude-sonnet-4-5", # Ваша вказана модель
+            model="claude-sonnet-4-5",
             max_tokens=1024,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -254,7 +282,6 @@ def claude_pick_batch(позиції_з_кандидатами: list[dict]) -> l
         return json.loads(raw)
     except Exception as e:
         print(f"⚠️ Claude API Error: {e}. Вмикаю автоматичний математичний вибір!")
-        # Повертаємо пустий масив, щоб увімкнувся Fallback
         return []
 
 def find_items(позиції: list[dict]) -> list[dict]:
@@ -262,14 +289,15 @@ def find_items(позиції: list[dict]) -> list[dict]:
     результати = [None] * len(позиції)
 
     for i, пос in enumerate(позиції):
-        normalized = пос.get('normalized', '')
-        кандидати = smart_keyword_search(normalized, top_n=5)
+        кандидати = smart_keyword_search(пос, top_n=5)
 
         if not кандидати:
             результати[i] = {**пос, 'знайдено': False, 'назва': ''}
             continue
 
-        потребують_claude.append({'idx': i, 'normalized': normalized, 'candidates': кандидати, 'qty': пос.get('qty',''), 'original': пос.get('original','')})
+        # Збираємо для Claude
+        normalized_str = f"[{пос.get('category_key', 'Всі')}] {пос.get('clean_name', '')}"
+        потребують_claude.append({'idx': i, 'normalized': normalized_str, 'sizes': пос.get('sizes', []), 'candidates': кандидати, 'qty': пос.get('qty',''), 'original': пос.get('original','')})
 
     if потребують_claude:
         відповіді = claude_pick_batch(потребують_claude)
@@ -282,7 +310,6 @@ def find_items(позиції: list[dict]) -> list[dict]:
                 n = max(0, min(int(r['номер_кандидата']) - 1, len(пос['candidates'])-1))
                 found = пос['candidates'][n]
             elif len(пос['candidates']) > 0:
-                # Беремо топового кандидата з математичного фільтру
                 found = пос['candidates'][0]
             else:
                 found = None
@@ -339,7 +366,7 @@ def process_batch(chat_id: int):
     for idx, item in enumerate(items, 1):
         if stop_flags.get(chat_id): return
         try:
-            bot.edit_message_text(f"📖 Читаю фото {idx}/{len(items)}...", chat_id=chat_id, message_id=msg_id)
+            bot.edit_message_text(f"📖 Аналізую фото {idx}/{len(items)}...", chat_id=chat_id, message_id=msg_id)
             всі_позиції.extend(normalize_photo(item['data'], item.get('caption', '')))
         except Exception as e: errors.append(f"Помилка {idx}: {e}")
 
@@ -347,11 +374,11 @@ def process_batch(chat_id: int):
         bot.edit_message_text("😕 Нічого не знайдено.", chat_id=chat_id, message_id=msg_id)
         return
 
-    preview = "\n".join(f"• {п.get('original','')} → {п.get('normalized','')}" for п in всі_позиції[:8])
+    preview = "\n".join(f"• {п.get('original','')} → [{п.get('category_key','')}] {п.get('clean_name','')} (Розміри: {п.get('sizes',[])})" for п in всі_позиції[:8])
     if len(всі_позиції) > 8: preview += f"\n... та ще {len(всі_позиції)-8}"
     
-    bot.send_message(chat_id, f"✅ Розпізнано (Очищений формат):\n\n{preview}")
-    bot.edit_message_text(f"🔍 Шукаю {len(всі_позиції)} позицій у базі...", chat_id=chat_id, message_id=msg_id)
+    bot.send_message(chat_id, f"✅ Маршрутизація завершена:\n\n{preview}")
+    bot.edit_message_text(f"🔍 Шукаю {len(всі_позиції)} позицій в ізольованих каталогах...", chat_id=chat_id, message_id=msg_id)
 
     результати = find_items(всі_позиції)
 
