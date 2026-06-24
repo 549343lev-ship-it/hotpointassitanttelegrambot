@@ -3,12 +3,14 @@ bot.py — Telegram бот для підбору сантехніки
 Архітектура: Gemini 2.5 Flash (OCR) → keyword пошук по JSON → Claude Sonnet (фінальний вибір)
 
 ВСТАНОВЛЕННЯ:
-  pip install pytelegrambotapi anthropic google-genai openpyxl pandas
+  pip install pytelegrambotapi anthropic google-genai openpyxl pandas flask
 
 ЗМІННІ СЕРЕДОВИЩА:
   TELEGRAM_TOKEN  — токен бота
   ANTHROPIC_KEY   — ключ Claude
   GEMINI_KEY      — ключ Gemini
+  WEBHOOK_URL     — публічний URL сервісу (наприклад https://назва.onrender.com)
+  PORT            — порт (Render встановлює автоматично)
 
 ПІДГОТОВКА КАТАЛОГУ:
   Запусти один раз: python build_catalog.py
@@ -20,6 +22,8 @@ import xml.etree.ElementTree as ET
 from io import BytesIO
 
 import telebot
+from telebot.types import Update
+from flask import Flask, request as flask_request
 import anthropic
 import pandas as pd
 from google import genai as genai_new
@@ -1583,5 +1587,36 @@ def handle_stop(message):
 
 
 if __name__ == "__main__":
-    print("🤖 Бот запущено!")
-    bot.polling(none_stop=True)
+    WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "").rstrip("/")
+    PORT = int(os.environ.get("PORT", 5000))
+
+    app = Flask(__name__)
+
+    @app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
+    def webhook():
+        """Приймає оновлення від Telegram."""
+        update = Update.de_json(flask_request.stream.read().decode("utf-8"))
+        bot.process_new_updates([update])
+        return "ok", 200
+
+    @app.route("/", methods=["GET"])
+    def health():
+        """Health check для Render."""
+        return f"🤖 Бот працює | Каталог: {len(CATALOG)} позицій | Кеш: {len(get_cache())} записів", 200
+
+    if WEBHOOK_URL:
+        # Режим webhook (продакшн на Render)
+        print("🌐 Встановлюю webhook...")
+        bot.remove_webhook()
+        time.sleep(1)
+        webhook_full = f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}"
+        bot.set_webhook(url=webhook_full)
+        print(f"✅ Webhook встановлено: {webhook_full}")
+        print(f"🤖 Бот запущено на порту {PORT}!")
+        app.run(host="0.0.0.0", port=PORT)
+    else:
+        # Режим polling (локальна розробка)
+        print("🔄 WEBHOOK_URL не задано — запускаю polling (локальний режим)...")
+        bot.remove_webhook()
+        time.sleep(1)
+        bot.polling(none_stop=True)
