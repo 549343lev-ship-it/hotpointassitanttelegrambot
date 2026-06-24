@@ -272,6 +272,43 @@ def add_rule(new_rule: str):
 # ═══════════════════════════════════════════════════════════════════════════════
 ЗНАННЯ_САНТЕХНІКИ = """
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ВИРОБНИКИ — СПЕЦІАЛІЗАЦІЯ І ПРАВИЛЬНЕ НАПИСАННЯ:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  RAFTEC    — крани, перехідники, тепла підлога, запірна арматура (все часто)
+  ASG       — каналізація (основний!), PPR пайка
+  Ekoplastik — PPR пайка (основний!)
+  PLM       — утеплювач (основний!), крани, тепла підлога
+  Ostendorf — каналізація (другий після ASG)
+  Hidros    — радіатори  ← ПРАВИЛЬНО "Hidros" (не "Hydros"!)
+  IDMAR     — радіатори преміум
+  Biasi     — газові котли, радіатори
+  Tatra-line — електричні котли, насоси, гідроакумулятори
+  Termojet  — насоси циркуляційні
+  Ecosofy   — фільтри, колби очистки води
+  ECO       — ТІЛЬКИ хомути для труб, більше нічого
+  Rehau     — PUSH системи
+  Venta     — змішувачі, чистова сантехніка
+  HERZ      — крани, арматура
+  UNIPAK    — льон, паста-ущільнювач
+  LEXLINE   — перехідники латунь
+  Giacomini — бінокль (вузол підключення радіатора)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+КРАНИ — ТИПИ І КОНТЕКСТ:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  "Кран кутовий 3/4" — два різних товари залежно від контексту:
+
+  1. ПРИЛАДОВИЙ (чистовий монтаж, під батарею/змішувач/умивальник):
+     "Кран прил. кут. 1/2\"х 3/4\", VKE80102, з керам. зап. ел., Relo Silver, RAFTEC"
+     Ознаки: поруч з радіатором, змішувачем, "чистовий", "приладовий", "підводка"
+
+  2. З НАКИДНОЮ ГАЙКОЮ (під котел, бойлер, обв'язка):
+     "Кран кут. кульовий з накид. гайкою ЗВ, DN20, 3/4\", PN50, RAFTEC GOLD"
+     Ознаки: котел, бойлер, "накидна", "під котел", обв'язка
+
+  Якщо контекст не зрозумілий — нормалізуй як кран кутовий кульовий 3/4" RAFTEC.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 КАНАЛІЗАЦІЯ — РЕАЛЬНІ НАЗВИ З КАТАЛОГУ:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   ⚠️  90° у запиті → завжди шукати 87,5° в каталозі!
@@ -393,11 +430,16 @@ PPR ФІТИНГИ — формат по виробниках:
   пакувати           = використовувати ущільнювач для різьбового з'єднання
   PEX / пекс         = Зшитий поліпропілен
 
-  УТЕПЛЮВАЧ:
-  +ізол              = додати утеплювач PLM (синій і червоний)
-  ізол ф22           = PLM ф22х6мм
-  ізол ф28           = PLM ф28х6мм
-  гачки / хомут для труб = Дюбель гак подвійний Penoroll
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+УТЕПЛЮВАЧ PLM — ВІДПОВІДНІСТЬ ДІАМЕТРІВ:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Труба ф16 → утеплювач ф 18х6 мм
+  Труба ф20 → утеплювач ф 22х6 мм  (НЕ ф20! такого немає)
+  Труба ф25 → утеплювач ф 28х6 мм  (НЕ ф25! такого немає)
+  Труба ф32 → утеплювач ф 35х6 мм
+  Труба ф40 → утеплювач ф 42х6 мм
+  Синій = холодна вода, Червоний = гаряча вода
+  Формат: "Утеплювач ламін. для труб ф 22х6 мм, синій, PLM"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ФОРМАТ НОРМАЛІЗОВАНИХ НАЗВ (з реального каталогу):
@@ -504,31 +546,164 @@ CATEGORY_ALIASES = {
     'байпас':     'heating',
 }
 
-# Відомі виробники — токени для жорсткого фільтру і підстановки в normalized
+# Відомі виробники — токени для фільтру і підстановки в normalized
+# Ключ = що може написати менеджер, значення = токени пошуку в каталозі
 BRAND_TOKENS = {
-    'ekoplastik':  ['ekoplastik', 'екопластик', 'wavin'],
-    'екопластик':  ['ekoplastik', 'екопластик', 'wavin'],
-    'wavin':       ['ekoplastik', 'екопластик', 'wavin'],
-    'raftec':      ['raftec', 'рафтек', 'Raftec', 'RAFTEC'],
-    'рафтек':      ['raftec', 'рафтек', 'Raftec', 'RAFTEC'],
-    'asg':         ['asg', 'асг', 'ASG'],
-    'асг':         ['asg', 'асг', 'ASG'],
-    'ostendorf':   ['ostendorf', 'остендорф'],
-    'остендорф':   ['ostendorf', 'остендорф'],
-    'valrom':      ['valrom', 'валром'],
-    'unipak':      ['unipak', 'юніпак'],
-    'plm':         ['plm', 'плм'],
-    'hydros':      ['hydros', 'гідрос', 'Hydros'],
-    'гідрос':      ['hydros', 'гідрос', 'Hydros'],
-    'giacomini':   ['giacomini', 'джакоміні'],
-    'purmo':       ['purmo', 'пурмо'],
-    'пурмо':       ['purmo', 'пурмо'],
-    'kan':         ['kan', 'кан'],
-    'fado':        ['fado', 'фадо'],
-    'gross':       ['gross', 'гросс'],
-    'hummel':      ['hummel', 'хуммель'],
-    'herz':        ['herz', 'херц'],
-    'danfoss':     ['danfoss', 'данфос'],
+    # RAFTEC
+    'raftec':       ['raftec', 'рафтек', 'RAFTEC'],
+    'рафтек':       ['raftec', 'рафтек', 'RAFTEC'],
+    # ASG
+    'asg':          ['asg', 'ASG'],
+    'асг':          ['asg', 'ASG'],
+    # Ekoplastik / Wavin
+    'ekoplastik':   ['ekoplastik', 'Ekoplastik'],
+    'екопластик':   ['ekoplastik', 'Ekoplastik'],
+    'wavin':        ['ekoplastik', 'Ekoplastik', 'wavin'],
+    # PLM
+    'plm':          ['plm', 'PLM'],
+    'плм':          ['plm', 'PLM'],
+    # Ostendorf
+    'ostendorf':    ['ostendorf', 'OSTENDORF'],
+    'остендорф':    ['ostendorf', 'OSTENDORF'],
+    # Hidros (правильно через "i", не "y")
+    'hidros':       ['hidros', 'Hidros', 'гідрос'],
+    'гідрос':       ['hidros', 'Hidros', 'гідрос'],
+    'hydros':       ['hidros', 'Hidros', 'гідрос'],  # виправляємо помилку написання
+    # IDMAR
+    'idmar':        ['idmar', 'IDMAR'],
+    'ідмар':        ['idmar', 'IDMAR'],
+    # Biasi
+    'biasi':        ['biasi', 'BIASI'],
+    'біасі':        ['biasi', 'BIASI'],
+    # Tatra-line
+    'tatra':        ['tatra', 'Tatra'],
+    'татра':        ['tatra', 'Tatra'],
+    'tatra-line':   ['tatra', 'Tatra'],
+    # Termojet
+    'termojet':     ['termojet', 'Termojet'],
+    'термоджет':    ['termojet', 'Termojet'],
+    # Ecosofy
+    'ecosofy':      ['ecosofy', 'Ecosofy'],
+    'екософі':      ['ecosofy', 'Ecosofy'],
+    # ECO (тільки хомути!)
+    'eco':          ['eco', 'ECO'],
+    # Venta
+    'venta':        ['venta', 'Venta'],
+    'вента':        ['venta', 'Venta'],
+    # Rehau
+    'rehau':        ['rehau', 'REHAU'],
+    'рехау':        ['rehau', 'REHAU'],
+    # HERZ
+    'herz':         ['herz', 'HERZ'],
+    'херц':         ['herz', 'HERZ'],
+    # Giacomini
+    'giacomini':    ['giacomini', 'Giacomini'],
+    'джакоміні':    ['giacomini', 'Giacomini'],
+    # Danfoss
+    'danfoss':      ['danfoss', 'Danfoss'],
+    'данфос':       ['danfoss', 'Danfoss'],
+    # Інші
+    'valrom':       ['valrom', 'Valrom'],
+    'unipak':       ['unipak', 'UNIPAK'],
+    'kan':          ['kan', 'KAN'],
+    'fado':         ['fado', 'FADO'],
+    'lexline':      ['lexline', 'LEXLINE'],
+    'purmo':        ['purmo', 'PURMO'],
+    'пурмо':        ['purmo', 'PURMO'],
+    'raftec gold':  ['raftec gold', 'RAFTEC GOLD'],
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ПРІОРИТЕТИ ВИРОБНИКІВ ЗА ЗАМОВЧУВАННЯМ
+# Використовуються коли менеджер НЕ вказав конкретного виробника.
+# Порядок = пріоритет (перший = найвищий).
+# A = дуже часто, B = часто, C = рідко
+# ═══════════════════════════════════════════════════════════════════════════════
+DEFAULT_BRAND_PRIORITY = {
+    # Каналізація: ASG першочерговий, потім Ostendorf
+    'sewage': [
+        ['asg', 'ASG'],          # A — основний
+        ['ostendorf'],           # B — другий
+        ['plm', 'PLM'],          # C — рідко
+        ['valrom'],              # C
+    ],
+    # PPR / Пайка: Ekoplastik першочерговий, ASG другий, RAFTEC рідко
+    'plastic_ppr': [
+        ['ekoplastik'],          # A
+        ['asg', 'ASG'],          # B
+        ['raftec'],              # C
+    ],
+    # Крани / Запірна арматура: RAFTEC першочерговий
+    'shutoff_valves': [
+        ['raftec'],              # A
+        ['plm', 'PLM'],          # B
+        ['herz', 'HERZ'],        # B
+        ['asg', 'ASG'],          # C
+    ],
+    # Арматура безпеки: RAFTEC
+    'safety_valves': [
+        ['raftec'],              # A
+        ['asg', 'ASG'],          # B
+    ],
+    # Перехідники: RAFTEC
+    'adapters_reducers': [
+        ['raftec'],              # A
+        ['lexline', 'LEXLINE'],  # B
+        ['asg', 'ASG'],          # C
+    ],
+    # Тепла підлога: RAFTEC
+    'underfloor_heating': [
+        ['raftec'],              # A
+        ['plm', 'PLM'],          # B
+    ],
+    # PUSH системи: RAFTEC, потім Rehau
+    'push_systems': [
+        ['raftec'],              # B
+        ['rehau', 'REHAU'],      # C
+    ],
+    # Металопластик: RAFTEC
+    'metal_plastic': [
+        ['raftec'],              # A
+    ],
+    # Насоси: Tatra-line, Termojet
+    'pumps': [
+        ['tatra'],               # A
+        ['termojet'],            # A
+        ['raftec'],              # B
+    ],
+    # Котли: Biasi (газові), Tatra-line (електричні)
+    'boilers': [
+        ['biasi', 'BIASI'],      # A газові
+        ['tatra'],               # A електричні
+    ],
+    # Радіатори: Hidros, потім IDMAR
+    'radiators_radiatorsvalve': [
+        ['hidros', 'Hidros'],    # A
+        ['idmar', 'IDMAR'],      # A дорожчі
+        ['biasi', 'BIASI'],      # B
+    ],
+    # Фільтри: Ecosofy, RAFTEC
+    'filtration': [
+        ['ecosofy'],             # A
+        ['raftec'],              # B
+        ['plm', 'PLM'],          # B
+    ],
+    # Опалення (арматура): RAFTEC, PLM
+    'heating': [
+        ['raftec'],              # A
+        ['plm', 'PLM'],          # B
+        ['herz', 'HERZ'],        # B
+    ],
+    # Утеплювач: PLM
+    'insulation': [
+        ['plm', 'PLM'],          # A
+    ],
+    # Кріплення: ECO (тільки хомути!), RAFTEC
+    'fasteners_sealants': [
+        ['eco', 'ECO'],          # A хомути
+        ['raftec'],              # B решта
+        ['unipak', 'UNIPAK'],    # A ущільнювачі
+    ],
 }
 
 def parse_caption_brands(caption: str) -> dict:
@@ -574,16 +749,20 @@ def parse_caption_brands(caption: str) -> dict:
     return brand_map
 
 
-def filter_by_brand(candidates: list[dict], brand_tokens: list[str]) -> list[dict]:
+def filter_by_brand(candidates: list[dict], brand_tokens: list[str]) -> tuple[list[dict], bool]:
     """
-    Фільтрує кандидатів — залишає тільки ті, де назва містить хоча б один токен виробника.
-    Якщо після фільтрації список порожній — повертає оригінальний (щоб не втратити товар).
+    Фільтрує кандидатів по виробнику.
+    Повертає (відфільтрований_список, знайшов_виробника).
+    Якщо виробника немає — повертає всіх кандидатів з brand_found=False.
     """
     filtered = [
         c for c in candidates
-        if any(tok in c['name'].lower() for tok in brand_tokens)
+        if any(tok.lower() in c['name'].lower() for tok in brand_tokens)
     ]
-    return filtered if filtered else candidates  # fallback — краще знайти щось
+    if filtered:
+        return filtered, True
+    # Виробника немає в каталозі — повертаємо всіх (fallback)
+    return candidates, False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -823,11 +1002,24 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
             continue
 
         required_brand = None
+        brand_found_in_catalog = True
         brand_tokens_for_filter = brand_map.get(category)
         кандидати_до_фільтру = кандидати[:]
+
         if brand_tokens_for_filter:
-            кандидати = filter_by_brand(кандидати, brand_tokens_for_filter)
-            required_brand = brand_tokens_for_filter[0]
+            # Менеджер явно вказав виробника — жорстко фільтруємо
+            кандидати, brand_found_in_catalog = filter_by_brand(кандидати, brand_tokens_for_filter)
+            required_brand = brand_tokens_for_filter[0] if brand_found_in_catalog else None
+        else:
+            # Менеджер не вказав — застосовуємо пріоритети за замовчуванням
+            priority_list = DEFAULT_BRAND_PRIORITY.get(category, [])
+            for priority_tokens in priority_list:
+                filtered, found = filter_by_brand(кандидати, priority_tokens)
+                if found:
+                    кандидати = filtered
+                    required_brand = priority_tokens[0]
+                    break
+            # Якщо жоден пріоритетний виробник не знайдений — беремо всіх кандидатів
 
         потребують_claude.append({
             'idx':              i,
