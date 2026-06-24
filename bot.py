@@ -268,6 +268,113 @@ def add_rule(new_rule: str):
         f.write(f"- {new_rule}\n")
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# КЕШ НОРМАЛІЗАЦІЙ
+# Зберігає пари: "що написав майстер" → "назва товару в каталозі"
+# Росте з кожним замовленням. Перевірка займає мілісекунди, нічого не коштує.
+# ═══════════════════════════════════════════════════════════════════════════════
+CACHE_FILE = "normalization_cache.json"
+_CACHE: dict = {}  # original_key → {normalized, catalog_name, category, confidence}
+
+def _load_cache():
+    global _CACHE
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, encoding="utf-8") as f:
+                _CACHE = json.load(f)
+            print(f"📋 Кеш нормалізацій завантажено: {len(_CACHE)} записів")
+        except Exception:
+            _CACHE = {}
+
+def _save_cache():
+    try:
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(_CACHE, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"⚠️ Не вдалося зберегти кеш: {e}")
+
+def _cache_key(original: str, brand_map: dict) -> str:
+    """Ключ кешу = оригінальний текст + виробники (щоб різні підказки давали різні записи)."""
+    brands_str = "|".join(f"{k}:{v[0]}" for k, v in sorted(brand_map.items()))
+    # Нормалізуємо ключ: нижній регістр, прибираємо зайві пробіли
+    key = re.sub(r'\s+', ' ', original.lower().strip())
+    return f"{key}::{brands_str}"
+
+def _fuzzy_match(original: str, brand_map: dict, threshold: float = 0.82) -> dict | None:
+    """
+    Нечіткий пошук в кеші.
+    Порівнює токени оригінального тексту з ключами кешу.
+    Повертає запис якщо схожість > threshold.
+    """
+    orig_tokens = tokenize(original)
+    if not orig_tokens:
+        return None
+
+    best_score = 0.0
+    best_entry = None
+
+    for cached_key, entry in _CACHE.items():
+        # Беремо тільки текстову частину ключа (до ::)
+        cached_orig = cached_key.split("::")[0]
+        cached_brands = cached_key.split("::", 1)[1] if "::" in cached_key else ""
+
+        # Виробники мають збігатись
+        current_brands = "|".join(f"{k}:{v[0]}" for k, v in sorted(brand_map.items()))
+        if cached_brands != current_brands:
+            continue
+
+        cached_tokens = tokenize(cached_orig)
+        if not cached_tokens:
+            continue
+
+        # Jaccard similarity
+        intersection = len(orig_tokens & cached_tokens)
+        union = len(orig_tokens | cached_tokens)
+        score = intersection / union if union > 0 else 0.0
+
+        if score > best_score:
+            best_score = score
+            best_entry = entry
+
+    if best_score >= threshold:
+        return best_entry
+    return None
+
+def cache_lookup(original: str, brand_map: dict) -> dict | None:
+    """Шукає оригінальний текст в кеші. Повертає запис або None."""
+    # Спочатку точний збіг
+    key = _cache_key(original, brand_map)
+    if key in _CACHE:
+        return _CACHE[key]
+    # Потім нечіткий
+    return _fuzzy_match(original, brand_map)
+
+def cache_save(original: str, brand_map: dict, normalized: str,
+               catalog_name: str, category: str, confidence: int):
+    """Зберігає успішний збіг в кеш. Тільки якщо confidence >= 85."""
+    if confidence < 85:
+        return
+    key = _cache_key(original, brand_map)
+    _CACHE[key] = {
+        "normalized":   normalized,
+        "catalog_name": catalog_name,
+        "category":     category,
+        "confidence":   confidence,
+    }
+    _save_cache()
+
+def cache_delete(original: str, brand_map: dict):
+    """Видаляє запис з кешу (якщо менеджер сказав що результат неправильний)."""
+    key = _cache_key(original, brand_map)
+    if key in _CACHE:
+        del _CACHE[key]
+        _save_cache()
+        return True
+    return False
+
+# Завантажуємо кеш при старті
+_load_cache()
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # КРОК 1: БАЗА ЗНАНЬ САНТЕХНІКИ
 # ═══════════════════════════════════════════════════════════════════════════════
 ЗНАННЯ_САНТЕХНІКИ = """
@@ -1042,13 +1149,18 @@ def claude_pick_batch(позиції_з_кандидатами: list[dict]) -> l
 
 def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
     """
-    Головна функція пошуку з діагностикою.
-    progress_cb(current, total) — колбек для live-оновлення прогресу.
+    Головна функція пошуку з кешем і діагностикою.
+    1. Перевіряємо кеш → якщо є точний збіг, пропускаємо keyword+Claude
+    2. keyword_search → топ-12 кандидатів
+    3. filter_by_brand → виробник
+    4. claude_pick_batch → фінальний вибір
+    5. Зберігаємо успішні результати в кеш
     """
     потребують_claude = []
     результати = [None] * len(позиції)
 
     for i, пос in enumerate(позиції):
+        original   = пос.get('original', '')
         normalized = пос.get('normalized', '')
         category   = пос.get('category', 'other')
         brand_map  = пос.get('_brand_map', {})
@@ -1056,6 +1168,26 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
         if progress_cb:
             progress_cb(i + 1, len(позиції))
 
+        # ── Крок 1: перевіряємо кеш ───────────────────────────────────────────
+        cached = cache_lookup(original, brand_map)
+        if cached:
+            результати[i] = {
+                'original':         original,
+                'normalized':       cached['normalized'],
+                'знайдено':         True,
+                'назва':            cached['catalog_name'],
+                'ціна':             '',   # ціна може змінитись — заповнимо нижче
+                'qty':              пос.get('qty', ''),
+                'confidence':       cached['confidence'],
+                'reason':           f"З кешу (раніше знайдено з впевненістю {cached['confidence']}%)",
+                'fail_reason':      '',
+                'candidates_debug': [],
+                '_from_cache':      True,
+                '_category':        cached['category'],
+            }
+            continue
+
+        # ── Крок 2: keyword search ─────────────────────────────────────────────
         кандидати = keyword_search(normalized, top_n=12)
 
         if not кандидати:
@@ -1076,11 +1208,9 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
         кандидати_до_фільтру = кандидати[:]
 
         if brand_tokens_for_filter:
-            # Менеджер явно вказав виробника — жорстко фільтруємо
             кандидати, brand_found_in_catalog = filter_by_brand(кандидати, brand_tokens_for_filter)
             required_brand = brand_tokens_for_filter[0] if brand_found_in_catalog else None
         else:
-            # Менеджер не вказав — застосовуємо пріоритети за замовчуванням
             priority_list = DEFAULT_BRAND_PRIORITY.get(category, [])
             for priority_tokens in priority_list:
                 filtered, found = filter_by_brand(кандидати, priority_tokens)
@@ -1088,17 +1218,17 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                     кандидати = filtered
                     required_brand = priority_tokens[0]
                     break
-            # Якщо жоден пріоритетний виробник не знайдений — беремо всіх кандидатів
 
         потребують_claude.append({
             'idx':              i,
             'normalized':       normalized,
+            'original':         original,
             'candidates':       кандидати,
             'candidates_debug': [c['name'] for c in кандидати_до_фільтру[:5]],
             'qty':              пос.get('qty', ''),
-            'original':         пос.get('original', ''),
             'required_brand':   required_brand,
             'category':         category,
+            'brand_map':        brand_map,
         })
 
     if потребують_claude:
@@ -1126,8 +1256,16 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                     'fail_reason':      '',
                     'candidates_debug': пос['candidates_debug'],
                 }
+                # ── Зберігаємо в кеш якщо впевненість висока ─────────────────
+                cache_save(
+                    original=пос['original'],
+                    brand_map=пос['brand_map'],
+                    normalized=пос['normalized'],
+                    catalog_name=found['name'],
+                    category=пос['category'],
+                    confidence=confidence,
+                )
             else:
-                # Діагностика: які кандидати були і чому не підійшли
                 топ_канд = ', '.join(c['name'][:50] for c in пос['candidates'][:3])
                 auto_fail = f"Топ кандидати: [{топ_канд}]"
                 результати[idx] = {
@@ -1141,6 +1279,17 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                     'fail_reason':      f"{fail_reason} | {auto_fail}" if fail_reason else auto_fail,
                     'candidates_debug': пос['candidates_debug'],
                 }
+
+    # ── Заповнюємо ціну для позицій з кешу ────────────────────────────────────
+    for r in результати:
+        if r and r.get('_from_cache') and r.get('назва'):
+            # Шукаємо актуальну ціну в каталозі
+            for item in CATALOG:
+                if item['name'] == r['назва']:
+                    r['ціна'] = item.get('price', '')
+                    break
+            r.pop('_from_cache', None)
+            r.pop('_category', None)
 
     return результати
 
@@ -1363,9 +1512,12 @@ def handle_start(message):
 📸 Кинь фото рукописного списку — знайду в базі
 📝 *пошук <текст>* — текстовий запит  
 📋 *правило <текст>* — навчи мене новому сленгу
+❌ *забудь <текст>* — видалити неправильний запис з кешу
+📊 /кеш — скільки записів в кеші
 🛑 /stop — зупинити обробку
 
-Приклад: `правило рожон = трійник редукційний`""", parse_mode="Markdown")
+Приклад: `правило рожон = трійник редукційний`
+Приклад: `забудь МРЗ кут. - 2 шт`""", parse_mode="Markdown")
 
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('правило'))
@@ -1376,6 +1528,60 @@ def handle_rule(message):
         bot.reply_to(message, f"✅ Записав:\n_{rule}_", parse_mode="Markdown")
     else:
         bot.reply_to(message, "Напиши правило після слова 'правило'.")
+
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('забудь'))
+def handle_forget(message):
+    """Видаляє запис з кешу нормалізацій."""
+    text = message.text[6:].strip()
+    if not text:
+        bot.reply_to(message, "Напиши що забути після слова 'забудь'.\nПриклад: `забудь МРЗ кут. - 2 шт`", parse_mode="Markdown")
+        return
+    # Видаляємо без прив'язки до виробника (пробуємо з пустим brand_map)
+    deleted = cache_delete(text, {})
+    if not deleted:
+        # Пробуємо нечіткий пошук — знаходимо схожі ключі і видаляємо їх
+        text_tokens = tokenize(text)
+        to_delete = []
+        for key in list(_CACHE.keys()):
+            cached_orig = key.split("::")[0]
+            cached_tokens = tokenize(cached_orig)
+            if cached_tokens:
+                intersection = len(text_tokens & cached_tokens)
+                union = len(text_tokens | cached_tokens)
+                if union > 0 and intersection / union >= 0.75:
+                    to_delete.append(key)
+        if to_delete:
+            for key in to_delete:
+                del _CACHE[key]
+            _save_cache()
+            bot.reply_to(message, f"✅ Видалено {len(to_delete)} запис(ів) схожих на:\n`{text}`", parse_mode="Markdown")
+        else:
+            bot.reply_to(message, f"⚠️ Не знайдено в кеші:\n`{text}`\n\nМожливо цей товар ще не кешувався.", parse_mode="Markdown")
+    else:
+        bot.reply_to(message, f"✅ Видалено з кешу:\n`{text}`", parse_mode="Markdown")
+
+
+@bot.message_handler(commands=['кеш', 'cache'])
+def handle_cache_info(message):
+    """Показує інформацію про кеш."""
+    total = len(_CACHE)
+    if total == 0:
+        bot.reply_to(message, "📋 Кеш порожній — заповниться після перших замовлень.")
+        return
+    # Показуємо останні 5 записів
+    recent = list(_CACHE.items())[-5:]
+    lines = []
+    for key, val in recent:
+        orig = key.split("::")[0][:40]
+        name = val.get('catalog_name', '')[:50]
+        conf = val.get('confidence', 0)
+        lines.append(f"• `{orig}` → {name} ({conf}%)")
+    bot.reply_to(message,
+        f"📋 Кеш нормалізацій: *{total}* записів\n\n"
+        f"Останні {len(recent)}:\n" + "\n".join(lines),
+        parse_mode="Markdown"
+    )
 
 
 @bot.message_handler(content_types=['photo'])
