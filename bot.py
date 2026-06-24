@@ -268,111 +268,9 @@ def add_rule(new_rule: str):
         f.write(f"- {new_rule}\n")
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# КЕШ НОРМАЛІЗАЦІЙ
-# Зберігає пари: "що написав майстер" → "назва товару в каталозі"
-# Росте з кожним замовленням. Перевірка займає мілісекунди, нічого не коштує.
+# КЕШ НОРМАЛІЗАЦІЙ — винесено в cache.py
 # ═══════════════════════════════════════════════════════════════════════════════
-CACHE_FILE = "normalization_cache.json"
-_CACHE: dict = {}  # original_key → {normalized, catalog_name, category, confidence}
-
-def _load_cache():
-    global _CACHE
-    if os.path.exists(CACHE_FILE):
-        try:
-            with open(CACHE_FILE, encoding="utf-8") as f:
-                _CACHE = json.load(f)
-            print(f"📋 Кеш нормалізацій завантажено: {len(_CACHE)} записів")
-        except Exception:
-            _CACHE = {}
-
-def _save_cache():
-    try:
-        with open(CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(_CACHE, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"⚠️ Не вдалося зберегти кеш: {e}")
-
-def _cache_key(original: str, brand_map: dict) -> str:
-    """Ключ кешу = оригінальний текст + виробники (щоб різні підказки давали різні записи)."""
-    brands_str = "|".join(f"{k}:{v[0]}" for k, v in sorted(brand_map.items()))
-    # Нормалізуємо ключ: нижній регістр, прибираємо зайві пробіли
-    key = re.sub(r'\s+', ' ', original.lower().strip())
-    return f"{key}::{brands_str}"
-
-def _fuzzy_match(original: str, brand_map: dict, threshold: float = 0.82) -> dict | None:
-    """
-    Нечіткий пошук в кеші.
-    Порівнює токени оригінального тексту з ключами кешу.
-    Повертає запис якщо схожість > threshold.
-    """
-    orig_tokens = tokenize(original)
-    if not orig_tokens:
-        return None
-
-    best_score = 0.0
-    best_entry = None
-
-    for cached_key, entry in _CACHE.items():
-        # Беремо тільки текстову частину ключа (до ::)
-        cached_orig = cached_key.split("::")[0]
-        cached_brands = cached_key.split("::", 1)[1] if "::" in cached_key else ""
-
-        # Виробники мають збігатись
-        current_brands = "|".join(f"{k}:{v[0]}" for k, v in sorted(brand_map.items()))
-        if cached_brands != current_brands:
-            continue
-
-        cached_tokens = tokenize(cached_orig)
-        if not cached_tokens:
-            continue
-
-        # Jaccard similarity
-        intersection = len(orig_tokens & cached_tokens)
-        union = len(orig_tokens | cached_tokens)
-        score = intersection / union if union > 0 else 0.0
-
-        if score > best_score:
-            best_score = score
-            best_entry = entry
-
-    if best_score >= threshold:
-        return best_entry
-    return None
-
-def cache_lookup(original: str, brand_map: dict) -> dict | None:
-    """Шукає оригінальний текст в кеші. Повертає запис або None."""
-    # Спочатку точний збіг
-    key = _cache_key(original, brand_map)
-    if key in _CACHE:
-        return _CACHE[key]
-    # Потім нечіткий
-    return _fuzzy_match(original, brand_map)
-
-def cache_save(original: str, brand_map: dict, normalized: str,
-               catalog_name: str, category: str, confidence: int):
-    """Зберігає успішний збіг в кеш. Тільки якщо confidence >= 85."""
-    if confidence < 85:
-        return
-    key = _cache_key(original, brand_map)
-    _CACHE[key] = {
-        "normalized":   normalized,
-        "catalog_name": catalog_name,
-        "category":     category,
-        "confidence":   confidence,
-    }
-    _save_cache()
-
-def cache_delete(original: str, brand_map: dict):
-    """Видаляє запис з кешу (якщо менеджер сказав що результат неправильний)."""
-    key = _cache_key(original, brand_map)
-    if key in _CACHE:
-        del _CACHE[key]
-        _save_cache()
-        return True
-    return False
-
-# Завантажуємо кеш при старті
-_load_cache()
+from cache import cache_lookup, cache_save, cache_delete, get_cache, _CACHE, _save_cache
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # КРОК 1: БАЗА ЗНАНЬ САНТЕХНІКИ
@@ -1065,25 +963,63 @@ def normalize_text(text: str, caption: str = "") -> list[dict]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# КРОК 2: KEYWORD ПОШУК ПО КАТАЛОГУ
+# КРОК 2: KEYWORD ПОШУК ПО КАТАЛОГУ — з відсотком точності
 # ═══════════════════════════════════════════════════════════════════════════════
-def keyword_search(query: str, top_n: int = 8) -> list[dict]:
-    q_tokens = tokenize(query)
+def keyword_search(query: str, top_n: int = 12) -> list[dict]:
+    """
+    Пошук з багаторівневим скорингом.
+    Повертає топ-N кандидатів відсортованих за точністю збігу.
+    Кожен кандидат має поле _match_pct (0-100) — відсоток точності.
+
+    Логіка scoring:
+    - Числа (діаметри, кути, довжини) — вага x3 (найважливіше)
+    - Слова запиту що є в назві — вага x1
+    - Штраф за зайві токени в назві кандидата (занадто довга назва = менш точний збіг)
+    - Бонус за точний збіг виробника
+    """
+    q_tokens  = tokenize(query)
     q_numbers = set(re.findall(r'\d+', query.lower()))
     q_words   = q_tokens - q_numbers
+
+    if not q_tokens:
+        return []
 
     scores = []
     for item in CATALOG:
         it = item['_tokens']
-        num_score  = len(q_numbers & it) * 2
-        word_score = len(q_words & it)
-        total = num_score + word_score
-        if total > 0:
-            precision = total / max(len(q_tokens), 1)
-            scores.append((total + precision, item))
+
+        # Числа важливіші за всі (діаметр, кут, довжина)
+        num_hits   = len(q_numbers & it)
+        word_hits  = len(q_words & it)
+
+        if num_hits == 0 and word_hits == 0:
+            continue
+
+        # Базовий score
+        raw_score = num_hits * 3 + word_hits
+
+        # Штраф за зайві токени в назві кандидата
+        # (якщо в назві 20 токенів а запит 4 — це менш точно)
+        extra_tokens = max(0, len(it) - len(q_tokens))
+        penalty = extra_tokens * 0.1
+
+        total = raw_score - penalty
+
+        # Відсоток: скільки токенів запиту знайдено в кандидаті
+        # Числа рахуємо з більшою вагою
+        max_possible = len(q_numbers) * 3 + len(q_words)
+        match_pct = int((raw_score / max_possible * 100)) if max_possible > 0 else 0
+        match_pct = min(match_pct, 100)
+
+        scores.append((total, match_pct, item))
 
     scores.sort(key=lambda x: -x[0])
-    return [item for _, item in scores[:top_n]]
+    result = []
+    for _, pct, item in scores[:top_n]:
+        item_copy = dict(item)
+        item_copy['_match_pct'] = pct
+        result.append(item_copy)
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1097,7 +1033,7 @@ def claude_pick_one_batch(позиції: list[dict]) -> list[dict]:
     for i, пос in enumerate(позиції):
         brand_note = f"\n   ⚠️ ВИРОБНИК: тільки {пос['required_brand']}" if пос.get('required_brand') else ""
         кандидати = "\n".join(
-            f"  {j+1}. {c['name']}"
+            f"  {j+1}. [{c.get('_match_pct', 0)}%] {c['name']}"
             for j, c in enumerate(пос['candidates'])
         )
         запити.append(f"{i+1}. {пос['normalized']}{brand_note}\n{кандидати}")
@@ -1252,6 +1188,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                     'ціна':             found.get('price', ''),
                     'qty':              пос['qty'],
                     'confidence':       confidence,
+                    'keyword_pct':      found.get('_match_pct', 0),
                     'reason':           reason,
                     'fail_reason':      '',
                     'candidates_debug': пос['candidates_debug'],
@@ -1306,32 +1243,36 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list[str], 
         if not r:
             continue
         conf = r.get('confidence', 0)
-        conf_label = f"{conf}%" if conf else "?"
+        kw   = r.get('keyword_pct', 0)
 
         if r.get('знайдено'):
+            # Два показники: keyword пошук % і Claude впевненість %
+            zbig_label = f"🔍{kw}% / 🤖{conf}%"
             знайдено_rows.append({
                 'Наименование': r.get('назва', ''),
                 'Кількість':    r.get('qty', ''),
                 'Ціна':         r.get('ціна', ''),
-                'Впевненість':  conf_label,
+                'Збіг':         zbig_label,
                 'Чому знайшло': r.get('reason', ''),
                 'Оригінал':     r.get('original', ''),
             })
-            if conf < 70:
-                low_conf_rows.append(f"{r.get('original','')} → {r.get('назва','')} ({conf_label}): {r.get('reason','')}")
+            if conf < 70 or kw < 50:
+                low_conf_rows.append(
+                    f"{r.get('original','')} → {r.get('назва','')} ({zbig_label}): {r.get('reason','')}"
+                )
         else:
             не_знайдено_rows.append({
-                'Оригінал':          r.get('original', ''),
-                'Нормалізовано':     r.get('normalized', ''),
-                'Причина':           r.get('fail_reason', ''),
-                'Топ кандидати':     ', '.join(r.get('candidates_debug', [])),
+                'Оригінал':      r.get('original', ''),
+                'Нормалізовано': r.get('normalized', ''),
+                'Причина':       r.get('fail_reason', ''),
+                'Топ кандидати': ', '.join(r.get('candidates_debug', [])),
             })
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         # Лист 1: Знайдені товари
         df = pd.DataFrame(знайдено_rows) if знайдено_rows else pd.DataFrame(
-            columns=['Наименование','Кількість','Ціна','Впевненість','Чому знайшло','Оригінал'])
+            columns=['Наименование','Кількість','Ціна','Збіг','Чому знайшло','Оригінал'])
         df.to_excel(writer, index=False, sheet_name='Замовлення')
 
         # Лист 2: Не знайдено з діагностикою
