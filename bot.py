@@ -15,7 +15,8 @@ bot.py — Telegram бот для підбору сантехніки
   Це перетворить всі xlsx файли в catalog.json
 """
 
-import os, json, re, base64, threading, time
+import os, json, re, base64, threading, time, zipfile
+import xml.etree.ElementTree as ET
 from io import BytesIO
 
 import telebot
@@ -38,97 +39,191 @@ gemini_client = genai_new.Client(api_key=GEMINI_KEY)
 CATALOG_PATH = "catalog.json"
 RULES_FILE   = "rules.txt"
 
+# Фіксовані файли каталогу (англійські імена як на github)
 CATALOG_FILES = [
-    ("adapters_reducers",        "Перехідники та редуктори"),
-    ("automation",               "Автоматика опалення"),
-    ("boilers",                  "Котли"),
-    ("fasteners_sealants",       "Кріплення та ущільнювачі"),
-    ("filtration",               "Фільтри та очистка"),
-    ("heating",                  "Опалення"),
-    ("hoses",                    "Шланги"),
-    ("insulation",               "Утеплювач"),
-    ("metal_plastic",            "Металопластик"),
-    ("mixers_faucets",           "Змішувачі та крани"),
-    ("plastic_ppr",              "Пластик ППР"),
-    ("pumps",                    "Насоси"),
-    ("push_systems",             "Системи PUSH"),
-    ("radiators_radiatorsvalve", "Радіатори та арматура"),
-    ("safety_valves",            "Арматура безпеки"),
-    ("sanitary_ware",            "Санфаянс"),
-    ("sewage",                   "Каналізація"),
-    ("shutoff_valves",           "Запірна арматура"),
-    ("siphons_fittings",         "Сифони та арматура"),
-    ("towel_warmers",            "Полотенцесушителі"),
-    ("underfloor_heating",       "Тепла підлога"),
-    ("water_heaters",            "Водонагрівачі"),
-    ("water_meters",             "Водолічильники"),
+    ("adapters_reducers",        "adapters_reducers"),
+    ("automation",               "automation"),
+    ("boilers",                  "boilers"),
+    ("fasteners_sealants",       "fasteners_sealants"),
+    ("filtration",               "filtration"),
+    ("heating",                  "heating"),
+    ("hoses",                    "hoses"),
+    ("insulation",               "insulation"),
+    ("metal_plastic",            "metal_plastic"),
+    ("mixers_faucets",           "mixers_faucets"),
+    ("plastic_ppr",              "plastic_ppr"),
+    ("pumps",                    "pumps"),
+    ("push_systems",             "push_systems"),
+    ("radiators_radiatorsvalve", "radiators_radiatorsvalve"),
+    ("safety_valves",            "safety_valves"),
+    ("sanitary_ware",            "sanitary_ware"),
+    ("sewage",                   "sewage"),
+    ("shutoff_valves",           "shutoff_valves"),
+    ("siphons_fittings",         "siphons_fittings"),
+    ("towel_warmers",            "towel_warmers"),
+    ("underfloor_heating",       "underfloor_heating"),
+    ("water_heaters",            "water_heaters"),
+    ("water_meters",             "water_meters"),
 ]
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# АВТОБУДОВА КАТАЛОГУ (якщо catalog.json відсутній)
+# АВТОБУДОВА КАТАЛОГУ
+# УВАГА: файли прайсу мають SharedStrings.xml з ВЕЛИКОЇ літери —
+# стандартний openpyxl їх не читає. Використовуємо zipfile+xml напряму.
 # ═══════════════════════════════════════════════════════════════════════════════
-def is_header_row(name, artikul, or_val) -> bool:
-    """Заголовки мають ОР=0 і порожній артикул"""
-    name = str(name).strip()
-    if not name or name == 'nan':
-        return True
-    art = str(artikul).strip()
-    if art and art not in ('nan', '0', ''):
-        return False  # є артикул → товар
+
+FILE_CATEGORIES = {
+    'пластик': 'plastic_ppr', 'ppr': 'plastic_ppr', 'ппр': 'plastic_ppr',
+    'металопластик': 'metal_plastic', 'push': 'push_systems', 'пуш': 'push_systems',
+    'каналізація': 'sewage', 'канализ': 'sewage',
+    'запірна': 'shutoff_valves', 'запорн': 'shutoff_valves',
+    'арматура': 'safety_valves',
+    'переходники': 'adapters_reducers', 'перехідники': 'adapters_reducers',
+    'насос': 'pumps', 'котли': 'boilers', 'котел': 'boilers',
+    'водонагр': 'water_heaters', 'бойлер': 'water_heaters',
+    'опалення': 'heating', 'автоматика': 'automation',
+    'очистка': 'filtration', 'фільтр': 'filtration',
+    'водомір': 'water_meters', 'водолічильник': 'water_meters',
+    'кріплення': 'fasteners_sealants', 'ущільнювач': 'fasteners_sealants',
+    'радіатор': 'radiators_radiatorsvalve',
+    'сифон': 'siphons_fittings', 'змішувач': 'mixers_faucets',
+    'санфаянс': 'sanitary_ware', 'підлога': 'underfloor_heating',
+    'рушникосушіл': 'towel_warmers', 'шланг': 'hoses', 'ізоляц': 'insulation',
+}
+
+def guess_category(filename: str) -> str:
+    fn = filename.lower()
+    for key, cat in FILE_CATEGORIES.items():
+        if key in fn:
+            return cat
+    return 'other'
+
+def clean_name(name: str) -> str:
+    name = re.sub(r'\s*\{[^}]+\}', '', name)  # прибираємо {4/100}
+    return re.sub(r'\s+', ' ', name).strip()
+
+def is_product_row(name: str, price_str: str, artikul: str) -> bool:
+    if not name or len(name) < 5:
+        return False
+    if name.startswith('*'):
+        return False
+    words = name.split()
+    if all(w.isupper() for w in words if w.isalpha()) and not any(c.isdigit() for c in name):
+        return False
     try:
-        if float(or_val) > 0:
-            return False  # є ціна → товар
+        if float(str(price_str).replace(',', '.').strip()) > 0:
+            return True
     except (ValueError, TypeError):
         pass
-    return True  # інакше заголовок
+    if artikul and str(artikul).strip() not in ('', 'nan', '0', '0.0'):
+        return True
+    return False
+
+def _read_xlsx_rows(path: str) -> list[list]:
+    """Читає xlsx через zipfile щоб обійти баг з регістром SharedStrings.xml"""
+    rows = []
+    try:
+        with zipfile.ZipFile(path) as z:
+            names = z.namelist()
+            ss_path = next((n for n in names if n.lower() == 'xl/sharedstrings.xml'), None)
+            strings = []
+            if ss_path:
+                with z.open(ss_path) as f:
+                    tree = ET.parse(f)
+                    root = tree.getroot()
+                    ns = {'x': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+                    for si in root.findall('.//x:si', ns):
+                        texts = [t.text or '' for t in si.findall('.//x:t', ns)]
+                        strings.append(''.join(texts))
+            ws_path = next((n for n in names if n.lower() == 'xl/worksheets/sheet1.xml'), 'xl/worksheets/sheet1.xml')
+            with z.open(ws_path) as f:
+                tree = ET.parse(f)
+                root = tree.getroot()
+                ns = {'x': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+                for row in root.findall('.//x:row', ns):
+                    rv = []
+                    for c in row.findall('x:c', ns):
+                        t = c.get('t', '')
+                        v = c.find('x:v', ns)
+                        if v is None:       rv.append('')
+                        elif t == 's':      rv.append(strings[int(v.text)] if int(v.text) < len(strings) else '')
+                        elif t == 'e':      rv.append('')
+                        else:               rv.append(v.text or '')
+                    if rv:
+                        rows.append(rv)
+    except Exception as e:
+        print(f"  ⚠️  xlsx помилка {path}: {e}")
+    return rows
+
+def _read_xls_rows(path: str) -> list[list]:
+    """Читає старий .xls формат через xlrd"""
+    rows = []
+    try:
+        import xlrd
+        wb = xlrd.open_workbook(path)
+        ws = wb.sheet_by_index(0)
+        for i in range(ws.nrows):
+            rows.append([str(ws.cell_value(i, j)) for j in range(ws.ncols)])
+    except ImportError:
+        print("  ⚠️  xlrd не встановлено: pip install xlrd")
+    except Exception as e:
+        print(f"  ⚠️  xls помилка {path}: {e}")
+    return rows
 
 def build_catalog_from_xlsx() -> list[dict]:
+    """
+    Читає xlsx файли по списку CATALOG_FILES.
+    Кожен файл = окрема категорія товарів.
+    Використовує zipfile напряму через баг openpyxl з регістром SharedStrings.xml.
+    """
     catalog = []
     search_dirs = ['.', 'src', os.path.dirname(os.path.abspath(__file__))]
-    for key, label in CATALOG_FILES:
+
+    for key, category in CATALOG_FILES:
         found = False
         for d in search_dirs:
             path = os.path.join(d, f"{key}.xlsx")
-            if os.path.exists(path):
-                try:
-                    df = pd.read_excel(path, header=0)
-                    cols = list(df.columns)
-                    rename = {}
-                    if len(cols) >= 1: rename[cols[0]] = 'name'
-                    if len(cols) >= 2: rename[cols[1]] = 'artikul'
-                    if len(cols) >= 3: rename[cols[2]] = 'or_price'
-                    if len(cols) >= 4: rename[cols[3]] = 'kod'
-                    df = df.rename(columns=rename)
-                    count = 0
-                    for _, row in df.iterrows():
-                        name    = str(row.get('name', '')).strip()
-                        artikul = row.get('artikul', '')
-                        or_val  = row.get('or_price', 0)
-                        kod     = row.get('kod', '')
-                        if is_header_row(name, artikul, or_val):
-                            continue
-                        try:
-                            price = float(or_val)
-                        except (ValueError, TypeError):
-                            price = 0.0
-                        art_str = str(artikul).strip()
-                        kod_str = str(kod).strip()
-                        catalog.append({
-                            'name':     name,
-                            'artikul':  art_str if art_str != 'nan' else '',
-                            'kod':      kod_str if kod_str != 'nan' else '',
-                            'category': label,
-                            'price':    price,
-                        })
-                        count += 1
-                    print(f"  ✅ {path}: {count} товарів")
-                    found = True
-                    break
-                except Exception as e:
-                    print(f"  ❌ {path}: {e}")
+            if not os.path.exists(path):
+                path = os.path.join(d, f"{key}.xls")
+                if not os.path.exists(path):
+                    continue
+
+            try:
+                if path.endswith('.xls'):
+                    rows = _read_xls_rows(path)
+                else:
+                    rows = _read_xlsx_rows(path)
+
+                count = 0
+                for row in rows:
+                    while len(row) < 4:
+                        row.append('')
+                    name    = clean_name(str(row[0]).strip())
+                    artikul = str(row[1]).strip()
+                    price_s = str(row[2]).strip()
+                    kod     = str(row[3]).strip().rstrip('.0')
+                    if not is_product_row(name, price_s, artikul):
+                        continue
+                    try:
+                        price = float(price_s.replace(',', '.'))
+                    except (ValueError, TypeError):
+                        price = 0.0
+                    catalog.append({
+                        'name':     name,
+                        'artikul':  artikul if artikul not in ('nan','0','0.0','') else '',
+                        'kod':      kod if kod not in ('nan','') else '',
+                        'category': category,
+                        'price':    price,
+                    })
+                    count += 1
+                print(f"  ✅ {key}.xlsx [{category}]: {count} товарів")
+                found = True
+                break
+            except Exception as e:
+                print(f"  ❌ {key}.xlsx: {e}")
+
         if not found:
             print(f"  ⚠️  {key}.xlsx не знайдено")
-    return catalog
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ЗАВАНТАЖЕННЯ КАТАЛОГУ
@@ -272,21 +367,24 @@ PPR (ASG, RAFTEC, Wavin Ekoplastik):
   гачки / хомут для труб = Дюбель гак подвійний Penoroll
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ФОРМАТ НОРМАЛІЗОВАНИХ НАЗВ (приклади):
+ФОРМАТ НОРМАЛІЗОВАНИХ НАЗВ (приклади БЕЗ прив'язки до виробника):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Труба PPR ф25 PN25 ASG       → "Труба PPR Nano Ag Composite, ф 25x4,2 мм, PP-RCT, PN25, ASG"
-  Труба PPR ф20 PN20           → "Труба PPR Faser HOT ф 20х2,8 мм, PN20, PP-RCT, ASG"
-  Коліно 25 90°                → "Коліно PPR 90° ф 25, PP-RCT, ASG"
-  Трійник 25х20х25             → "Трійник редукційний PPR ф 25х20, PP-RCT, ASG"
-  Труба канал ф50 1м сіра      → "Труба внут. канал. ф 50 х 1,8 мм, L = 1 м., сіра, HTR, ASG"
-  Коліно канал 110 90°         → "Коліно внут. канал. ф110 х 87,5°, сіре, HTR, ASG"
-  Трійник канал 110х50 87,5°   → "Трійник вн. канал. ф110 х 50 х 87,5°, сірий, HTR, ASG"
-  Заглушка PPR ф25             → "Заглушка PPR ф 25, RAFTEC"
+  Труба PPR ф25 PN25           → "Труба PPR Nano Ag Composite, ф 25x4,2 мм, PP-RCT, PN25, {ВИРОБНИК}"
+  Труба PPR ф20 PN20           → "Труба PPR Faser HOT ф 20х2,8 мм, PN20, PP-RCT, {ВИРОБНИК}"
+  Коліно 25 90°                → "Коліно PPR 90° ф 25, PP-RCT, {ВИРОБНИК}"
+  Трійник 25х20х25             → "Трійник редукційний PPR ф 25х20, PP-RCT, {ВИРОБНИК}"
+  Труба канал ф50 1м сіра      → "Труба внут. канал. ф 50 х 1,8 мм, L = 1 м., сіра, HTR, {ВИРОБНИК}"
+  Коліно канал 110 90°         → "Коліно внут. канал. ф110 х 87,5°, сіре, HTR, {ВИРОБНИК}"
+  Трійник канал 110х50 87,5°   → "Трійник вн. канал. ф110 х 50 х 87,5°, сірий, HTR, {ВИРОБНИК}"
+  Заглушка PPR ф25             → "Заглушка PPR ф 25, {ВИРОБНИК}"
   Утеплювач ф28 синій PLM      → "Утеплювач ламін. для труб ф 28х6 мм, синій, PLM"
   Вазелін                      → "Технічний вазелин вн. канал. 150 гр., Valrom"
-  МРЗ 25*3/4                   → "Муфта PPR різьбова зовнішня ф 25 - 3/4, ASG"
-  КРВ 25*1/2                   → "Коліно PPR різьбове внутрішнє ф 25 - 1/2, ASG"
+  МРЗ 25*3/4                   → "Муфта PPR різьбова зовнішня ф 25 - 3/4, {ВИРОБНИК}"
+  КРВ 25*1/2                   → "Коліно PPR різьбове внутрішнє ф 25 - 1/2, {ВИРОБНИК}"
   Перехідник 20*1/2 push       → шукати в категорії push_systems або metal_plastic
+
+  де {ВИРОБНИК} = те що вказав менеджер у підказці для цієї категорії.
+  Якщо виробника НЕ вказано — не пиши нічого замість {ВИРОБНИК}.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ПРІОРИТЕТИ ПРИ ПОШУКУ:
@@ -302,60 +400,88 @@ PPR (ASG, RAFTEC, Wavin Ekoplastik):
 # ═══════════════════════════════════════════════════════════════════════════════
 # Відомі синоніми груп товарів (що може написати менеджер)
 CATEGORY_ALIASES = {
-    # PPR пластик
-    'пластик': 'plastic_ppr',
-    'ппр': 'plastic_ppr',
-    'ppr': 'plastic_ppr',
-    'труби': 'plastic_ppr',
-    'труба': 'plastic_ppr',
+    # PPR пластик / пайка
+    'пластик':    'plastic_ppr',
+    'ппр':        'plastic_ppr',
+    'ppr':        'plastic_ppr',
+    'труби':      'plastic_ppr',
+    'труба':      'plastic_ppr',
+    'пайка':      'plastic_ppr',   # ← майстри часто кажуть "пайка" маючи на увазі PPR
+    'паяні':      'plastic_ppr',
+    'полікор':    'plastic_ppr',
     # Push системи
-    'пуш': 'push_systems',
-    'push': 'push_systems',
+    'пуш':        'push_systems',
+    'push':       'push_systems',
+    'прес':       'push_systems',  # прес-фітинги
     # Металопластик
     'металопластик': 'metal_plastic',
-    'мп': 'metal_plastic',
+    'мп':            'metal_plastic',
+    'метал':         'metal_plastic',
     # Крани / запірна арматура
-    'крани': 'shutoff_valves',
-    'кран': 'shutoff_valves',
-    'арматура': 'shutoff_valves',
-    'запірна': 'shutoff_valves',
+    'крани':      'shutoff_valves',
+    'кран':       'shutoff_valves',
+    'арматура':   'shutoff_valves',
+    'запірна':    'shutoff_valves',
+    'вентил':     'shutoff_valves',
     # Фільтри
-    'фільтри': 'filtration',
-    'фільтр': 'filtration',
+    'фільтри':    'filtration',
+    'фільтр':     'filtration',
+    'очистка':    'filtration',
     # Радіатори
-    'радіатори': 'radiators_radiatorsvalve',
-    'радіатор': 'radiators_radiatorsvalve',
+    'радіатори':  'radiators_radiatorsvalve',
+    'радіатор':   'radiators_radiatorsvalve',
+    'батареї':    'radiators_radiatorsvalve',
+    'батарея':    'radiators_radiatorsvalve',
     # Насоси
-    'насоси': 'pumps',
-    'насос': 'pumps',
+    'насоси':     'pumps',
+    'насос':      'pumps',
     # Котли
-    'котли': 'boilers',
-    'котел': 'boilers',
+    'котли':      'boilers',
+    'котел':      'boilers',
     # Каналізація
     'каналізація': 'sewage',
-    'каналіз': 'sewage',
+    'каналіз':     'sewage',
+    'каналіза':    'sewage',
+    'сірі труби':  'sewage',
     # Водонагрівачі
-    'бойлери': 'water_heaters',
-    'бойлер': 'water_heaters',
-    'водонагрівач': 'water_heaters',
+    'бойлери':       'water_heaters',
+    'бойлер':        'water_heaters',
+    'водонагрівач':  'water_heaters',
+    'водонагрів':    'water_heaters',
     # Тепла підлога
     'тепла підлога': 'underfloor_heating',
-    'підлога': 'underfloor_heating',
+    'підлога':       'underfloor_heating',
+    'тп':            'underfloor_heating',
+    # Опалення / радіаторна арматура
+    'опалення':   'heating',
+    'байпас':     'heating',
 }
 
-# Відомі виробники — токени для жорсткого фільтру
+# Відомі виробники — токени для жорсткого фільтру і підстановки в normalized
 BRAND_TOKENS = {
-    'ekoplastik': ['ekoplastik', 'екопластик', 'wavin'],
-    'екопластик': ['ekoplastik', 'екопластик', 'wavin'],
-    'wavin':      ['ekoplastik', 'екопластик', 'wavin'],
-    'raftec':     ['raftec', 'рафтек'],
-    'рафтек':     ['raftec', 'рафтек'],
-    'asg':        ['asg', 'асг'],
-    'асг':        ['asg', 'асг'],
-    'ostendorf':  ['ostendorf', 'остендорф'],
-    'valrom':     ['valrom', 'валром'],
-    'unipak':     ['unipak', 'юніпак'],
-    'plm':        ['plm', 'плм'],
+    'ekoplastik':  ['ekoplastik', 'екопластик', 'wavin'],
+    'екопластик':  ['ekoplastik', 'екопластик', 'wavin'],
+    'wavin':       ['ekoplastik', 'екопластик', 'wavin'],
+    'raftec':      ['raftec', 'рафтек', 'Raftec', 'RAFTEC'],
+    'рафтек':      ['raftec', 'рафтек', 'Raftec', 'RAFTEC'],
+    'asg':         ['asg', 'асг', 'ASG'],
+    'асг':         ['asg', 'асг', 'ASG'],
+    'ostendorf':   ['ostendorf', 'остендорф'],
+    'остендорф':   ['ostendorf', 'остендорф'],
+    'valrom':      ['valrom', 'валром'],
+    'unipak':      ['unipak', 'юніпак'],
+    'plm':         ['plm', 'плм'],
+    'hydros':      ['hydros', 'гідрос', 'Hydros'],
+    'гідрос':      ['hydros', 'гідрос', 'Hydros'],
+    'giacomini':   ['giacomini', 'джакоміні'],
+    'purmo':       ['purmo', 'пурмо'],
+    'пурмо':       ['purmo', 'пурмо'],
+    'kan':         ['kan', 'кан'],
+    'fado':        ['fado', 'фадо'],
+    'gross':       ['gross', 'гросс'],
+    'hummel':      ['hummel', 'хуммель'],
+    'herz':        ['herz', 'херц'],
+    'danfoss':     ['danfoss', 'данфос'],
 }
 
 def parse_caption_brands(caption: str) -> dict:
@@ -423,12 +549,25 @@ def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
 
     # Парсимо підказку менеджера → карту виробників
     brand_map = parse_caption_brands(caption)
+
+    # Будуємо чіткий список правил виробника для промпту
     brand_hint = ""
     if brand_map:
         lines = []
         for cat, toks in brand_map.items():
-            lines.append(f"  {cat} → виробник: {toks[0]}")
-        brand_hint = "\n⚠️ ВИРОБНИКИ (обов'язково вставити в normalized):\n" + "\n".join(lines)
+            brand_display = toks[0]  # перший токен — це читабельна назва
+            lines.append(f"  {cat} → {brand_display}")
+        brand_hint = f"""
+
+╔══════════════════════════════════════════════╗
+║  ВИРОБНИКИ ВІД МЕНЕДЖЕРА — СУВОРО ОБОВ'ЯЗКОВО ║
+║  Підстав у normalized ЗАМІСТЬ дефолтного ASG  ║
+╚══════════════════════════════════════════════╝
+{chr(10).join(lines)}
+
+ПРИКЛАД: якщо plastic_ppr → raftec, то:
+  "Коліно 25 90°" → "Коліно PPR 90° ф 25, PP-RCT, RAFTEC"  (НЕ ASG!)
+  "Труба ф20 PN20" → "Труба PPR Faser HOT ф 20х2,8 мм, PN20, PP-RCT, RAFTEC"  (НЕ ASG!)"""
 
     prompt = f"""Ти — експерт із сантехніки України. На фото рукописний список замовлення від майстра.
 
@@ -439,7 +578,9 @@ def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
 
 ЗАВДАННЯ:
 1. Прочитай кожен рядок (тільки сантехніка/опалення/водопостачання)
-2. Нормалізуй до назви як в прайсі — ОБОВ'ЯЗКОВО додай виробника якщо він вказаний для цієї групи
+2. Нормалізуй до назви як в прайсі
+   - Якщо менеджер вказав виробника для цієї категорії — ОБОВ'ЯЗКОВО використай його
+   - Якщо виробника НЕ вказано — не додавай дефолтного, просто пиши назву
 3. Визнач category: plastic_ppr / push_systems / metal_plastic / shutoff_valves / sewage / pumps / boilers / water_heaters / filtration / radiators_radiatorsvalve / underfloor_heating / other
 4. Витягни кількість (число + одиниця: шт, м, м.п., пак)
 5. Якщо рядок нечитабельний або не сантехніка — пропусти
@@ -478,8 +619,14 @@ def normalize_text(text: str, caption: str = "") -> list[dict]:
     brand_map = parse_caption_brands(caption)
     brand_hint = ""
     if brand_map:
-        lines = [f"  {cat} → виробник: {toks[0]}" for cat, toks in brand_map.items()]
-        brand_hint = "\n⚠️ ВИРОБНИКИ (обов'язково вставити в normalized):\n" + "\n".join(lines)
+        lines = [f"  {cat} → {toks[0]}" for cat, toks in brand_map.items()]
+        brand_hint = f"""
+
+╔══════════════════════════════════════════════╗
+║  ВИРОБНИКИ ВІД МЕНЕДЖЕРА — СУВОРО ОБОВ'ЯЗКОВО ║
+╚══════════════════════════════════════════════╝
+{chr(10).join(lines)}
+Підстав у normalized ЗАМІСТЬ дефолтного ASG."""
 
     prompt = f"""Ти — експерт із сантехніки України. Нормалізуй список товарів.{brand_hint}{rules_block}
 
@@ -489,8 +636,11 @@ def normalize_text(text: str, caption: str = "") -> list[dict]:
 ТЕКСТ:
 {text}
 
-Нормалізуй кожну позицію до назви як в прайсі, витягни кількість.
+Нормалізуй кожну позицію до назви як в прайсі.
+- Якщо менеджер вказав виробника для категорії — використай його, НЕ ASG за замовчуванням
+- Якщо виробника не вказано — не додавай нічого
 Визнач category: plastic_ppr / push_systems / metal_plastic / shutoff_valves / sewage / pumps / boilers / water_heaters / filtration / radiators_radiatorsvalve / underfloor_heating / other
+Витягни кількість.
 
 ВІДПОВІДАЙ ТІЛЬКИ JSON масивом:
 [{{"original": "...", "normalized": "...", "qty": "...", "category": "..."}}]"""
