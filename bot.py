@@ -1604,8 +1604,11 @@ if __name__ == "__main__":
         """Health check для Render."""
         return f"🤖 Бот працює | Каталог: {len(CATALOG)} позицій | Кеш: {len(get_cache())} записів", 200
 
+    @app.route("/health", methods=["GET"])
+    def health2():
+        return "ok", 200
+
     if WEBHOOK_URL:
-        # Режим webhook (продакшн на Render)
         print("🌐 Встановлюю webhook...")
         bot.remove_webhook()
         time.sleep(1)
@@ -1613,10 +1616,41 @@ if __name__ == "__main__":
         bot.set_webhook(url=webhook_full)
         print(f"✅ Webhook встановлено: {webhook_full}")
         print(f"🤖 Бот запущено на порту {PORT}!")
-        app.run(host="0.0.0.0", port=PORT)
+        app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
     else:
-        # Режим polling (локальна розробка)
         print("🔄 WEBHOOK_URL не задано — запускаю polling (локальний режим)...")
         bot.remove_webhook()
         time.sleep(1)
         bot.polling(none_stop=True)
+
+
+# ── Точка входу для gunicorn (Render запускає через gunicorn bot:app) ──────────
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "").rstrip("/")
+PORT = int(os.environ.get("PORT", 5000))
+
+app = Flask(__name__)
+
+@app.route(f"/{TELEGRAM_TOKEN}", methods=["POST"])
+def webhook_handler():
+    update = Update.de_json(flask_request.stream.read().decode("utf-8"))
+    bot.process_new_updates([update])
+    return "ok", 200
+
+@app.route("/", methods=["GET"])
+def index():
+    return f"🤖 Бот працює | Каталог: {len(CATALOG)} позицій | Кеш: {len(get_cache())} записів", 200
+
+@app.route("/health", methods=["GET"])
+def healthcheck():
+    return "ok", 200
+
+# Встановлюємо webhook при старті модуля (для gunicorn)
+if WEBHOOK_URL:
+    try:
+        bot.remove_webhook()
+        time.sleep(1)
+        webhook_full = f"{WEBHOOK_URL}/{TELEGRAM_TOKEN}"
+        bot.set_webhook(url=webhook_full)
+        print(f"✅ Webhook встановлено: {webhook_full}")
+    except Exception as e:
+        print(f"⚠️ Помилка webhook: {e}")
