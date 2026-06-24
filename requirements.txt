@@ -1,6 +1,7 @@
-pyTelegramBotAPI
+pytelegrambotapi
 anthropic
-pandas
-openpyxl
 google-genai
-Pillow
+openpyxl
+pandas
+flask
+xlrd
