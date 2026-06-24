@@ -734,54 +734,62 @@ def keyword_search(query: str, top_n: int = 8) -> list[dict]:
 # ═══════════════════════════════════════════════════════════════════════════════
 # КРОК 3: ФІНАЛЬНИЙ ВИБІР (Claude Sonnet)
 # ═══════════════════════════════════════════════════════════════════════════════
-def claude_pick_batch(позиції_з_кандидатами: list[dict]) -> list[dict]:
-    """
-    Один запит до Claude на весь батч.
-    Повертає: знайдено, номер_кандидата, confidence, reason, fail_reason.
-    """
+CLAUDE_BATCH_SIZE = 8  # менший батч = надійніший JSON
+
+def claude_pick_one_batch(позиції: list[dict]) -> list[dict]:
+    """Один запит Claude на невеликий батч позицій."""
     запити = []
-    for i, пос in enumerate(позиції_з_кандидатами):
-        brand_note = ""
-        if пос.get('required_brand'):
-            brand_note = f"\n   ⚠️ ОБОВ'ЯЗКОВИЙ ВИРОБНИК: {пос['required_brand']}"
+    for i, пос in enumerate(позиції):
+        brand_note = f"\n   ⚠️ ВИРОБНИК: тільки {пос['required_brand']}" if пос.get('required_brand') else ""
         кандидати = "\n".join(
             f"  {j+1}. {c['name']}"
             for j, c in enumerate(пос['candidates'])
         )
-        запити.append(
-            f"{i+1}. ЗАПИТ: {пос['normalized']}{brand_note}\n   КАНДИДАТИ:\n{кандидати}"
-        )
+        запити.append(f"{i+1}. {пос['normalized']}{brand_note}\n{кандидати}")
 
-    prompt = f"""Ти — експерт із сантехніки. Для кожного запиту обери ОДИН найкращий збіг.
+    prompt = f"""Сантехнік. Для кожного запиту — номер кандидата що підходить найкраще.
 
 {chr(10).join(запити)}
 
-Правила:
-1. Діаметр ОБОВ'ЯЗКОВО повинен збігатися
-2. Кут/довжина — якщо вказано, повинні збігатися
-3. ОБОВ'ЯЗКОВИЙ ВИРОБНИК — тільки він
-4. confidence: 90-100=точний, 70-89=майже точний, 50-69=схожий, <50=сумнівний
-5. reason: коротко ЧОМУ обрав цей товар (1 речення)
-6. fail_reason: якщо не знайдено — ЧОМУ саме (що не збіглось: діаметр? виробник? назва серії? товару немає?)
+Правила: діаметр обов'язково збігається; якщо є ВИРОБНИК — тільки він.
+confidence: 95=точний збіг, 80=майже точний, 60=схожий.
+fail_reason: якщо не знайдено — одне речення чому.
+reason: якщо знайдено — одне речення чому.
 
-ВІДПОВІДАЙ ТІЛЬКИ JSON масивом:
-[
-  {{"знайдено": true, "номер_кандидата": 1, "confidence": 95, "reason": "точний збіг по діаметру і виробнику", "fail_reason": ""}},
-  {{"знайдено": false, "confidence": 0, "reason": "", "fail_reason": "є схожі труби але всі ASG, RAFTEC немає в кандидатах"}}
-]"""
+JSON масив рівно {len(позиції)} елементів:
+[{{"знайдено":true,"номер_кандидата":1,"confidence":95,"reason":"...","fail_reason":""}},...]"""
 
-    resp = claude.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=2048,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    raw = resp.content[0].text.strip().replace('```json','').replace('```','').strip()
     try:
-        if '[' in raw and ']' in raw:
-            raw = raw[raw.index('['):raw.rindex(']')+1]
-        return json.loads(raw)
-    except Exception:
-        return [{"знайдено": False, "confidence": 0, "reason": "", "fail_reason": "помилка парсингу відповіді Claude"}] * len(позиції_з_кандидатами)
+        resp = claude.messages.create(
+            model="claude-sonnet-4-5",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = resp.content[0].text.strip()
+        # Агресивне очищення
+        raw = re.sub(r'```\w*', '', raw).strip()
+        # Витягуємо JSON масив
+        start = raw.find('[')
+        end   = raw.rfind(']') + 1
+        if start == -1 or end == 0:
+            raise ValueError("JSON масив не знайдено")
+        parsed = json.loads(raw[start:end])
+        # Якщо Claude повернув менше елементів — доповнюємо
+        while len(parsed) < len(позиції):
+            parsed.append({"знайдено": False, "confidence": 0, "reason": "", "fail_reason": "Claude не повернув відповідь для цієї позиції"})
+        return parsed[:len(позиції)]
+    except Exception as e:
+        return [{"знайдено": False, "confidence": 0, "reason": "", "fail_reason": f"помилка Claude: {e}"}] * len(позиції)
+
+
+def claude_pick_batch(позиції_з_кандидатами: list[dict]) -> list[dict]:
+    """Розбиває на малі батчі і збирає результати."""
+    all_results = []
+    for i in range(0, len(позиції_з_кандидатами), CLAUDE_BATCH_SIZE):
+        chunk = позиції_з_кандидатами[i:i + CLAUDE_BATCH_SIZE]
+        results = claude_pick_one_batch(chunk)
+        all_results.extend(results)
+    return all_results
 
 
 def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
