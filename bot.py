@@ -270,21 +270,52 @@ def add_rule(new_rule: str):
 # ═══════════════════════════════════════════════════════════════════════════════
 ЗНАННЯ_САНТЕХНІКИ = """
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-КАНАЛІЗАЦІЯ (HTR/ASG або HT Safe/OSTENDORF):
+КАНАЛІЗАЦІЯ — РЕАЛЬНІ НАЗВИ З КАТАЛОГУ:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   ⚠️  90° у запиті → завжди шукати 87,5° в каталозі!
   умивальник = ф40 | ванна/душ = ф50 | унітаз/стояк = ф110
-  ASG / HTR          → сіра, каталог: HTR, ASG
-  OSTENDORF / HT Safe → сіра, каталог: HT Safe
-  S-LINE             → біла, безшумна
+
+  ASG сіра (HTR):
+    Труба:    "Труба внут. канал. ф110 х 2,7 мм, L = 1 м., сіра, HTR, ASG"
+    Коліно:   "Коліно внут. канал. ф110 х 87,5°, сіре, HTR, ASG"
+    Трійник:  "Трійник вн. канал. ф110 х 50 х 87,5°, сірий, HTR, ASG"
+    ⚠️ Товщина стінки: ф50=1,8мм, ф110=2,7мм (НЕ 2,2мм для HTR!)
+
+  OSTENDORF сіра (HT Safe):
+    Труба:    "Труба вн. канал. ф110 x 2,7 мм, L = 1,0 м, сіра, HT Safe, OSTENDORF"
+    Коліно:   "Коліно вн. канал. ф110 х 87,5°, сіре, HT Safe, OSTENDORF"
+    Трійник:  "Трійник вн. канал. ф110 х 50 х 87,5°, сірий, HT Safe, OSTENDORF"
+    ⚠️ Формат: "вн. канал." (не "внут. канал."), L = 1,0 м (не 1 м.)
+
+  ASG біла безшумна (S-LINE):
+    "Труба вн. канал. безшум. ф110 х 5,3 мм, L = 1 м, біла, S-LINE, ASG"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PPR (ASG, RAFTEC, Wavin Ekoplastik):
+PPR ТРУБИ — СЕРІЇ ПО ВИРОБНИКАХ:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  PN20 / Faser HOT         → гаряча вода і опалення
-  PN25 / Nano Ag Composite → армована скловолокном
-  Stabi                    → тришарова, перфорована фольга
-  Композитна               → тришарова, цільна фольга (менше розширення)
+  ASG:
+    PN20 → "Труба PPR Faser HOT ф 20х2,8 мм, PN20, PP-RCT, ASG"
+    PN25 → "Труба PPR Nano Ag Composite, ф 25x4,2 мм, PP-RCT, PN25, ASG"
+
+  RAFTEC (НЕ Faser HOT! У RAFTEC інші серії):
+    PN20 → "Труба PPR PN20 ф 20x3,4 мм, RAFTEC"
+    PN25 армована → "Труба PPR Composite ф 20x3,4 мм, PN25, RAFTEC"
+    PN25 скловолокно → "Труба PPR Fiber Glass ф 20х3,4 мм, PN25, RAFTEC"
+
+  Ekoplastik (Wavin):
+    PN20 → "Труба PPR ф 20х1,9 мм, PN10, PP-R, Ekoplastik"
+    PN25 → "Труба STABI PPR ф 20х3,4 мм, PN25, Ekoplastik"
+
+  ⚠️ ВАЖЛИВО: НЕ пиши "Faser HOT" якщо виробник RAFTEC!
+     НЕ пиши "Composite/Fiber Glass" якщо виробник ASG!
+
+PPR ФІТИНГИ — формат по виробниках:
+  ASG:    "Коліно PPR 90° ф 25, PP-RCT, ASG"
+  RAFTEC: "Коліно PPR 90° ф 25, RAFTEC"         (без PP-RCT)
+  Ekoplastik: "Коліно PPR 90°, ф 25, PP-RCT, Ekoplastik"
+
+  Трійник рівний RAFTEC: "Трійник рівний PPR ф 25, RAFTEC"   (слово "рівний" є в каталозі!)
+  Муфта різьбова RAFTEC: "Муфта PPR МРВ ф 25х3/4\", RAFTEC"  (скорочення МРВ/МРЗ є в каталозі)
 
 ФІТИНГИ PPR — АБРЕВІАТУРИ (з'єднання з латунною різьбою):
   МРЗ / МРН = Муфта різьбова зовнішня  (МРН — з рос. "наружная")
@@ -367,24 +398,38 @@ PPR (ASG, RAFTEC, Wavin Ekoplastik):
   гачки / хомут для труб = Дюбель гак подвійний Penoroll
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ФОРМАТ НОРМАЛІЗОВАНИХ НАЗВ (приклади БЕЗ прив'язки до виробника):
+ФОРМАТ НОРМАЛІЗОВАНИХ НАЗВ (з реального каталогу):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Труба PPR ф25 PN25           → "Труба PPR Nano Ag Composite, ф 25x4,2 мм, PP-RCT, PN25, {ВИРОБНИК}"
-  Труба PPR ф20 PN20           → "Труба PPR Faser HOT ф 20х2,8 мм, PN20, PP-RCT, {ВИРОБНИК}"
-  Коліно 25 90°                → "Коліно PPR 90° ф 25, PP-RCT, {ВИРОБНИК}"
-  Трійник 25х20х25             → "Трійник редукційний PPR ф 25х20, PP-RCT, {ВИРОБНИК}"
-  Труба канал ф50 1м сіра      → "Труба внут. канал. ф 50 х 1,8 мм, L = 1 м., сіра, HTR, {ВИРОБНИК}"
-  Коліно канал 110 90°         → "Коліно внут. канал. ф110 х 87,5°, сіре, HTR, {ВИРОБНИК}"
-  Трійник канал 110х50 87,5°   → "Трійник вн. канал. ф110 х 50 х 87,5°, сірий, HTR, {ВИРОБНИК}"
-  Заглушка PPR ф25             → "Заглушка PPR ф 25, {ВИРОБНИК}"
-  Утеплювач ф28 синій PLM      → "Утеплювач ламін. для труб ф 28х6 мм, синій, PLM"
-  Вазелін                      → "Технічний вазелин вн. канал. 150 гр., Valrom"
-  МРЗ 25*3/4                   → "Муфта PPR різьбова зовнішня ф 25 - 3/4, {ВИРОБНИК}"
-  КРВ 25*1/2                   → "Коліно PPR різьбове внутрішнє ф 25 - 1/2, {ВИРОБНИК}"
-  Перехідник 20*1/2 push       → шукати в категорії push_systems або metal_plastic
+  PPR ASG:
+    Труба ф20 PN20   → "Труба PPR Faser HOT ф 20х2,8 мм, PN20, PP-RCT, ASG"
+    Коліно 25 90°    → "Коліно PPR 90° ф 25, PP-RCT, ASG"
+    Трійник 25       → "Трійник рівний PPR ф 25, PP-RCT, ASG"
+    Муфта 25         → "Муфта PPR ф 25, PP-RCT, ASG"
+    МРЗ 25*3/4       → "Муфта PPR МРЗ ф 25х3/4\", PP-RCT, ASG"
+    МРВ 25*3/4       → "Муфта PPR МРВ ф 25х3/4\", PP-RCT, ASG"
 
-  де {ВИРОБНИК} = те що вказав менеджер у підказці для цієї категорії.
-  Якщо виробника НЕ вказано — не пиши нічого замість {ВИРОБНИК}.
+  PPR RAFTEC (НЕ "Faser HOT"! У RAFTEC інша назва серії):
+    Труба ф20 PN20   → "Труба PPR PN20 ф 20x3,4 мм, RAFTEC"
+    Труба ф20 PN25   → "Труба PPR Composite ф 20x3,4 мм, PN25, RAFTEC"
+    Коліно 25 90°    → "Коліно PPR 90° ф 25, RAFTEC"
+    Трійник 25       → "Трійник рівний PPR ф 25, RAFTEC"
+    Муфта 25         → "Муфта PPR ф 25, RAFTEC"
+    МРВ 25*3/4       → "Муфта PPR МРВ ф 25х3/4\", RAFTEC"
+
+  Каналізація ASG (сіра, HTR):
+    Труба ф110 1м    → "Труба внут. канал. ф110 х 2,7 мм, L = 1 м., сіра, HTR, ASG"
+    Труба ф50 1м     → "Труба внут. канал. ф 50 х 1,8 мм, L = 1 м., сіра, HTR, ASG"
+    Коліно 110 90°   → "Коліно внут. канал. ф110 х 87,5°, сіре, HTR, ASG"
+    Коліно 50 45°    → "Коліно внут. канал. ф 50 х 45°, сіре, HTR, ASG"
+    Трійник 110х50   → "Трійник вн. канал. ф110 х 50 х 87,5°, сірий, HTR, ASG"
+
+  Каналізація OSTENDORF (сіра, HT Safe):
+    Труба ф110 1м    → "Труба вн. канал. ф110 x 2,7 мм, L = 1,0 м, сіра, HT Safe, OSTENDORF"
+    Коліно 110 90°   → "Коліно вн. канал. ф110 х 87,5°, сіре, HT Safe, OSTENDORF"
+    Трійник 110х50   → "Трійник вн. канал. ф110 х 50 х 87,5°, сірий, HT Safe, OSTENDORF"
+
+  Утеплювач:  "Утеплювач ламін. для труб ф 28х6 мм, синій, PLM"
+  Вазелін:    "Технічний вазелин вн. канал. 150 гр., Valrom"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ПРІОРИТЕТИ ПРИ ПОШУКУ:
@@ -690,14 +735,13 @@ def keyword_search(query: str, top_n: int = 8) -> list[dict]:
 def claude_pick_batch(позиції_з_кандидатами: list[dict]) -> list[dict]:
     """
     Один запит до Claude на весь батч.
-    Повертає: знайдено, номер_кандидата, confidence (0-100).
+    Повертає: знайдено, номер_кандидата, confidence, reason, fail_reason.
     """
     запити = []
     for i, пос in enumerate(позиції_з_кандидатами):
-        # Якщо є жорсткий фільтр виробника — додаємо в запит
         brand_note = ""
         if пос.get('required_brand'):
-            brand_note = f"\n   ⚠️ ОБОВ'ЯЗКОВИЙ ВИРОБНИК: {пос['required_brand']} — вибирай ТІЛЬКИ з цим виробником!"
+            brand_note = f"\n   ⚠️ ОБОВ'ЯЗКОВИЙ ВИРОБНИК: {пос['required_brand']}"
         кандидати = "\n".join(
             f"  {j+1}. {c['name']}"
             for j, c in enumerate(пос['candidates'])
@@ -706,26 +750,27 @@ def claude_pick_batch(позиції_з_кандидатами: list[dict]) -> l
             f"{i+1}. ЗАПИТ: {пос['normalized']}{brand_note}\n   КАНДИДАТИ:\n{кандидати}"
         )
 
-    prompt = f"""Ти — експерт із сантехніки. Для кожного запиту обери ОДИН найкращий збіг з кандидатів.
+    prompt = f"""Ти — експерт із сантехніки. Для кожного запиту обери ОДИН найкращий збіг.
 
 {chr(10).join(запити)}
 
-Правила вибору:
+Правила:
 1. Діаметр ОБОВ'ЯЗКОВО повинен збігатися
 2. Кут/довжина — якщо вказано, повинні збігатися
-3. Якщо вказано ОБОВ'ЯЗКОВИЙ ВИРОБНИК — обирай тільки його, навіть якщо інший збігається краще за параметрами
-4. confidence: 90-100 = точний збіг, 70-89 = майже точний, 50-69 = схожий, <50 = сумнівний
-5. Якщо жоден не підходить — знайдено: false
+3. ОБОВ'ЯЗКОВИЙ ВИРОБНИК — тільки він
+4. confidence: 90-100=точний, 70-89=майже точний, 50-69=схожий, <50=сумнівний
+5. reason: коротко ЧОМУ обрав цей товар (1 речення)
+6. fail_reason: якщо не знайдено — ЧОМУ саме (що не збіглось: діаметр? виробник? назва серії? товару немає?)
 
-ВІДПОВІДАЙ ТІЛЬКИ JSON масивом (порядок як у запитах):
+ВІДПОВІДАЙ ТІЛЬКИ JSON масивом:
 [
-  {{"знайдено": true, "номер_кандидата": 1, "confidence": 95}},
-  {{"знайдено": false, "confidence": 0}}
+  {{"знайдено": true, "номер_кандидата": 1, "confidence": 95, "reason": "точний збіг по діаметру і виробнику", "fail_reason": ""}},
+  {{"знайдено": false, "confidence": 0, "reason": "", "fail_reason": "є схожі труби але всі ASG, RAFTEC немає в кандидатах"}}
 ]"""
 
     resp = claude.messages.create(
         model="claude-sonnet-4-5",
-        max_tokens=1024,
+        max_tokens=2048,
         messages=[{"role": "user", "content": prompt}]
     )
     raw = resp.content[0].text.strip().replace('```json','').replace('```','').strip()
@@ -734,15 +779,13 @@ def claude_pick_batch(позиції_з_кандидатами: list[dict]) -> l
             raw = raw[raw.index('['):raw.rindex(']')+1]
         return json.loads(raw)
     except Exception:
-        return [{"знайдено": False, "confidence": 0}] * len(позиції_з_кандидатами)
+        return [{"знайдено": False, "confidence": 0, "reason": "", "fail_reason": "помилка парсингу відповіді Claude"}] * len(позиції_з_кандидатами)
 
 
-def find_items(позиції: list[dict]) -> list[dict]:
+def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
     """
-    Головна функція пошуку.
-    1. keyword_search → топ-8 кандидатів
-    2. filter_by_brand → залишаємо тільки потрібного виробника (якщо вказано)
-    3. claude_pick_batch → фінальний вибір + confidence
+    Головна функція пошуку з діагностикою.
+    progress_cb(current, total) — колбек для live-оновлення прогресу.
     """
     потребують_claude = []
     результати = [None] * len(позиції)
@@ -752,26 +795,39 @@ def find_items(позиції: list[dict]) -> list[dict]:
         category   = пос.get('category', 'other')
         brand_map  = пос.get('_brand_map', {})
 
+        if progress_cb:
+            progress_cb(i + 1, len(позиції))
+
         кандидати = keyword_search(normalized, top_n=12)
 
         if not кандидати:
-            результати[i] = {**пос, 'знайдено': False, 'назва': '', 'бренд': '', 'confidence': 0}
+            результати[i] = {
+                **пос,
+                'знайдено':    False,
+                'назва':       '',
+                'confidence':  0,
+                'reason':      '',
+                'fail_reason': 'keyword пошук не знайшов жодного кандидата — можливо товар відсутній в каталозі або назва занадто специфічна',
+                'candidates_debug': [],
+            }
             continue
 
-        # Жорсткий фільтр по виробнику якщо менеджер вказав
         required_brand = None
         brand_tokens_for_filter = brand_map.get(category)
+        кандидати_до_фільтру = кандидати[:]
         if brand_tokens_for_filter:
             кандидати = filter_by_brand(кандидати, brand_tokens_for_filter)
-            required_brand = brand_tokens_for_filter[0]  # для підказки Claude
+            required_brand = brand_tokens_for_filter[0]
 
         потребують_claude.append({
-            'idx':            i,
-            'normalized':     normalized,
-            'candidates':     кандидати,
-            'qty':            пос.get('qty', ''),
-            'original':       пос.get('original', ''),
-            'required_brand': required_brand,
+            'idx':              i,
+            'normalized':       normalized,
+            'candidates':       кандидати,
+            'candidates_debug': [c['name'] for c in кандидати_до_фільтру[:5]],
+            'qty':              пос.get('qty', ''),
+            'original':         пос.get('original', ''),
+            'required_brand':   required_brand,
+            'category':         category,
         })
 
     if потребують_claude:
@@ -779,29 +835,40 @@ def find_items(позиції: list[dict]) -> list[dict]:
         for j, пос in enumerate(потребують_claude):
             r = відповіді[j] if j < len(відповіді) else {'знайдено': False, 'confidence': 0}
             idx = пос['idx']
-            confidence = int(r.get('confidence', 0))
+            confidence  = int(r.get('confidence', 0))
+            reason      = r.get('reason', '')
+            fail_reason = r.get('fail_reason', '')
+
             if r.get('знайдено') and r.get('номер_кандидата'):
                 n = int(r['номер_кандидата']) - 1
                 n = max(0, min(n, len(пос['candidates'])-1))
                 found = пос['candidates'][n]
                 результати[idx] = {
-                    'original':   пос['original'],
-                    'normalized': пос['normalized'],
-                    'знайдено':   True,
-                    'назва':      found['name'],
-                    'бренд':      found.get('brand', ''),
-                    'ціна':       found.get('price', ''),
-                    'qty':        пос['qty'],
-                    'confidence': confidence,
+                    'original':         пос['original'],
+                    'normalized':       пос['normalized'],
+                    'знайдено':         True,
+                    'назва':            found['name'],
+                    'ціна':             found.get('price', ''),
+                    'qty':              пос['qty'],
+                    'confidence':       confidence,
+                    'reason':           reason,
+                    'fail_reason':      '',
+                    'candidates_debug': пос['candidates_debug'],
                 }
             else:
+                # Діагностика: які кандидати були і чому не підійшли
+                топ_канд = ', '.join(c['name'][:50] for c in пос['candidates'][:3])
+                auto_fail = f"Топ кандидати: [{топ_канд}]"
                 результати[idx] = {
-                    'original':   пос['original'],
-                    'normalized': пос['normalized'],
-                    'знайдено':   False,
-                    'назва':      '',
-                    'qty':        пос['qty'],
-                    'confidence': confidence,
+                    'original':         пос['original'],
+                    'normalized':       пос['normalized'],
+                    'знайдено':         False,
+                    'назва':            '',
+                    'qty':              пос['qty'],
+                    'confidence':       confidence,
+                    'reason':           '',
+                    'fail_reason':      f"{fail_reason} | {auto_fail}" if fail_reason else auto_fail,
+                    'candidates_debug': пос['candidates_debug'],
                 }
 
     return результати
@@ -810,41 +877,56 @@ def find_items(позиції: list[dict]) -> list[dict]:
 # ═══════════════════════════════════════════════════════════════════════════════
 # EXCEL
 # ═══════════════════════════════════════════════════════════════════════════════
-def create_excel(результати: list[dict]) -> tuple[BytesIO, list[str]]:
-    rows = []
-    not_found = []
-    low_confidence = []  # знайдено але впевненість < 70
+def create_excel(результати: list[dict]) -> tuple[BytesIO, list[str], list[str]]:
+    знайдено_rows  = []
+    не_знайдено_rows = []
+    low_conf_rows  = []
 
     for r in результати:
-        if r and r.get('знайдено'):
-            conf = r.get('confidence', 0)
-            conf_label = f"{conf}%" if conf else "?"
-            rows.append({
+        if not r:
+            continue
+        conf = r.get('confidence', 0)
+        conf_label = f"{conf}%" if conf else "?"
+
+        if r.get('знайдено'):
+            знайдено_rows.append({
                 'Наименование': r.get('назва', ''),
                 'Кількість':    r.get('qty', ''),
                 'Ціна':         r.get('ціна', ''),
                 'Впевненість':  conf_label,
+                'Чому знайшло': r.get('reason', ''),
                 'Оригінал':     r.get('original', ''),
             })
             if conf < 70:
-                low_confidence.append(f"{r.get('original','')} → {r.get('назва','')} ({conf_label})")
-        elif r:
-            not_found.append(r.get('normalized') or r.get('original', ''))
+                low_conf_rows.append(f"{r.get('original','')} → {r.get('назва','')} ({conf_label}): {r.get('reason','')}")
+        else:
+            не_знайдено_rows.append({
+                'Оригінал':          r.get('original', ''),
+                'Нормалізовано':     r.get('normalized', ''),
+                'Причина':           r.get('fail_reason', ''),
+                'Топ кандидати':     ', '.join(r.get('candidates_debug', [])),
+            })
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df = pd.DataFrame(rows) if rows else pd.DataFrame(
-            columns=['Наименование', 'Кількість', 'Ціна', 'Впевненість', 'Оригінал'])
+        # Лист 1: Знайдені товари
+        df = pd.DataFrame(знайдено_rows) if знайдено_rows else pd.DataFrame(
+            columns=['Наименование','Кількість','Ціна','Впевненість','Чому знайшло','Оригінал'])
         df.to_excel(writer, index=False, sheet_name='Замовлення')
-        if not_found:
-            pd.DataFrame({'Не знайдено': not_found}).to_excel(
-                writer, index=False, sheet_name='Не знайдено')
-        if low_confidence:
-            pd.DataFrame({'Низька впевненість (перевір)': low_confidence}).to_excel(
-                writer, index=False, sheet_name='Перевір')
+
+        # Лист 2: Не знайдено з діагностикою
+        if не_знайдено_rows:
+            df2 = pd.DataFrame(не_знайдено_rows)
+            df2.to_excel(writer, index=False, sheet_name='Не знайдено (діагностика)')
+
+        # Лист 3: Низька впевненість
+        if low_conf_rows:
+            df3 = pd.DataFrame({'Перевір вручну': low_conf_rows})
+            df3.to_excel(writer, index=False, sheet_name='Перевір')
 
     output.seek(0)
-    return output, not_found, low_confidence
+    not_found_list = [r.get('original','') or r.get('normalized','') for r in результати if r and not r.get('знайдено')]
+    return output, not_found_list, low_conf_rows
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -854,6 +936,14 @@ user_batches  = {}
 stop_flags    = {}
 pending_hints = {}
 
+def safe_edit(chat_id, msg_id, text):
+    """Оновлює повідомлення, ігнорує помилку якщо текст не змінився"""
+    try:
+        bot.edit_message_text(text, chat_id=chat_id, message_id=msg_id)
+    except Exception:
+        pass
+
+
 def process_batch(chat_id: int):
     batch = user_batches.pop(chat_id, None)
     if not batch:
@@ -861,77 +951,121 @@ def process_batch(chat_id: int):
 
     stop_flags.pop(chat_id, None)
     items = batch['items']
-    status = bot.send_message(chat_id, f"🔄 Обробляю {len(items)} файл(ів)...")
+
+    # ── Живе повідомлення статусу ──────────────────────────────────────────────
+    status = bot.send_message(chat_id,
+        f"⏳ Починаю обробку {len(items)} файл(ів)...\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"📖 Крок 1/4: Читання фото\n"
+        f"🔍 Крок 2/4: Пошук в каталозі\n"
+        f"🤖 Крок 3/4: Вибір Claude\n"
+        f"📊 Крок 4/4: Формування Excel"
+    )
     msg_id = status.message_id
 
+    def update(step: int, detail: str = "", знайдено: int = 0, всього: int = 0):
+        icons = ["⏳","⏳","⏳","⏳"]
+        icons[step - 1] = "🔄"
+        for i in range(step - 1):
+            icons[i] = "✅"
+        labels = [
+            f"{icons[0]} Крок 1/4: Читання фото",
+            f"{icons[1]} Крок 2/4: Пошук в каталозі",
+            f"{icons[2]} Крок 3/4: Вибір Claude",
+            f"{icons[3]} Крок 4/4: Формування Excel",
+        ]
+        progress = ""
+        if всього > 0:
+            pct = int(знайдено / всього * 100)
+            bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
+            progress = f"\n[{bar}] {знайдено}/{всього}"
+        text = (
+            f"━━━━━━━━━━━━━━━━━━━\n"
+            + "\n".join(labels)
+            + (f"\n\n💬 {detail}" if detail else "")
+            + progress
+        )
+        safe_edit(chat_id, msg_id, text)
+
+    # ── КРОК 1: OCR ────────────────────────────────────────────────────────────
     всі_позиції = []
     errors = []
 
     for idx, item in enumerate(items, 1):
         if stop_flags.get(chat_id):
-            bot.edit_message_text("🛑 Зупинено.", chat_id=chat_id, message_id=msg_id)
+            safe_edit(chat_id, msg_id, "🛑 Зупинено.")
             return
+        update(1, f"Файл {idx}/{len(items)}...")
         try:
             if item['type'] == 'photo':
-                bot.edit_message_text(
-                    f"📖 Читаю фото {idx}/{len(items)}...",
-                    chat_id=chat_id, message_id=msg_id)
                 позиції = normalize_photo(item['data'], item.get('caption', ''))
                 всі_позиції.extend(позиції)
+                update(1, f"Файл {idx}/{len(items)}: розпізнано {len(позиції)} позицій")
             elif item['type'] == 'text':
-                bot.edit_message_text(
-                    f"📝 Нормалізую текст...",
-                    chat_id=chat_id, message_id=msg_id)
                 позиції = normalize_text(item['text'], item.get('caption', ''))
                 всі_позиції.extend(позиції)
         except Exception as e:
-            errors.append(f"❌ Помилка {idx}: {e}")
+            errors.append(f"❌ Файл {idx}: {e}")
 
     if not всі_позиції:
-        bot.edit_message_text(
-            "😕 Не вдалося розпізнати позиції.\n" + "\n".join(errors),
-            chat_id=chat_id, message_id=msg_id)
+        safe_edit(chat_id, msg_id,
+            "😕 Не вдалося розпізнати жодної позиції.\n" + "\n".join(errors))
         return
 
+    # Прев'ю розпізнаного
     preview = "\n".join(
-        f"• {п.get('original','')} → {п.get('normalized','')} ({п.get('qty','')})"
-        for п in всі_позиції[:8]
+        f"• {п.get('original','')[:40]} → {п.get('normalized','')[:50]}"
+        for п in всі_позиції[:6]
     )
-    if len(всі_позиції) > 8:
-        preview += f"\n... та ще {len(всі_позиції)-8}"
-    bot.send_message(chat_id, f"✅ Розпізнано {len(всі_позиції)} позицій:\n\n{preview}")
+    if len(всі_позиції) > 6:
+        preview += f"\n... та ще {len(всі_позиції)-6}"
+    bot.send_message(chat_id,
+        f"✅ Розпізнано {len(всі_позиції)} позицій:\n\n{preview}")
 
-    bot.edit_message_text(
-        f"🔍 Шукаю {len(всі_позиції)} позицій у базі...",
-        chat_id=chat_id, message_id=msg_id)
+    # ── КРОК 2+3: Пошук + Claude ───────────────────────────────────────────────
+    update(2, f"Шукаю {len(всі_позиції)} позицій...")
+
+    знайдено_count = [0]
+
+    def progress_cb(current, total):
+        if current % 5 == 0 or current == total:
+            update(2, f"Keyword пошук: {current}/{total}", знайдено_count[0], total)
 
     try:
-        результати = find_items(всі_позиції)
+        update(2, f"Keyword пошук по {len(всі_позиції)} позиціях...")
+        результати = find_items(всі_позиції, progress_cb=progress_cb)
+        знайдено_count[0] = sum(1 for r in результати if r and r.get('знайдено'))
+        update(3, f"Claude вибрав {знайдено_count[0]}/{len(результати)}",
+               знайдено_count[0], len(результати))
     except Exception as e:
-        bot.edit_message_text(f"❌ Помилка пошуку: {e}", chat_id=chat_id, message_id=msg_id)
+        safe_edit(chat_id, msg_id, f"❌ Помилка пошуку: {e}")
         return
 
-    bot.edit_message_text("📊 Формую Excel...", chat_id=chat_id, message_id=msg_id)
+    # ── КРОК 4: Excel ──────────────────────────────────────────────────────────
+    update(4, "Формую Excel з діагностикою...")
     excel, not_found, low_confidence = create_excel(результати)
 
     знайдено = [r for r in результати if r and r.get('знайдено')]
     bot.send_document(chat_id, excel, visible_file_name="замовлення.xlsx")
 
-    звіт = f"✅ Знайдено: {len(знайдено)}/{len(результати)} позицій"
+    # Фінальний звіт
+    звіт = (
+        f"✅ Готово!\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"📦 Знайдено: {len(знайдено)}/{len(результати)}\n"
+    )
     if not_found:
-        звіт += f"\n⚠️ Не знайдено ({len(not_found)} шт.):\n"
-        звіт += "\n".join(f"• {n}" for n in not_found[:5])
-        if len(not_found) > 5:
-            звіт += f"\n... та ще {len(not_found)-5}"
+        звіт += f"⚠️ Не знайдено: {len(not_found)} шт.\n"
+        звіт += "\n".join(f"  • {n[:50]}" for n in not_found[:4])
+        if len(not_found) > 4:
+            звіт += f"\n  ... та ще {len(not_found)-4}"
+        звіт += "\n📋 Детальна діагностика — лист 'Не знайдено (діагностика)' у файлі\n"
     if low_confidence:
-        звіт += f"\n\n🔶 Низька впевненість — перевір вручну ({len(low_confidence)} шт.):\n"
-        звіт += "\n".join(f"• {n}" for n in low_confidence[:3])
-        if len(low_confidence) > 3:
-            звіт += f"\n... та ще {len(low_confidence)-3} (див. лист 'Перевір' у файлі)"
+        звіт += f"\n🔶 Низька впевненість: {len(low_confidence)} шт. — лист 'Перевір'\n"
     if errors:
-        звіт += "\n\n" + "\n".join(errors)
+        звіт += "\n" + "\n".join(errors)
 
-    bot.edit_message_text(звіт, chat_id=chat_id, message_id=msg_id)
+    safe_edit(chat_id, msg_id, звіт)
 
 
 def add_to_batch(chat_id: int, item: dict):
