@@ -253,10 +253,17 @@ else:
 def tokenize(text: str) -> set:
     return set(re.findall(r'[а-яёіїєґa-z0-9]+', text.lower()))
 
-print("🔨 Індексую токени...")
-for item in CATALOG:
-    item['_tokens'] = tokenize(item['name'])
-print("✅ Індексація завершена")
+# Токени будуються при першому пошуку (lazy) щоб gunicorn стартував швидко
+_tokens_built = False
+
+def ensure_tokens():
+    global _tokens_built
+    if not _tokens_built:
+        print("🔨 Індексую токени...")
+        for item in CATALOG:
+            item['_tokens'] = tokenize(item['name'])
+        print("✅ Індексація завершена")
+        _tokens_built = True
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ПРАВИЛА КОРИСТУВАЧА
@@ -981,6 +988,7 @@ def keyword_search(query: str, top_n: int = 12) -> list[dict]:
     - Штраф за зайві токени в назві кандидата (занадто довга назва = менш точний збіг)
     - Бонус за точний збіг виробника
     """
+    ensure_tokens()  # lazy індексація при першому запиті
     q_tokens  = tokenize(query)
     q_numbers = set(re.findall(r'\d+', query.lower()))
     q_words   = q_tokens - q_numbers
