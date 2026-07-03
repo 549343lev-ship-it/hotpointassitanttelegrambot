@@ -1517,6 +1517,10 @@ def process_batch(chat_id: int):
 
     safe_edit(chat_id, msg_id, звіт)
 
+    # Логуємо використання для статистики адміна
+    username = items[0].get('username', str(chat_id)) if items else str(chat_id)
+    log_usage(chat_id, username, len(результати), len(знайдено), len(items))
+
 
 def add_to_batch(chat_id: int, item: dict):
     if chat_id not in user_batches:
@@ -1533,44 +1537,247 @@ def add_to_batch(chat_id: int, item: dict):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# АДМІН-СИСТЕМА
+# ═══════════════════════════════════════════════════════════════════════════════
+ADMIN_ID = 395121797  # @Bhltaraslev
+
+PENDING_RULES_FILE = "pending_rules.json"
+USAGE_LOG_FILE     = "usage_log.json"
+
+def is_admin(user_id: int) -> bool:
+    return user_id == ADMIN_ID
+
+def load_pending_rules() -> list:
+    if os.path.exists(PENDING_RULES_FILE):
+        try:
+            with open(PENDING_RULES_FILE, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def save_pending_rules(rules: list):
+    with open(PENDING_RULES_FILE, "w", encoding="utf-8") as f:
+        json.dump(rules, f, ensure_ascii=False, indent=2)
+
+def add_pending_rule(rule_text: str, user_id: int, username: str):
+    rules = load_pending_rules()
+    rules.append({
+        "rule":     rule_text,
+        "user_id":  user_id,
+        "username": username or str(user_id),
+        "date":     time.strftime("%Y-%m-%d %H:%M"),
+    })
+    save_pending_rules(rules)
+    return len(rules)
+
+def log_usage(chat_id: int, username: str, total: int, found: int, files: int):
+    try:
+        log = []
+        if os.path.exists(USAGE_LOG_FILE):
+            with open(USAGE_LOG_FILE, encoding="utf-8") as f:
+                log = json.load(f)
+        log.append({
+            "chat_id":  chat_id,
+            "username": username or str(chat_id),
+            "date":     time.strftime("%Y-%m-%d %H:%M"),
+            "total":    total,
+            "found":    found,
+            "files":    files,
+        })
+        log = log[-1000:]
+        with open(USAGE_LOG_FILE, "w", encoding="utf-8") as f:
+            json.dump(log, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"⚠️ Лог не записано: {e}")
+
+def get_usage_stats() -> str:
+    if not os.path.exists(USAGE_LOG_FILE):
+        return "📊 Статистика порожня — ще не було замовлень."
+    try:
+        with open(USAGE_LOG_FILE, encoding="utf-8") as f:
+            log = json.load(f)
+    except Exception:
+        return "⚠️ Помилка читання логу."
+    if not log:
+        return "📊 Статистика порожня."
+
+    users = {}
+    for rec in log:
+        u = rec.get("username", "?")
+        if u not in users:
+            users[u] = {"orders": 0, "total": 0, "found": 0}
+        users[u]["orders"] += 1
+        users[u]["total"]  += rec.get("total", 0)
+        users[u]["found"]  += rec.get("found", 0)
+
+    lines = [f"📊 *Статистика* (останні {len(log)} замовлень)\n"]
+    for u, s in sorted(users.items(), key=lambda x: -x[1]["orders"]):
+        pct = int(s["found"] / s["total"] * 100) if s["total"] else 0
+        lines.append(f"👤 {u}: {s['orders']} замовл., {s['total']} позицій, знайдено {pct}%")
+
+    lines.append("\n🕐 Останні 5:")
+    for rec in log[-5:]:
+        lines.append(f"• {rec['date']} — {rec['username']}: {rec['found']}/{rec['total']}")
+
+    return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # TELEGRAM ХЕНДЛЕРИ
 # ═══════════════════════════════════════════════════════════════════════════════
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+
+def main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
+    kb = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    kb.add(KeyboardButton("📸 Як користуватись"), KeyboardButton("🛑 Стоп"))
+    kb.add(KeyboardButton("📋 Запропонувати правило"), KeyboardButton("📊 Кеш"))
+    if is_admin(user_id):
+        kb.add(KeyboardButton("👑 Статистика"), KeyboardButton("👑 Правила на розгляд"))
+        kb.add(KeyboardButton("👑 Логи"))
+    return kb
+
+
 @bot.message_handler(commands=['start', 'help'])
 def handle_start(message):
-    bot.reply_to(message, """👋 Привіт! Бот для підбору сантехніки.
+    admin_note = "\n\n👑 Ти адмін — доступні статистика, логи і підтвердження правил." if is_admin(message.from_user.id) else ""
+    bot.reply_to(message, f"""👋 Привіт! Бот для підбору сантехніки.
 
 📸 Кинь фото рукописного списку — знайду в базі
-📝 *пошук <текст>* — текстовий запит  
-📋 *правило <текст>* — навчи мене новому сленгу
-❌ *забудь <текст>* — видалити неправильний запис з кешу
-📊 /кеш — скільки записів в кеші
-🛑 /stop — зупинити обробку
+📝 *пошук <текст>* — текстовий запит
+📋 *правило <текст>* — запропонувати нове правило
+🛑 /stop — зупинити обробку{admin_note}""",
+        parse_mode="Markdown",
+        reply_markup=main_keyboard(message.from_user.id))
 
-Приклад: `правило рожон = трійник редукційний`
-Приклад: `забудь МРЗ кут. - 2 шт`""", parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text == "📸 Як користуватись")
+def kb_howto(message):
+    bot.reply_to(message, """📸 *Як користуватись:*
+
+1. Напиши підказку з виробниками:
+`пайка - екопластик
+крани - рафтек
+каналізація - асг`
+
+2. Кинь фото списку від майстра
+
+3. Отримай Excel з підібраними товарами""", parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text == "🛑 Стоп")
+def kb_stop(message):
+    handle_stop(message)
+
+@bot.message_handler(func=lambda m: m.text == "📊 Кеш")
+def kb_cache(message):
+    handle_cache_info(message)
+
+@bot.message_handler(func=lambda m: m.text == "📋 Запропонувати правило")
+def kb_propose(message):
+    bot.reply_to(message, "Напиши правило у форматі:\n`правило рожон = трійник редукційний`", parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text == "👑 Статистика")
+def kb_stats(message):
+    if not is_admin(message.from_user.id):
+        return
+    bot.reply_to(message, get_usage_stats(), parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text == "👑 Логи")
+def kb_logs(message):
+    if not is_admin(message.from_user.id):
+        return
+    if not os.path.exists(USAGE_LOG_FILE):
+        bot.reply_to(message, "Лог порожній.")
+        return
+    with open(USAGE_LOG_FILE, "rb") as f:
+        bot.send_document(message.chat.id, f, visible_file_name="usage_log.json")
+
+@bot.message_handler(func=lambda m: m.text == "👑 Правила на розгляд")
+def kb_pending(message):
+    if not is_admin(message.from_user.id):
+        return
+    show_pending_rules(message.chat.id)
+
+
+def show_pending_rules(chat_id: int):
+    rules = load_pending_rules()
+    if not rules:
+        bot.send_message(chat_id, "✅ Немає правил на розгляд.")
+        return
+    for i, r in enumerate(rules):
+        markup = InlineKeyboardMarkup()
+        markup.add(
+            InlineKeyboardButton("✅ Підтвердити", callback_data=f"approve_{i}"),
+            InlineKeyboardButton("❌ Відхилити",   callback_data=f"reject_{i}"),
+        )
+        bot.send_message(chat_id,
+            f"📋 Правило #{i+1} від {r['username']} ({r['date']}):\n\n`{r['rule']}`",
+            parse_mode="Markdown", reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith(('approve_', 'reject_')))
+def handle_rule_decision(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "⛔ Тільки адмін")
+        return
+    action, idx = call.data.split('_')
+    idx = int(idx)
+    rules = load_pending_rules()
+    if idx >= len(rules):
+        bot.answer_callback_query(call.id, "Правило вже оброблено")
+        return
+    rule = rules.pop(idx)
+    save_pending_rules(rules)
+    if action == 'approve':
+        add_rule(rule['rule'])
+        bot.edit_message_text(
+            f"✅ ПІДТВЕРДЖЕНО:\n`{rule['rule']}`",
+            call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        try:
+            bot.send_message(rule['user_id'], f"✅ Твоє правило підтверджено:\n`{rule['rule']}`", parse_mode="Markdown")
+        except Exception:
+            pass
+    else:
+        bot.edit_message_text(
+            f"❌ ВІДХИЛЕНО:\n`{rule['rule']}`",
+            call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    bot.answer_callback_query(call.id, "Готово")
 
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('правило'))
 def handle_rule(message):
     rule = message.text[7:].strip()
-    if rule:
-        add_rule(rule)
-        bot.reply_to(message, f"✅ Записав:\n_{rule}_", parse_mode="Markdown")
-    else:
+    if not rule:
         bot.reply_to(message, "Напиши правило після слова 'правило'.")
+        return
+
+    if is_admin(message.from_user.id):
+        add_rule(rule)
+        bot.reply_to(message, f"✅ Записав (адмін):\n_{rule}_", parse_mode="Markdown")
+    else:
+        n = add_pending_rule(rule, message.from_user.id, message.from_user.username)
+        bot.reply_to(message,
+            f"📥 Правило відправлено на розгляд адміну (в черзі: {n}):\n_{rule}_",
+            parse_mode="Markdown")
+        try:
+            bot.send_message(ADMIN_ID,
+                f"🔔 Нове правило від @{message.from_user.username or message.from_user.id}:\n`{rule}`",
+                parse_mode="Markdown")
+        except Exception:
+            pass
 
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('забудь'))
 def handle_forget(message):
-    """Видаляє запис з кешу нормалізацій."""
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "⛔ Видаляти з кешу може тільки адмін.")
+        return
     text = message.text[6:].strip()
     if not text:
-        bot.reply_to(message, "Напиши що забути після слова 'забудь'.\nПриклад: `забудь МРЗ кут. - 2 шт`", parse_mode="Markdown")
+        bot.reply_to(message, "Напиши що забути після слова 'забудь'.", parse_mode="Markdown")
         return
-    # Видаляємо без прив'язки до виробника (пробуємо з пустим brand_map)
     deleted = cache_delete(text, {})
     if not deleted:
-        # Пробуємо нечіткий пошук — знаходимо схожі ключі і видаляємо їх
         text_tokens = tokenize(text)
         to_delete = []
         for key in list(_CACHE.keys()):
@@ -1585,21 +1792,19 @@ def handle_forget(message):
             for key in to_delete:
                 del _CACHE[key]
             _save_cache()
-            bot.reply_to(message, f"✅ Видалено {len(to_delete)} запис(ів) схожих на:\n`{text}`", parse_mode="Markdown")
+            bot.reply_to(message, f"✅ Видалено {len(to_delete)} запис(ів)", parse_mode="Markdown")
         else:
-            bot.reply_to(message, f"⚠️ Не знайдено в кеші:\n`{text}`\n\nМожливо цей товар ще не кешувався.", parse_mode="Markdown")
+            bot.reply_to(message, f"⚠️ Не знайдено в кеші", parse_mode="Markdown")
     else:
-        bot.reply_to(message, f"✅ Видалено з кешу:\n`{text}`", parse_mode="Markdown")
+        bot.reply_to(message, f"✅ Видалено з кешу", parse_mode="Markdown")
 
 
 @bot.message_handler(commands=['кеш', 'cache'])
 def handle_cache_info(message):
-    """Показує інформацію про кеш."""
     total = len(_CACHE)
     if total == 0:
         bot.reply_to(message, "📋 Кеш порожній — заповниться після перших замовлень.")
         return
-    # Показуємо останні 5 записів
     recent = list(_CACHE.items())[-5:]
     lines = []
     for key, val in recent:
@@ -1614,6 +1819,34 @@ def handle_cache_info(message):
     )
 
 
+@bot.message_handler(commands=['статистика', 'stats'])
+def handle_stats(message):
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "⛔ Статистика доступна тільки адміну.")
+        return
+    bot.reply_to(message, get_usage_stats(), parse_mode="Markdown")
+
+
+@bot.message_handler(commands=['логи', 'logs'])
+def handle_logs(message):
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "⛔ Логи доступні тільки адміну.")
+        return
+    if not os.path.exists(USAGE_LOG_FILE):
+        bot.reply_to(message, "Лог порожній.")
+        return
+    with open(USAGE_LOG_FILE, "rb") as f:
+        bot.send_document(message.chat.id, f, visible_file_name="usage_log.json")
+
+
+@bot.message_handler(commands=['правила', 'pending'])
+def handle_pending(message):
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "⛔ Тільки адмін.")
+        return
+    show_pending_rules(message.chat.id)
+
+
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     for attempt in range(3):
@@ -1625,7 +1858,8 @@ def handle_photo(message):
             hint = pending_hints.pop(message.chat.id, "")
             full_caption = " | ".join(filter(None, [caption, hint]))
             add_to_batch(message.chat.id, {
-                'type': 'photo', 'data': image_b64, 'caption': full_caption
+                'type': 'photo', 'data': image_b64, 'caption': full_caption,
+                'username': message.from_user.username or str(message.from_user.id),
             })
             return
         except Exception as e:
@@ -1639,16 +1873,24 @@ def handle_photo(message):
 def handle_text_search(message):
     запит = message.text[5:].strip()
     if запит:
-        add_to_batch(message.chat.id, {'type': 'text', 'text': запит})
+        add_to_batch(message.chat.id, {
+            'type': 'text', 'text': запит,
+            'username': message.from_user.username or str(message.from_user.id),
+        })
     else:
         bot.reply_to(message, "Напиши запит після слова 'пошук'.")
 
 
 @bot.message_handler(func=lambda m: m.text and not m.text.startswith('/')
                      and not m.text.lower().startswith('пошук')
-                     and not m.text.lower().startswith('правило'))
+                     and not m.text.lower().startswith('правило')
+                     and not m.text.lower().startswith('забудь')
+                     and not m.text.startswith('📸')
+                     and not m.text.startswith('🛑')
+                     and not m.text.startswith('📋')
+                     and not m.text.startswith('📊')
+                     and not m.text.startswith('👑'))
 def handle_text_hint(message):
-    """Звичайний текст зберігаємо як підказку до наступного фото"""
     text = message.text.strip()
     if text:
         pending_hints[message.chat.id] = text
@@ -1669,6 +1911,7 @@ def handle_stop(message):
             user_batches[chat_id]['timer'].cancel()
         user_batches.pop(chat_id, None)
     bot.reply_to(message, "🛑 Зупинено.")
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
