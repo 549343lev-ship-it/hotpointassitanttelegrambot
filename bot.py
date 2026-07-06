@@ -1378,6 +1378,32 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
 # ═══════════════════════════════════════════════════════════════════════════════
 # EXCEL
 # ═══════════════════════════════════════════════════════════════════════════════
+def parse_qty(qty_str) -> tuple:
+    """
+    Розділяє кількість на число і одиницю:
+    '10 шт'  → (10, 'шт')
+    '60 м.п.' → (60, 'м.п')
+    '0,5 м'  → (0.5, 'м')
+    '5'      → (5, '')
+    Число повертається як number щоб Excel міг сумувати.
+    """
+    s = str(qty_str or '').strip()
+    if not s:
+        return '', ''
+    m = re.match(r'^\s*(\d+(?:[.,]\d+)?)\s*(.*)$', s)
+    if m:
+        num_str = m.group(1).replace(',', '.')
+        try:
+            num = float(num_str)
+            if num == int(num):
+                num = int(num)
+        except ValueError:
+            num = num_str
+        unit = m.group(2).strip().rstrip('.').strip()
+        return num, unit
+    return s, ''
+
+
 def create_excel(результати: list[dict]) -> tuple[BytesIO, list[str], list[str]]:
     знайдено_rows  = []
     не_знайдено_rows = []
@@ -1392,9 +1418,11 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list[str], 
         if r.get('знайдено'):
             # Два показники: keyword пошук % і Claude впевненість %
             zbig_label = f"🔍{kw}% / 🤖{conf}%"
+            qty_num, qty_unit = parse_qty(r.get('qty', ''))
             знайдено_rows.append({
                 'Наименование': r.get('назва', ''),
-                'Кількість':    r.get('qty', ''),
+                'Кількість':    qty_num,
+                'Од.':          qty_unit,
                 'Ціна':         r.get('ціна', ''),
                 'Збіг':         zbig_label,
                 'Чому знайшло': r.get('reason', ''),
@@ -1416,7 +1444,7 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list[str], 
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         # Лист 1: Знайдені товари
         df = pd.DataFrame(знайдено_rows) if знайдено_rows else pd.DataFrame(
-            columns=['Наименование','Кількість','Ціна','Збіг','Чому знайшло','Оригінал'])
+            columns=['Наименование','Кількість','Од.','Ціна','Збіг','Чому знайшло','Оригінал'])
         df.to_excel(writer, index=False, sheet_name='Замовлення')
 
         # Лист 2: Не знайдено з діагностикою
