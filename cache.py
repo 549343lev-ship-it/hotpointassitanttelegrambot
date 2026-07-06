@@ -31,7 +31,7 @@ _CACHE: dict = {}
 # ─── Утиліти ────────────────────────────────────────────────────────────────
 
 def _tokenize(text: str) -> set:
-    return set(re.findall(r'[а-яёіїєґa-z0-9]+', text.lower()))
+    return set(re.findall(r'[а-яёіїєґa-z]+|[0-9]+', text.lower()))
 
 def _cache_key(original: str, brand_map: dict) -> str:
     """
