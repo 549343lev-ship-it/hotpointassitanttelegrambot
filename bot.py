@@ -282,6 +282,7 @@ def add_rule(new_rule: str):
 # КЕШ НОРМАЛІЗАЦІЙ — винесено в cache.py
 # ═══════════════════════════════════════════════════════════════════════════════
 from cache import cache_lookup, cache_save, cache_delete, get_cache, _CACHE, _save_cache
+import clients
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # КРОК 1: БАЗА ЗНАНЬ САНТЕХНІКИ
@@ -1185,15 +1186,37 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
     результати = [None] * len(позиції)
 
     for i, пос in enumerate(позиції):
-        original   = пос.get('original', '')
-        normalized = пос.get('normalized', '')
-        category   = пос.get('category', 'other')
-        brand_map  = пос.get('_brand_map', {})
+        original    = пос.get('original', '')
+        normalized  = пос.get('normalized', '')
+        category    = пос.get('category', 'other')
+        brand_map   = пос.get('_brand_map', {})
+        client_slug = пос.get('_client_slug')
+        client_prefs = пос.get('_client_prefs', {})
 
         if progress_cb:
             progress_cb(i + 1, len(позиції))
 
-        # ── Крок 1: перевіряємо кеш ───────────────────────────────────────────
+        # ── Крок 0: клієнтський кеш (пріоритетніший за загальний) ──────────────
+        if client_slug:
+            c_cached = clients.client_cache_lookup(client_slug, original)
+            if c_cached:
+                результати[i] = {
+                    'original':         original,
+                    'normalized':       normalized,
+                    'знайдено':         True,
+                    'назва':            c_cached['catalog_name'],
+                    'ціна':             '',
+                    'qty':              пос.get('qty', ''),
+                    'category':         c_cached.get('category', category),
+                    'confidence':       c_cached['confidence'],
+                    'reason':           f"З кешу клієнта ({c_cached['confidence']}%)",
+                    'fail_reason':      '',
+                    'candidates_debug': [],
+                    '_from_cache':      True,
+                }
+                continue
+
+        # ── Крок 1: загальний кеш ──────────────────────────────────────────────
         cached = cache_lookup(original, brand_map)
         if cached:
             результати[i] = {
@@ -1203,6 +1226,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                 'назва':            cached['catalog_name'],
                 'ціна':             '',   # ціна може змінитись — заповнимо нижче
                 'qty':              пос.get('qty', ''),
+                'category':         cached.get('category', category),
                 'confidence':       cached['confidence'],
                 'reason':           f"З кешу (раніше знайдено з впевненістю {cached['confidence']}%)",
                 'fail_reason':      '',
@@ -1227,22 +1251,42 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
             }
             continue
 
+        # ── Крок 3: вибір виробника — 3 рівні пріоритету ────────────────────────
+        # Рівень 1: підказка менеджера в чаті (найвищий)
+        # Рівень 2: преференції клієнта з історії
+        # Рівень 3: загальні дефолти DEFAULT_BRAND_PRIORITY
         required_brand = None
         brand_found_in_catalog = True
         brand_tokens_for_filter = brand_map.get(category)
         кандидати_до_фільтру = кандидати[:]
 
         if brand_tokens_for_filter:
+            # РІВЕНЬ 1: менеджер явно вказав
             кандидати, brand_found_in_catalog = filter_by_brand(кандидати, brand_tokens_for_filter)
             required_brand = brand_tokens_for_filter[0] if brand_found_in_catalog else None
         else:
-            priority_list = DEFAULT_BRAND_PRIORITY.get(category, [])
-            for priority_tokens in priority_list:
-                filtered, found = filter_by_brand(кандидати, priority_tokens)
+            applied = False
+            # РІВЕНЬ 2: преференції клієнта по цій категорії
+            client_by_cat = client_prefs.get('by_category', {}).get(category, [])
+            for brand, _count in client_by_cat[:3]:
+                tokens = BRAND_TOKENS.get(brand)
+                if not tokens:
+                    continue
+                filtered, found = filter_by_brand(кандидати, tokens)
                 if found:
                     кандидати = filtered
-                    required_brand = priority_tokens[0]
+                    required_brand = tokens[0]
+                    applied = True
                     break
+            # РІВЕНЬ 3: загальні дефолти
+            if not applied:
+                priority_list = DEFAULT_BRAND_PRIORITY.get(category, [])
+                for priority_tokens in priority_list:
+                    filtered, found = filter_by_brand(кандидати, priority_tokens)
+                    if found:
+                        кандидати = filtered
+                        required_brand = priority_tokens[0]
+                        break
 
         потребують_claude.append({
             'idx':              i,
@@ -1254,6 +1298,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
             'required_brand':   required_brand,
             'category':         category,
             'brand_map':        brand_map,
+            'client_slug':      client_slug,
         })
 
     if потребують_claude:
@@ -1276,13 +1321,14 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                     'назва':            found['name'],
                     'ціна':             found.get('price', ''),
                     'qty':              пос['qty'],
+                    'category':         пос['category'],
                     'confidence':       confidence,
                     'keyword_pct':      found.get('_match_pct', 0),
                     'reason':           reason,
                     'fail_reason':      '',
                     'candidates_debug': пос['candidates_debug'],
                 }
-                # ── Зберігаємо в кеш якщо впевненість висока ─────────────────
+                # ── Зберігаємо в загальний кеш ────────────────────────────────
                 cache_save(
                     original=пос['original'],
                     brand_map=пос['brand_map'],
@@ -1291,6 +1337,15 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                     category=пос['category'],
                     confidence=confidence,
                 )
+                # ── Зберігаємо в кеш клієнта якщо клієнт активний ─────────────
+                if пос.get('client_slug'):
+                    clients.client_cache_save(
+                        slug=пос['client_slug'],
+                        original=пос['original'],
+                        catalog_name=found['name'],
+                        category=пос['category'],
+                        confidence=confidence,
+                    )
             else:
                 топ_канд = ', '.join(c['name'][:50] for c in пос['candidates'][:3])
                 auto_fail = f"Топ кандидати: [{топ_канд}]"
@@ -1402,9 +1457,20 @@ def process_batch(chat_id: int):
     stop_flags.pop(chat_id, None)
     items = batch['items']
 
+    # ── Активний клієнт (якщо є) ───────────────────────────────────────────────
+    active_slug = clients.get_active(chat_id)
+    client_prefs = clients.get_preferences(active_slug) if active_slug else {}
+    client_name = ""
+    if active_slug:
+        profile = clients.get_profile(active_slug)
+        client_name = profile['name'] if profile else active_slug
+
+    client_line = f"👤 Клієнт: {client_name}\n" if client_name else ""
+
     # ── Живе повідомлення статусу ──────────────────────────────────────────────
     status = bot.send_message(chat_id,
         f"⏳ Починаю обробку {len(items)} файл(ів)...\n"
+        f"{client_line}"
         f"━━━━━━━━━━━━━━━━━━━\n"
         f"📖 Крок 1/4: Читання фото\n"
         f"🔍 Крок 2/4: Пошук в каталозі\n"
@@ -1461,6 +1527,12 @@ def process_batch(chat_id: int):
         safe_edit(chat_id, msg_id,
             "😕 Не вдалося розпізнати жодної позиції.\n" + "\n".join(errors))
         return
+
+    # ── Прикріплюємо дані клієнта до кожної позиції ────────────────────────────
+    if active_slug:
+        for п in всі_позиції:
+            п['_client_slug'] = active_slug
+            п['_client_prefs'] = client_prefs
 
     # Прев'ю розпізнаного
     preview = "\n".join(
@@ -1520,6 +1592,14 @@ def process_batch(chat_id: int):
     # Логуємо використання для статистики адміна
     username = items[0].get('username', str(chat_id)) if items else str(chat_id)
     log_usage(chat_id, username, len(результати), len(знайдено), len(items))
+
+    # Зберігаємо замовлення в історію клієнта (для навчання преференцій)
+    if active_slug:
+        caption = items[0].get('caption', '') if items else ''
+        try:
+            clients.save_order(active_slug, результати, caption)
+        except Exception as e:
+            print(f"⚠️ Історія клієнта не збережена: {e}")
 
 
 def add_to_batch(chat_id: int, item: dict):
@@ -1646,7 +1726,13 @@ def handle_start(message):
 📸 Кинь фото рукописного списку — знайду в базі
 📝 *пошук <текст>* — текстовий запит
 📋 *правило <текст>* — запропонувати нове правило
-🛑 /stop — зупинити обробку{admin_note}""",
+🛑 /stop — зупинити обробку
+
+👤 *Клієнти:*
+`новий клієнт Петренко` — створити профіль
+`клієнт Петренко` — активувати (бот врахує його уподобання)
+`клієнт стоп` — працювати без профілю
+`клієнти` — список{admin_note}""",
         parse_mode="Markdown",
         reply_markup=main_keyboard(message.from_user.id))
 
@@ -1847,6 +1933,110 @@ def handle_pending(message):
     show_pending_rules(message.chat.id)
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# КОМАНДИ КЛІЄНТІВ
+# ═══════════════════════════════════════════════════════════════════════════════
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('новий клієнт'))
+def handle_new_client(message):
+    """новий клієнт Петренко, бере тільки рафтек"""
+    rest = message.text[12:].strip()
+    if not rest:
+        bot.reply_to(message,
+            "Формат: `новий клієнт Петренко, бере тільки рафтек`\n(примітка через кому — опційно)",
+            parse_mode="Markdown")
+        return
+    parts = rest.split(',', 1)
+    name = parts[0].strip()
+    notes = parts[1].strip() if len(parts) > 1 else ""
+    ok, result = clients.create_client(name, notes)
+    if ok:
+        clients.set_active(message.chat.id, result)
+        bot.reply_to(message,
+            f"✅ Створено профіль клієнта *{name}* і активовано.\nКидай фото!",
+            parse_mode="Markdown")
+    else:
+        bot.reply_to(message, f"⚠️ {result}")
+
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().strip() == 'клієнти')
+def handle_clients_list(message):
+    """Список всіх клієнтів."""
+    index = clients.list_clients()
+    if not index:
+        bot.reply_to(message, "📁 Немає жодного клієнта.\nСтворити: `новий клієнт <ім'я>`", parse_mode="Markdown")
+        return
+    lines = []
+    for slug, name in sorted(index.items(), key=lambda x: x[1]):
+        profile = clients.get_profile(slug)
+        orders = profile.get('orders_count', 0) if profile else 0
+        lines.append(f"• {name} ({orders} замовл.)")
+    bot.reply_to(message, f"📁 Клієнти ({len(index)}):\n" + "\n".join(lines))
+
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('клієнт'))
+def handle_client(message):
+    """
+    клієнт            → показати активного
+    клієнт Петренко   → активувати
+    клієнт стоп       → скинути
+    клієнт Петренко: примітка → додати примітку
+    """
+    rest = message.text[6:].strip()
+
+    # Без аргументів — показати активного
+    if not rest:
+        slug = clients.get_active(message.chat.id)
+        if slug:
+            profile = clients.get_profile(slug)
+            name = profile['name'] if profile else slug
+            bot.reply_to(message, f"👤 Активний клієнт: *{name}*\nСкинути: `клієнт стоп`", parse_mode="Markdown")
+        else:
+            bot.reply_to(message, "Немає активного клієнта.\nАктивувати: `клієнт <ім'я>`", parse_mode="Markdown")
+        return
+
+    # Скидання
+    if rest.lower() in ('стоп', 'скинути', 'вихід', 'off'):
+        clients.clear_active(message.chat.id)
+        bot.reply_to(message, "✅ Клієнта скинуто. Працюємо без профілю.")
+        return
+
+    # Примітка: клієнт Ім'я: текст
+    if ':' in rest:
+        name_part, note = rest.split(':', 1)
+        slug = clients.find_client(name_part.strip())
+        if not slug:
+            bot.reply_to(message, f"⚠️ Клієнта '{name_part.strip()}' не знайдено.")
+            return
+        clients.add_note(slug, note.strip())
+        bot.reply_to(message, f"✅ Примітку додано до профілю.")
+        return
+
+    # Активація
+    slug = clients.find_client(rest)
+    if not slug:
+        bot.reply_to(message,
+            f"⚠️ Клієнта '{rest}' не знайдено.\nСтворити: `новий клієнт {rest}`",
+            parse_mode="Markdown")
+        return
+
+    clients.set_active(message.chat.id, slug)
+    profile = clients.get_profile(slug)
+    prefs = clients.get_preferences(slug)
+
+    top = prefs.get('top_brands', [])[:3]
+    brands_str = ", ".join(f"{b}" for b, c in top) if top else "ще немає даних"
+    notes = profile.get('notes', []) if profile else []
+    notes_str = "\n".join(f"  • {n}" for n in notes[-3:] if n) if notes else "  —"
+
+    bot.reply_to(message,
+        f"✅ Активовано: *{profile['name'] if profile else slug}*\n"
+        f"📦 Замовлень: {profile.get('orders_count', 0) if profile else 0}\n"
+        f"🏷 Топ виробники: {brands_str}\n"
+        f"📝 Примітки:\n{notes_str}\n\n"
+        f"Кидай фото — бот врахує уподобання клієнта!",
+        parse_mode="Markdown")
+
+
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     for attempt in range(3):
@@ -1885,6 +2075,8 @@ def handle_text_search(message):
                      and not m.text.lower().startswith('пошук')
                      and not m.text.lower().startswith('правило')
                      and not m.text.lower().startswith('забудь')
+                     and not m.text.lower().startswith('клієнт')
+                     and not m.text.lower().startswith('новий клієнт')
                      and not m.text.startswith('📸')
                      and not m.text.startswith('🛑')
                      and not m.text.startswith('📋')
