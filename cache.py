@@ -113,32 +113,90 @@ def cache_lookup(original: str, brand_map: dict) -> dict | None:
     """
     Шукає оригінальний текст в кеші.
     Спочатку точний збіг, потім нечіткий (Jaccard >= 0.82).
+    Записи зі статусом 'banned' ігноруються.
     Повертає запис або None.
     """
-    # Точний збіг
     key = _cache_key(original, brand_map)
     if key in _CACHE:
-        return _CACHE[key]
-    # Нечіткий
-    return _fuzzy_match(original, brand_map)
+        entry = _CACHE[key]
+        if entry.get('status') != 'banned':
+            return entry
+        return None  # banned — не видаємо і не шукаємо нечітко
+    result = _fuzzy_match(original, brand_map)
+    if result and result.get('status') == 'banned':
+        return None
+    return result
 
 
 def cache_save(original: str, brand_map: dict, normalized: str,
                catalog_name: str, category: str, confidence: int):
     """
-    Зберігає успішний збіг в кеш.
-    Зберігається тільки якщо confidence >= 85 (щоб не кешувати сумнівні результати).
+    Зберігає успішний збіг в кеш зі статусом 'auto'.
+    Не перезаписує confirmed і banned записи.
+    Зберігається тільки якщо confidence >= 85.
     """
     if confidence < 85:
         return
     key = _cache_key(original, brand_map)
+    existing = _CACHE.get(key)
+    # Не чіпаємо записи які адмін вже підтвердив або забанив
+    if existing and existing.get('status') in ('confirmed', 'banned'):
+        return
     _CACHE[key] = {
         "normalized":   normalized,
         "catalog_name": catalog_name,
         "category":     category,
         "confidence":   confidence,
+        "status":       "auto",
     }
     _save_cache()
+
+
+def cache_set_status(original: str, catalog_name: str, status: str) -> bool:
+    """
+    Адмін позначає запис: 'confirmed' (✅ вірно) або 'banned' (❌ помилка).
+    Шукає по оригіналу + назві товару в усіх записах (незалежно від brand_map).
+    Повертає True якщо запис знайдено і оновлено.
+    """
+    key_part = re.sub(r'\s+', ' ', original.lower().strip())
+    updated = False
+    for cached_key, entry in _CACHE.items():
+        cached_orig = cached_key.split("::")[0]
+        if cached_orig == key_part and entry.get('catalog_name') == catalog_name:
+            entry['status'] = status
+            updated = True
+    if updated:
+        _save_cache()
+    return updated
+
+
+def cache_ban_pair(original: str, catalog_name: str,
+                   category: str = "other") -> None:
+    """
+    Створює banned-запис навіть якщо пари ще немає в кеші —
+    щоб бот НІКОЛИ не видавав цей товар для цього оригіналу.
+    """
+    key = _cache_key(original, {})
+    _CACHE[key] = {
+        "normalized":   original,
+        "catalog_name": catalog_name,
+        "category":     category,
+        "confidence":   0,
+        "status":       "banned",
+    }
+    _save_cache()
+
+
+def is_banned(original: str, catalog_name: str) -> bool:
+    """Перевіряє чи пара (оригінал → товар) забанена адміном."""
+    key_part = re.sub(r'\s+', ' ', original.lower().strip())
+    for cached_key, entry in _CACHE.items():
+        if entry.get('status') != 'banned':
+            continue
+        cached_orig = cached_key.split("::")[0]
+        if cached_orig == key_part and entry.get('catalog_name') == catalog_name:
+            return True
+    return False
 
 
 def cache_delete(original: str, brand_map: dict) -> bool:
