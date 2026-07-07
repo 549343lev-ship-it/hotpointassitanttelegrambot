@@ -245,8 +245,14 @@ def get_preferences(slug: str) -> dict:
 
 # ─── Клієнтський кеш нормалізацій (пріоритетніший за загальний) ──────────────
 
-def client_cache_lookup(slug: str, original: str) -> dict | None:
-    """Точний + нечіткий (Jaccard >= 0.82) пошук у кеші клієнта."""
+def client_cache_lookup(slug: str, original: str,
+                        required_brand_tokens: list = None) -> dict | None:
+    """
+    Точний + нечіткий (Jaccard >= 0.82) пошук у кеші клієнта.
+    - banned записи ігноруються
+    - якщо задано required_brand_tokens (підказка менеджера) —
+      запис приймається ТІЛЬКИ якщо назва товару містить цього виробника
+    """
     path = os.path.join(CLIENTS_DIR, slug, "cache.json")
     if not os.path.exists(path):
         return None
@@ -256,8 +262,17 @@ def client_cache_lookup(slug: str, original: str) -> dict | None:
     except Exception:
         return None
 
+    def _acceptable(entry: dict) -> bool:
+        if entry.get('status') == 'banned':
+            return False
+        if required_brand_tokens:
+            name_lower = entry.get('catalog_name', '').lower()
+            if not any(tok.lower() in name_lower for tok in required_brand_tokens):
+                return False  # кеш суперечить підказці менеджера
+        return True
+
     key = re.sub(r'\s+', ' ', original.lower().strip())
-    if key in cache:
+    if key in cache and _acceptable(cache[key]):
         return cache[key]
 
     orig_tokens = set(re.findall(r'[а-яёіїєґa-z]+|[0-9]+', key))
@@ -265,6 +280,8 @@ def client_cache_lookup(slug: str, original: str) -> dict | None:
         return None
     best_score, best_entry = 0.0, None
     for cached_key, entry in cache.items():
+        if not _acceptable(entry):
+            continue
         cached_tokens = set(re.findall(r'[а-яёіїєґa-z]+|[0-9]+', cached_key))
         if not cached_tokens:
             continue
@@ -278,7 +295,7 @@ def client_cache_lookup(slug: str, original: str) -> dict | None:
 
 def client_cache_save(slug: str, original: str, catalog_name: str,
                       category: str, confidence: int):
-    """Зберігає збіг у кеш клієнта (тільки confidence >= 85)."""
+    """Зберігає збіг у кеш клієнта зі статусом 'auto' (confidence >= 85)."""
     if confidence < 85:
         return
     client_dir = os.path.join(CLIENTS_DIR, slug)
@@ -293,10 +310,35 @@ def client_cache_save(slug: str, original: str, catalog_name: str,
         except Exception:
             cache = {}
     key = re.sub(r'\s+', ' ', original.lower().strip())
+    existing = cache.get(key)
+    if existing and existing.get('status') in ('confirmed', 'banned'):
+        return  # не чіпаємо рішення адміна
     cache[key] = {
         "catalog_name": catalog_name,
         "category":     category,
         "confidence":   confidence,
+        "status":       "auto",
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False, indent=2)
+
+
+def client_cache_set_status(slug: str, original: str,
+                            catalog_name: str, status: str) -> bool:
+    """Адмін позначає запис клієнтського кешу: confirmed/banned."""
+    path = os.path.join(CLIENTS_DIR, slug, "cache.json")
+    if not os.path.exists(path):
+        return False
+    try:
+        with open(path, encoding="utf-8") as f:
+            cache = json.load(f)
+    except Exception:
+        return False
+    key = re.sub(r'\s+', ' ', original.lower().strip())
+    entry = cache.get(key)
+    if entry and entry.get('catalog_name') == catalog_name:
+        entry['status'] = status
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False, indent=2)
+        return True
+    return False
