@@ -250,6 +250,24 @@ else:
         CATALOG = json.load(f)
     print(f"✅ Каталог завантажено: {len(CATALOG)} позицій")
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# ПОСТ-ОЧИСТКА КАТАЛОГУ (незалежно від того як побудований catalog.json)
+# 1. Вирізаємо {4/20} упаковку з назв — інакше "20" з упаковки дає фальшивий
+#    збіг діаметра (труба ф40 {4/20} збігалась на 100% із запитом ф20!)
+# 2. Викидаємо "(виведено з асортименту)" — їх не можна продавати
+# ═══════════════════════════════════════════════════════════════════════════════
+_before = len(CATALOG)
+_cleaned = []
+for item in CATALOG:
+    name = item.get('name', '')
+    if 'виведено з асортименту' in name.lower():
+        continue  # не продаємо
+    # Вирізаємо {N/M} упаковку
+    item['name'] = re.sub(r'\s*\{[^}]+\}', '', name).strip()
+    _cleaned.append(item)
+CATALOG = _cleaned
+print(f"🧹 Очистка: вирізано упаковку {{N/M}}, викинуто {_before - len(CATALOG)} виведених. Актуально: {len(CATALOG)}")
+
 def tokenize(text: str) -> set:
     return set(re.findall(r'[а-яёіїєґa-z0-9]+', text.lower()))
 
@@ -585,13 +603,22 @@ PUSH-СИСТЕМА (натяжна, PEX-A) — АНАЛОГ ПАЙКИ:
 
   РОЗМІРИ RAFTEC PUSH: 16х2,2 / 20х2,8 / 25х3,5 / 32х4,4
 
-  НАЗВИ В КАТАЛОЗІ (маркер PUSH — слово "натяжний"):
-  Труба:        "Труба PEX-A EVOH ф 16х2,2 мм, SILVER, RAFTEC"
-  Кутник:       "Кутник натяжний, 16х2,2, RAFTEC"
-  Трійник:      "Трійник натяжний, 16х2,2, RAFTEC"
-  Муфта:        "Муфта натяжна, 16х2,2, RAFTEC"
-  Перехід різьба: "Муфта натяжна РЗ 16х1/2\", RAFTEC" (або РВ)
-  Гільза:       "Насувна гільза, ф16, RAFTEC"
+  НАЗВИ В КАТАЛОЗІ (маркер PUSH — слово "натяжний" + "PUSH"):
+  Труба:        "Труба PЕХ-A, ф 25x3,5 мм, EVOH, SILVER, RAFTEC"
+  Коліно/кут:   "Кутник натяжний, ф 25х25, PUSH, RAFTEC"
+  Трійник:      "Трійник натяжний, ф 25х25х25, PUSH, RAFTEC"  ← ТРИ розміри!
+  Трійник ред.: "Трійник натяжний, ф 25х16х25, PUSH, RAFTEC"
+                ⚠️ НЕ пиши слово "редукційний" для натяжних — його немає в назвах!
+                Просто три розміри: 25х16х25
+  Муфта/перехід:"Муфта натяжна, ф 20х16, PUSH, RAFTEC"
+                ⚠️ теж БЕЗ "редукційна" — просто два розміри
+  Перехід різьба:"Муфта натяжна РЗ, ф 16х1/2, PUSH, RAFTEC" (або РВ)
+  Гільза:       "Гільза натяжна, ф 16, PUSH, RAFTEC"  ← НЕ "Насувна"!
+  Заглушка:     "Заглушка натяжна, ф 16, PUSH, RAFTEC"
+  Настінне:     "Коліно натяжне настінне, ф 20х1/2, РВ, PUSH, RAFTEC"
+
+  ⚠️ Якщо натяжного фітинга потрібного розміру НЕМАЄ в каталозі —
+  краще "не знайдено" ніж PPR-заміна (PPR не з'єднається з PEX!)
 
   ⚠️ ГІЛЬЗИ ОБОВ'ЯЗКОВІ: кожне натяжне з'єднання потребує насувну гільзу
   відповідного діаметру! Якщо в замовленні PUSH-фітинги а гільз немає —
@@ -1180,8 +1207,33 @@ def keyword_search(query: str, top_n: int = 12, brand_tokens: list = None) -> li
 # ═══════════════════════════════════════════════════════════════════════════════
 CLAUDE_BATCH_SIZE = 8  # менший батч = надійніший JSON
 
-def claude_pick_one_batch(позиції: list[dict]) -> list[dict]:
-    """Один запит Claude на невеликий батч позицій."""
+def _parse_claude_json(raw: str, expected: int) -> list[dict] | None:
+    """Парсить JSON відповідь Claude. Повертає None якщо не вдалось."""
+    raw = re.sub(r'```\w*', '', raw).strip()
+    start = raw.find('[')
+    end   = raw.rfind(']') + 1
+    if start == -1:
+        return None
+    # Спроба 1: весь масив
+    if end > 0:
+        try:
+            parsed = json.loads(raw[start:end])
+            if isinstance(parsed, list):
+                return parsed
+        except Exception:
+            pass
+    # Спроба 2: витягуємо окремі об'єкти регуляркою (рятує обрізаний JSON)
+    objects = []
+    for m in re.finditer(r'\{[^{}]*\}', raw[start:]):
+        try:
+            objects.append(json.loads(m.group()))
+        except Exception:
+            continue
+    return objects if objects else None
+
+
+def claude_pick_one_batch(позиції: list[dict], _retry: bool = True) -> list[dict]:
+    """Один запит Claude на невеликий батч позицій. З ретраєм поштучно при збої."""
     запити = []
     for i, пос in enumerate(позиції):
         brand_note = f"\n   ⚠️ ВИРОБНИК: тільки {пос['required_brand']}" if пос.get('required_brand') else ""
@@ -1195,35 +1247,42 @@ def claude_pick_one_batch(позиції: list[dict]) -> list[dict]:
 
 {chr(10).join(запити)}
 
-Правила: діаметр обов'язково збігається; якщо є ВИРОБНИК — тільки він.
+Правила (СУВОРО):
+1. Діаметр ОБОВ'ЯЗКОВО збігається — якщо запит ф20, кандидат ф40 = знайдено:false!
+2. Якщо є ВИРОБНИК — тільки він.
+3. Товари з позначкою "(виведено з асортименту)" або "(п/з)" — НЕ вибирати, краще знайдено:false.
+4. PUSH-запит (натяжний) ≠ PPR-товар: якщо шукаємо натяжний фітинг а є тільки PPR — знайдено:false.
 confidence: 95=точний збіг, 80=майже точний, 60=схожий.
-fail_reason: якщо не знайдено — одне речення чому.
-reason: якщо знайдено — одне речення чому.
+reason/fail_reason: КОРОТКО (до 8 слів), БЕЗ лапок і спецсимволів всередині тексту!
 
-JSON масив рівно {len(позиції)} елементів:
-[{{"знайдено":true,"номер_кандидата":1,"confidence":95,"reason":"...","fail_reason":""}},...]"""
+JSON масив рівно {len(позиції)} елементів, нічого крім JSON:
+[{{"знайдено":true,"номер_кандидата":1,"confidence":95,"reason":"точний збіг діаметр виробник","fail_reason":""}},...]"""
 
     try:
         resp = claude.messages.create(
             model="claude-sonnet-4-5",
-            max_tokens=1024,
+            max_tokens=4000,
             messages=[{"role": "user", "content": prompt}]
         )
         raw = resp.content[0].text.strip()
-        # Агресивне очищення
-        raw = re.sub(r'```\w*', '', raw).strip()
-        # Витягуємо JSON масив
-        start = raw.find('[')
-        end   = raw.rfind(']') + 1
-        if start == -1 or end == 0:
-            raise ValueError("JSON масив не знайдено")
-        parsed = json.loads(raw[start:end])
-        # Якщо Claude повернув менше елементів — доповнюємо
+        parsed = _parse_claude_json(raw, len(позиції))
+        if parsed is None:
+            raise ValueError("JSON не розпарсився")
+        # Доповнюємо якщо менше
         while len(parsed) < len(позиції):
-            parsed.append({"знайдено": False, "confidence": 0, "reason": "", "fail_reason": "Claude не повернув відповідь для цієї позиції"})
+            parsed.append({"знайдено": False, "confidence": 0, "reason": "",
+                           "fail_reason": "Claude не повернув відповідь для цієї позиції"})
         return parsed[:len(позиції)]
     except Exception as e:
-        return [{"знайдено": False, "confidence": 0, "reason": "", "fail_reason": f"помилка Claude: {e}"}] * len(позиції)
+        # ── Ретрай поштучно: замість втрати всього батчу пробуємо по 1 позиції ──
+        if _retry and len(позиції) > 1:
+            print(f"⚠️ Батч {len(позиції)} впав ({e}), ретрай поштучно...")
+            results = []
+            for пос in позиції:
+                results.extend(claude_pick_one_batch([пос], _retry=False))
+            return results
+        return [{"знайдено": False, "confidence": 0, "reason": "",
+                 "fail_reason": f"помилка Claude: {e}"}] * len(позиції)
 
 
 def claude_pick_batch(позиції_з_кандидатами: list[dict]) -> list[dict]:
