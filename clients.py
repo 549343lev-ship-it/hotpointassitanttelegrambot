@@ -342,3 +342,15 @@ def client_cache_set_status(slug: str, original: str,
             json.dump(cache, f, ensure_ascii=False, indent=2)
         return True
     return False
+
+
+def get_client_cache(slug: str) -> dict:
+    """Повертає весь кеш клієнта (для перегляду через Telegram)."""
+    path = os.path.join(CLIENTS_DIR, slug, "cache.json")
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
