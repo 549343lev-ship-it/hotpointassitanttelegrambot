@@ -520,38 +520,38 @@ PPR ФІТИНГИ — формат по виробниках:
   Формат: "Утеплювач ламін. для труб ф 22х6 мм, синій, PLM"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ФОРМАТ НОРМАЛІЗОВАНИХ НАЗВ (з реального каталогу):
+ФОРМАТ normalized — КОРОТКО, ТІЛЬКИ КЛЮЧОВІ ПАРАМЕТРИ:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  PPR ASG:
-    Труба ф20 PN20   → "Труба PPR Faser HOT ф 20х2,8 мм, PN20, PP-RCT, ASG"
-    Коліно 25 90°    → "Коліно PPR 90° ф 25, PP-RCT, ASG"
-    Трійник 25       → "Трійник рівний PPR ф 25, PP-RCT, ASG"
-    Муфта 25         → "Муфта PPR ф 25, PP-RCT, ASG"
-    МРЗ 25*3/4       → "Муфта PPR МРЗ ф 25х3/4\", PP-RCT, ASG"
-    МРВ 25*3/4       → "Муфта PPR МРВ ф 25х3/4\", PP-RCT, ASG"
+  ⚠️ НЕ ВИГАДУЙ товщину стінки, PN, PP-RCT, упаковку — пошук сам знайде!
+  ⚠️ Пиши МІНІМУМ: тип виробу + система + діаметр(и) + [кут/різьба] + [серія] + виробник
 
-  PPR RAFTEC (НЕ "Faser HOT"! У RAFTEC інша назва серії):
-    Труба ф20 PN20   → "Труба PPR PN20 ф 20x3,4 мм, RAFTEC"
-    Труба ф20 PN25   → "Труба PPR Composite ф 20x3,4 мм, PN25, RAFTEC"
-    Коліно 25 90°    → "Коліно PPR 90° ф 25, RAFTEC"
-    Трійник 25       → "Трійник рівний PPR ф 25, RAFTEC"
-    Муфта 25         → "Муфта PPR ф 25, RAFTEC"
-    МРВ 25*3/4       → "Муфта PPR МРВ ф 25х3/4\", RAFTEC"
+  Параметри у порядку важливості:
+  1. Тип виробу (труба/коліно/трійник/муфта/кран/...)
+  2. Система (PPR/канал/натяжний/металопласт)
+  3. Діаметр труби (число!)
+  4. Діаметр різьби якщо є (1/2, 3/4, 1)
+  5. Тип різьби якщо є (РЗ/РВ, ВВ/ВЗ, МРЗ/МРВ)
+  6. Кут якщо є (45, 87.5, 90)
+  7. Серія якщо важлива (Fiber для опалення, HTR, HT Safe)
+  8. Виробник (з підказки менеджера!)
 
-  Каналізація ASG (сіра, HTR):
-    Труба ф110 1м    → "Труба внут. канал. ф110 х 2,7 мм, L = 1 м., сіра, HTR, ASG"
-    Труба ф50 1м     → "Труба внут. канал. ф 50 х 1,8 мм, L = 1 м., сіра, HTR, ASG"
-    Коліно 110 90°   → "Коліно внут. канал. ф110 х 87,5°, сіре, HTR, ASG"
-    Коліно 50 45°    → "Коліно внут. канал. ф 50 х 45°, сіре, HTR, ASG"
-    Трійник 110х50   → "Трійник вн. канал. ф110 х 50 х 87,5°, сірий, HTR, ASG"
+  ✅ ПРАВИЛЬНО (коротко):
+    "Труба PPR Fiber ф25 RAFTEC"              (опалення → Fiber, БЕЗ товщини!)
+    "Коліно канал ф110 87,5 OSTENDORF"
+    "Трійник канал 110х50 87,5 OSTENDORF"
+    "Муфта PPR МРЗ 25х3/4 Ekoplastik"
+    "Труба канал ф50 0,5м OSTENDORF"
+    "Кутник натяжний 16 RAFTEC"               (PUSH)
+    "Труба PEX-A 16 RAFTEC"                   (PUSH)
 
-  Каналізація OSTENDORF (сіра, HT Safe):
-    Труба ф110 1м    → "Труба вн. канал. ф110 x 2,7 мм, L = 1,0 м, сіра, HT Safe, OSTENDORF"
-    Коліно 110 90°   → "Коліно вн. канал. ф110 х 87,5°, сіре, HT Safe, OSTENDORF"
-    Трійник 110х50   → "Трійник вн. канал. ф110 х 50 х 87,5°, сірий, HT Safe, OSTENDORF"
+  ❌ НЕПРАВИЛЬНО (вигадані деталі ламають пошук):
+    "Труба PPR Fiber Basalt ф 25x4,2 мм, PN25, PP-RCT, RAFTEC"  ← товщина вигадана!
+    "Коліно внут. канал. ф110 х 87,5°, сіре, HT Safe, OSTENDORF" ← забагато слів
 
-  Утеплювач:  "Утеплювач ламін. для труб ф 28х6 мм, синій, PLM"
-  Вазелін:    "Технічний вазелин вн. канал. 150 гр., Valrom"
+  СЕРІЇ ДЛЯ ТРУБ (єдине що треба знати):
+    Опалення/гаряча PPR → додай слово "Fiber" (RAFTEC) або "Faser" (ASG)
+    Холодна PPR         → "PN20"
+    Каналізація ASG     → "HTR" | OSTENDORF → "Safe" | безшумна → "S-LINE"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ПРІОРИТЕТИ ПРИ ПОШУКУ:
@@ -565,6 +565,39 @@ PPR ФІТИНГИ — формат по виробниках:
 ТРУБИ — НЕСТАНДАРТНІ ДОВЖИНИ:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   0,3м → шукати 0,25м (так заведено в каталозі)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PUSH-СИСТЕМА (натяжна, PEX-A) — АНАЛОГ ПАЙКИ:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  PUSH = труба PEX-A (зшитий поліетилен) + натяжні латунні фітинги.
+  Гільза натягується пресом на з'єднання — без пайки, без прокладок.
+  PEX-A кращий за PPR: гнучкий, тонша стінка → більша прохідність.
+
+  ⚠️ ВИЗНАЧЕННЯ СИСТЕМИ ПО ВСЬОМУ ЗАМОВЛЕННЮ:
+  - Є труба PEX / ПЕКС / "пуш" / переважає діаметр 16 → ВСЕ замовлення PUSH,
+    всі фітинги category=push_systems!
+  - Труба PPR і діаметри 20+ → все пайка (plastic_ppr)
+  - Об'єкт АБО на PPR АБО на PUSH — змішування мінімальне
+    (максимум пару перехідників PPR при PUSH-об'єкті)
+
+  ВІДПОВІДНІСТЬ ДІАМЕТРІВ (PEX тонша стінка → на розмір менше):
+  PUSH 16 ≈ PPR 20 | PUSH 20 ≈ PPR 25 | PUSH 25 ≈ PPR 32
+
+  РОЗМІРИ RAFTEC PUSH: 16х2,2 / 20х2,8 / 25х3,5 / 32х4,4
+
+  НАЗВИ В КАТАЛОЗІ (маркер PUSH — слово "натяжний"):
+  Труба:        "Труба PEX-A EVOH ф 16х2,2 мм, SILVER, RAFTEC"
+  Кутник:       "Кутник натяжний, 16х2,2, RAFTEC"
+  Трійник:      "Трійник натяжний, 16х2,2, RAFTEC"
+  Муфта:        "Муфта натяжна, 16х2,2, RAFTEC"
+  Перехід різьба: "Муфта натяжна РЗ 16х1/2\", RAFTEC" (або РВ)
+  Гільза:       "Насувна гільза, ф16, RAFTEC"
+
+  ⚠️ ГІЛЬЗИ ОБОВ'ЯЗКОВІ: кожне натяжне з'єднання потребує насувну гільзу
+  відповідного діаметру! Якщо в замовленні PUSH-фітинги а гільз немає —
+  додай гільзи (кількість ≈ кількість з'єднань фітингів × 2).
+
+  ВИРОБНИКИ PUSH: RAFTEC (основний), REHAU (преміум, рідко).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 КОМПЛЕКТИ ТЕПЛОЇ ПІДЛОГИ (гребінка):
@@ -653,10 +686,15 @@ CATEGORY_ALIASES = {
     'пайка':      'plastic_ppr',   # ← майстри часто кажуть "пайка" маючи на увазі PPR
     'паяні':      'plastic_ppr',
     'полікор':    'plastic_ppr',
-    # Push системи
+    # Push системи (натяжні, PEX)
     'пуш':        'push_systems',
     'push':       'push_systems',
-    'прес':       'push_systems',  # прес-фітинги
+    'прес':       'push_systems',
+    'натяжн':     'push_systems',
+    'пекс':       'push_systems',
+    'pex':        'push_systems',
+    'гільза':     'push_systems',
+    'гільзи':     'push_systems',
     # Металопластик
     'металопластик': 'metal_plastic',
     'мп':            'metal_plastic',
@@ -696,11 +734,9 @@ CATEGORY_ALIASES = {
     'тепла підлога': 'underfloor_heating',
     'підлога':       'underfloor_heating',
     'тп':            'underfloor_heating',
-    # Євроконус і PEX труба — в металопластику, не в underfloor!
+    # Євроконус — в металопластику
     'євроконус':     'metal_plastic',
     'eurokonus':     'metal_plastic',
-    'pex':           'metal_plastic',
-    'пекс':          'metal_plastic',
     # RTL — в опаленні (Danfoss)
     'rtl':           'heating',
     # Колектор теплої підлоги — в металопластику
@@ -1071,17 +1107,20 @@ def normalize_text(text: str, caption: str = "") -> list[dict]:
 # ═══════════════════════════════════════════════════════════════════════════════
 # КРОК 2: KEYWORD ПОШУК ПО КАТАЛОГУ — з відсотком точності
 # ═══════════════════════════════════════════════════════════════════════════════
-def keyword_search(query: str, top_n: int = 12) -> list[dict]:
+def keyword_search(query: str, top_n: int = 12, brand_tokens: list = None) -> list[dict]:
     """
     Пошук з багаторівневим скорингом.
     Повертає топ-N кандидатів відсортованих за точністю збігу.
     Кожен кандидат має поле _match_pct (0-100) — відсоток точності.
 
+    brand_tokens: якщо задано — ЖОРСТКИЙ фільтр, скоряться ТІЛЬКИ товари
+    цього виробника. Це гарантує що коли менеджер каже "остендорф" —
+    топ-12 не заповниться ASG (яких у каталозі в рази більше).
+
     Логіка scoring:
     - Числа (діаметри, кути, довжини) — вага x3 (найважливіше)
     - Слова запиту що є в назві — вага x1
-    - Штраф за зайві токени в назві кандидата (занадто довга назва = менш точний збіг)
-    - Бонус за точний збіг виробника
+    - Штраф за зайві токени в назві кандидата
     """
     ensure_tokens()  # lazy індексація при першому запиті
     q_tokens  = tokenize(query)
@@ -1091,8 +1130,17 @@ def keyword_search(query: str, top_n: int = 12) -> list[dict]:
     if not q_tokens:
         return []
 
+    # Токени виробника в нижньому регістрі для швидкої перевірки
+    brand_lc = [t.lower() for t in brand_tokens] if brand_tokens else None
+
     scores = []
     for item in CATALOG:
+        # ── ЖОРСТКИЙ фільтр виробника ПЕРЕД скорингом ────────────────────────
+        if brand_lc:
+            name_lower = item['name'].lower()
+            if not any(t in name_lower for t in brand_lc):
+                continue  # не той виробник — навіть не скоримо
+
         it = item['_tokens']
 
         # Числа важливіші за всі (діаметр, кут, довжина)
@@ -1106,14 +1154,12 @@ def keyword_search(query: str, top_n: int = 12) -> list[dict]:
         raw_score = num_hits * 3 + word_hits
 
         # Штраф за зайві токени в назві кандидата
-        # (якщо в назві 20 токенів а запит 4 — це менш точно)
         extra_tokens = max(0, len(it) - len(q_tokens))
         penalty = extra_tokens * 0.1
 
         total = raw_score - penalty
 
         # Відсоток: скільки токенів запиту знайдено в кандидаті
-        # Числа рахуємо з більшою вагою
         max_possible = len(q_numbers) * 3 + len(q_words)
         match_pct = int((raw_score / max_possible * 100)) if max_possible > 0 else 0
         match_pct = min(match_pct, 100)
@@ -1274,8 +1320,52 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                 continue
             # Кеш суперечить підказці менеджера → ігноруємо, шукаємо заново
 
-        # ── Keyword search ──────────────────────────────────────────────────────
-        кандидати = keyword_search(normalized, top_n=12)
+        # ── Пошук з жорстким фільтром виробника ВСЕРЕДИНІ ──────────────────────
+        # Пріоритети: менеджер → клієнт → дефолти → без фільтру.
+        # Фільтр всередині keyword_search гарантує: сказав ОСТЕНДОРФ —
+        # ASG навіть не потрапить у кандидати.
+        required_brand = None
+        brand_warning = ''
+        джерело = ''
+        кандидати = []
+
+        if manager_brand_tokens:
+            # РІВЕНЬ 1: менеджер вказав — шукаємо ТІЛЬКИ серед його товарів
+            кандидати = keyword_search(normalized, top_n=12,
+                                       brand_tokens=manager_brand_tokens)
+            if кандидати:
+                required_brand = manager_brand_tokens[0]
+                джерело = '👨 менеджер'
+            else:
+                # Виробника немає в каталозі для цього товару — fallback з ЯВНИМ попередженням
+                кандидати = keyword_search(normalized, top_n=12)
+                brand_warning = f"⚠️ {manager_brand_tokens[0]} відсутній в каталозі для цієї позиції"
+                джерело = '⚠️ fallback'
+        else:
+            # РІВЕНЬ 2: преференції клієнта — теж пошук всередині виробника
+            client_by_cat = client_prefs.get('by_category', {}).get(category, [])
+            for brand, _count in client_by_cat[:3]:
+                tokens = BRAND_TOKENS.get(brand)
+                if not tokens:
+                    continue
+                кандидати = keyword_search(normalized, top_n=12, brand_tokens=tokens)
+                if кандидати:
+                    required_brand = tokens[0]
+                    джерело = '👤 профіль клієнта'
+                    break
+            # РІВЕНЬ 3: загальні дефолти
+            if not кандидати:
+                for priority_tokens in DEFAULT_BRAND_PRIORITY.get(category, []):
+                    кандидати = keyword_search(normalized, top_n=12,
+                                               brand_tokens=priority_tokens)
+                    if кандидати:
+                        required_brand = priority_tokens[0]
+                        джерело = '⚙️ дефолт'
+                        break
+            # РІВЕНЬ 4: без фільтру взагалі
+            if not кандидати:
+                кандидати = keyword_search(normalized, top_n=12)
+                джерело = '🔍 вільний пошук'
 
         if not кандидати:
             результати[i] = {
@@ -1291,6 +1381,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
             continue
 
         # Прибираємо кандидатів забанених адміном для цього оригіналу
+        кандидати_до_бану = кандидати[:]
         кандидати = [c for c in кандидати if not cache_is_banned(original, c['name'])]
         if not кандидати:
             результати[i] = {
@@ -1301,59 +1392,16 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                 'джерело':     '',
                 'reason':      '',
                 'fail_reason': 'всі кандидати забанені адміном для цього запиту',
-                'candidates_debug': [],
+                'candidates_debug': [c['name'] for c in кандидати_до_бану[:5]],
             }
             continue
-
-        # ── Фільтр виробника — рівні 1 → 4 ──────────────────────────────────────
-        required_brand = None
-        brand_warning = ''
-        джерело = '⚙️ дефолт'
-        кандидати_до_фільтру = кандидати[:]
-
-        if manager_brand_tokens:
-            # РІВЕНЬ 1: менеджер явно вказав
-            filtered, found = filter_by_brand(кандидати, manager_brand_tokens)
-            if found:
-                кандидати = filtered
-                required_brand = manager_brand_tokens[0]
-                джерело = '👨 менеджер'
-            else:
-                # Виробника з підказки НЕМАЄ в кандидатах — НЕ підміняємо тихо!
-                brand_warning = f"⚠️ {manager_brand_tokens[0]} не знайдено серед кандидатів"
-                джерело = '⚠️ fallback'
-        else:
-            applied = False
-            # РІВЕНЬ 4а: преференції клієнта по цій категорії
-            client_by_cat = client_prefs.get('by_category', {}).get(category, [])
-            for brand, _count in client_by_cat[:3]:
-                tokens = BRAND_TOKENS.get(brand)
-                if not tokens:
-                    continue
-                filtered, found = filter_by_brand(кандидати, tokens)
-                if found:
-                    кандидати = filtered
-                    required_brand = tokens[0]
-                    джерело = '👤 профіль клієнта'
-                    applied = True
-                    break
-            # РІВЕНЬ 4б: загальні дефолти
-            if not applied:
-                priority_list = DEFAULT_BRAND_PRIORITY.get(category, [])
-                for priority_tokens in priority_list:
-                    filtered, found = filter_by_brand(кандидати, priority_tokens)
-                    if found:
-                        кандидати = filtered
-                        required_brand = priority_tokens[0]
-                        джерело = '⚙️ дефолт'
-                        break
 
         потребують_claude.append({
             'idx':              i,
             'normalized':       normalized,
             'original':         original,
             'candidates':       кандидати,
-            'candidates_debug': [c['name'] for c in кандидати_до_фільтру[:5]],
+            'candidates_debug': [c['name'] for c in кандидати[:5]],
             'qty':              пос.get('qty', ''),
             'required_brand':   required_brand,
             'category':         category,
@@ -1816,6 +1864,7 @@ def main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     kb = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     kb.add(KeyboardButton("📸 Як користуватись"), KeyboardButton("🛑 Стоп"))
     kb.add(KeyboardButton("📋 Запропонувати правило"), KeyboardButton("📊 Кеш"))
+    kb.add(KeyboardButton("👥 Кеш клієнта"), KeyboardButton("👥 Клієнти"))
     if is_admin(user_id):
         kb.add(KeyboardButton("👑 Статистика"), KeyboardButton("👑 Правила на розгляд"))
         kb.add(KeyboardButton("👑 Логи"))
@@ -1868,6 +1917,41 @@ def kb_stop(message):
 @bot.message_handler(func=lambda m: m.text == "📊 Кеш")
 def kb_cache(message):
     handle_cache_info(message)
+
+@bot.message_handler(func=lambda m: m.text == "👥 Кеш клієнта")
+def kb_client_cache(message):
+    """Показує кеш активного клієнта."""
+    slug = clients.get_active(message.chat.id)
+    if not slug:
+        bot.reply_to(message,
+            "Немає активного клієнта.\nАктивуй: `клієнт <ім'я>`",
+            parse_mode="Markdown")
+        return
+    profile = clients.get_profile(slug)
+    name = profile['name'] if profile else slug
+    cache = clients.get_client_cache(slug)
+    if not cache:
+        bot.reply_to(message,
+            f"👥 Кеш клієнта *{name}* порожній — заповниться після замовлень.",
+            parse_mode="Markdown")
+        return
+    # Останні 10 записів зі статусами
+    recent = list(cache.items())[-10:]
+    lines = []
+    status_icons = {'confirmed': '✅', 'banned': '❌', 'auto': '🔹'}
+    for key, val in recent:
+        icon = status_icons.get(val.get('status', 'auto'), '🔹')
+        orig = key[:35]
+        cname = val.get('catalog_name', '')[:45]
+        lines.append(f"{icon} `{orig}` → {cname}")
+    bot.reply_to(message,
+        f"👥 Кеш клієнта *{name}*: {len(cache)} записів\n"
+        f"✅ підтверджено | ❌ заборонено | 🔹 авто\n\n" + "\n".join(lines),
+        parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: m.text == "👥 Клієнти")
+def kb_clients_list(message):
+    handle_clients_list(message)
 
 @bot.message_handler(func=lambda m: m.text == "📋 Запропонувати правило")
 def kb_propose(message):
@@ -2250,6 +2334,7 @@ def handle_text_search(message):
                      and not m.text.startswith('🛑')
                      and not m.text.startswith('📋')
                      and not m.text.startswith('📊')
+                     and not m.text.startswith('👥')
                      and not m.text.startswith('👑'))
 def handle_text_hint(message):
     text = message.text.strip()
