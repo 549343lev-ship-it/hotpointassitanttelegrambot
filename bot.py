@@ -281,7 +281,9 @@ def add_rule(new_rule: str):
 # ═══════════════════════════════════════════════════════════════════════════════
 # КЕШ НОРМАЛІЗАЦІЙ — винесено в cache.py
 # ═══════════════════════════════════════════════════════════════════════════════
-from cache import cache_lookup, cache_save, cache_delete, get_cache, _CACHE, _save_cache
+from cache import (cache_lookup, cache_save, cache_delete, get_cache,
+                   cache_set_status, cache_ban_pair, is_banned as cache_is_banned,
+                   _CACHE, _save_cache)
 import clients
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -931,32 +933,46 @@ def filter_by_brand(candidates: list[dict], brand_tokens: list[str]) -> tuple[li
 # ═══════════════════════════════════════════════════════════════════════════════
 # КРОК 1: OCR + НОРМАЛІЗАЦІЯ (Gemini 2.5 Flash)
 # ═══════════════════════════════════════════════════════════════════════════════
-def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
+def normalize_photo(image_b64: str, caption: str = "", client_prefs: dict = None) -> list[dict]:
     """OCR + нормалізація фото через Gemini 2.5 Flash. Повертає також category і brand_map."""
     rules = get_rules()
     rules_block = f"\nДодаткові правила від менеджера:\n{rules}" if rules else ""
+    client_prefs = client_prefs or {}
 
     # Парсимо підказку менеджера → карту виробників
     brand_map = parse_caption_brands(caption)
 
-    # Будуємо чіткий список правил виробника для промпту
+    # ── Будуємо блок пріоритетів виробника для Gemini ────────────────────────
+    # Рівень 1: менеджер (найвищий) | Рівень 2: профіль клієнта | без вказівки — не додавати
     brand_hint = ""
+    manager_lines = []
     if brand_map:
-        lines = []
         for cat, toks in brand_map.items():
-            brand_display = toks[0]  # перший токен — це читабельна назва
-            lines.append(f"  {cat} → {brand_display}")
-        brand_hint = f"""
+            manager_lines.append(f"  {cat} → {toks[0]}")
 
-╔══════════════════════════════════════════════╗
-║  ВИРОБНИКИ ВІД МЕНЕДЖЕРА — СУВОРО ОБОВ'ЯЗКОВО ║
-║  Підстав у normalized ЗАМІСТЬ дефолтного ASG  ║
-╚══════════════════════════════════════════════╝
-{chr(10).join(lines)}
+    client_lines = []
+    client_by_cat = client_prefs.get('by_category', {})
+    for cat, brands in client_by_cat.items():
+        if cat in brand_map:
+            continue  # менеджер перебиває — не показуємо клієнтське
+        if brands:
+            client_lines.append(f"  {cat} → {brands[0][0]}")
 
-ПРИКЛАД: якщо plastic_ppr → raftec, то:
-  "Коліно 25 90°" → "Коліно PPR 90° ф 25, PP-RCT, RAFTEC"  (НЕ ASG!)
-  "Труба ф20 PN20" → "Труба PPR Faser HOT ф 20х2,8 мм, PN20, PP-RCT, RAFTEC"  (НЕ ASG!)"""
+    if manager_lines or client_lines:
+        brand_hint = "\n\n╔══════════════════════════════════════════════╗\n"
+        brand_hint += "║  ВИРОБНИКИ — ПРІОРИТЕТИ (суворо дотримуйся!)  ║\n"
+        brand_hint += "╚══════════════════════════════════════════════╝"
+        if manager_lines:
+            brand_hint += "\n🥇 РІВЕНЬ 1 — МЕНЕДЖЕР ВКАЗАВ (обов'язково, перебиває все):\n"
+            brand_hint += "\n".join(manager_lines)
+        if client_lines:
+            brand_hint += "\n🥈 РІВЕНЬ 2 — КЛІЄНТ ЗАЗВИЧАЙ БЕРЕ (якщо менеджер не вказав для категорії):\n"
+            brand_hint += "\n".join(client_lines)
+        brand_hint += """
+
+ПРИКЛАД: якщо менеджер каже sewage → ostendorf, то ВСЯ каналізація:
+  "Коліно 110 90°" → "Коліно вн. канал. ф110 х 87,5°, сіре, HT Safe, OSTENDORF"
+  НЕ ASG! НЕ HTR! Менеджер сказав остендорф — значить тільки OSTENDORF."""
 
     prompt = f"""Ти — експерт із сантехніки України. На фото рукописний список замовлення від майстра.
 
@@ -968,8 +984,9 @@ def normalize_photo(image_b64: str, caption: str = "") -> list[dict]:
 ЗАВДАННЯ:
 1. Прочитай кожен рядок (тільки сантехніка/опалення/водопостачання)
 2. Нормалізуй до назви як в прайсі
-   - Якщо менеджер вказав виробника для цієї категорії — ОБОВ'ЯЗКОВО використай його
-   - Якщо виробника НЕ вказано — не додавай дефолтного, просто пиши назву
+   - РІВЕНЬ 1: якщо менеджер вказав виробника для категорії — ТІЛЬКИ він
+   - РІВЕНЬ 2: якщо менеджер не вказав, але клієнт зазвичай бере певного — використай його
+   - Якщо жодного — не додавай виробника взагалі
 3. Визнач category: plastic_ppr / push_systems / metal_plastic / shutoff_valves / sewage / pumps / boilers / water_heaters / filtration / radiators_radiatorsvalve / underfloor_heating / other
 4. Витягни кількість (число + одиниця: шт, м, м.п., пак)
 5. Якщо рядок нечитабельний або не сантехніка — пропусти
@@ -1196,9 +1213,21 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
         if progress_cb:
             progress_cb(i + 1, len(позиції))
 
-        # ── Крок 0: клієнтський кеш (пріоритетніший за загальний) ──────────────
+        # ═══ ЧОТИРИРІВНЕВА ПРІОРИТЕТНІСТЬ ═══
+        # Рівень 1: слова менеджера (brand_map) — найвищий, перебиває все
+        # Рівень 2: кеш клієнта (тільки якщо не суперечить рівню 1)
+        # Рівень 3: кеш бота (тільки якщо не суперечить рівню 1)
+        # Рівень 4: преференції клієнта → DEFAULT_BRAND_PRIORITY
+
+        manager_brand_tokens = brand_map.get(category)  # Рівень 1 активний?
+
+        # ── Рівень 2: кеш клієнта ──────────────────────────────────────────────
+        # Якщо менеджер вказав виробника — кеш приймається ТІЛЬКИ якщо
+        # закешований товар містить цього виробника (інакше ігнорується).
         if client_slug:
-            c_cached = clients.client_cache_lookup(client_slug, original)
+            c_cached = clients.client_cache_lookup(
+                client_slug, original,
+                required_brand_tokens=manager_brand_tokens)
             if c_cached:
                 результати[i] = {
                     'original':         original,
@@ -1209,6 +1238,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                     'qty':              пос.get('qty', ''),
                     'category':         c_cached.get('category', category),
                     'confidence':       c_cached['confidence'],
+                    'джерело':          '👤 кеш клієнта' + (' ✅' if c_cached.get('status') == 'confirmed' else ''),
                     'reason':           f"З кешу клієнта ({c_cached['confidence']}%)",
                     'fail_reason':      '',
                     'candidates_debug': [],
@@ -1216,27 +1246,35 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                 }
                 continue
 
-        # ── Крок 1: загальний кеш ──────────────────────────────────────────────
+        # ── Рівень 3: кеш бота ─────────────────────────────────────────────────
         cached = cache_lookup(original, brand_map)
         if cached:
-            результати[i] = {
-                'original':         original,
-                'normalized':       cached['normalized'],
-                'знайдено':         True,
-                'назва':            cached['catalog_name'],
-                'ціна':             '',   # ціна може змінитись — заповнимо нижче
-                'qty':              пос.get('qty', ''),
-                'category':         cached.get('category', category),
-                'confidence':       cached['confidence'],
-                'reason':           f"З кешу (раніше знайдено з впевненістю {cached['confidence']}%)",
-                'fail_reason':      '',
-                'candidates_debug': [],
-                '_from_cache':      True,
-                '_category':        cached['category'],
-            }
-            continue
+            # Перевірка виробника: якщо менеджер вказав — кеш має збігатись
+            cache_ok = True
+            if manager_brand_tokens:
+                name_lower = cached.get('catalog_name', '').lower()
+                cache_ok = any(t.lower() in name_lower for t in manager_brand_tokens)
+            if cache_ok:
+                результати[i] = {
+                    'original':         original,
+                    'normalized':       cached['normalized'],
+                    'знайдено':         True,
+                    'назва':            cached['catalog_name'],
+                    'ціна':             '',
+                    'qty':              пос.get('qty', ''),
+                    'category':         cached.get('category', category),
+                    'confidence':       cached['confidence'],
+                    'джерело':          '🤖 кеш бота' + (' ✅' if cached.get('status') == 'confirmed' else ''),
+                    'reason':           f"З кешу ({cached['confidence']}%)",
+                    'fail_reason':      '',
+                    'candidates_debug': [],
+                    '_from_cache':      True,
+                    '_category':        cached.get('category', category),
+                }
+                continue
+            # Кеш суперечить підказці менеджера → ігноруємо, шукаємо заново
 
-        # ── Крок 2: keyword search ─────────────────────────────────────────────
+        # ── Keyword search ──────────────────────────────────────────────────────
         кандидати = keyword_search(normalized, top_n=12)
 
         if not кандидати:
@@ -1245,28 +1283,48 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                 'знайдено':    False,
                 'назва':       '',
                 'confidence':  0,
+                'джерело':     '',
                 'reason':      '',
                 'fail_reason': 'keyword пошук не знайшов жодного кандидата — можливо товар відсутній в каталозі або назва занадто специфічна',
                 'candidates_debug': [],
             }
             continue
 
-        # ── Крок 3: вибір виробника — 3 рівні пріоритету ────────────────────────
-        # Рівень 1: підказка менеджера в чаті (найвищий)
-        # Рівень 2: преференції клієнта з історії
-        # Рівень 3: загальні дефолти DEFAULT_BRAND_PRIORITY
+        # Прибираємо кандидатів забанених адміном для цього оригіналу
+        кандидати = [c for c in кандидати if not cache_is_banned(original, c['name'])]
+        if not кандидати:
+            результати[i] = {
+                **пос,
+                'знайдено':    False,
+                'назва':       '',
+                'confidence':  0,
+                'джерело':     '',
+                'reason':      '',
+                'fail_reason': 'всі кандидати забанені адміном для цього запиту',
+                'candidates_debug': [],
+            }
+            continue
+
+        # ── Фільтр виробника — рівні 1 → 4 ──────────────────────────────────────
         required_brand = None
-        brand_found_in_catalog = True
-        brand_tokens_for_filter = brand_map.get(category)
+        brand_warning = ''
+        джерело = '⚙️ дефолт'
         кандидати_до_фільтру = кандидати[:]
 
-        if brand_tokens_for_filter:
+        if manager_brand_tokens:
             # РІВЕНЬ 1: менеджер явно вказав
-            кандидати, brand_found_in_catalog = filter_by_brand(кандидати, brand_tokens_for_filter)
-            required_brand = brand_tokens_for_filter[0] if brand_found_in_catalog else None
+            filtered, found = filter_by_brand(кандидати, manager_brand_tokens)
+            if found:
+                кандидати = filtered
+                required_brand = manager_brand_tokens[0]
+                джерело = '👨 менеджер'
+            else:
+                # Виробника з підказки НЕМАЄ в кандидатах — НЕ підміняємо тихо!
+                brand_warning = f"⚠️ {manager_brand_tokens[0]} не знайдено серед кандидатів"
+                джерело = '⚠️ fallback'
         else:
             applied = False
-            # РІВЕНЬ 2: преференції клієнта по цій категорії
+            # РІВЕНЬ 4а: преференції клієнта по цій категорії
             client_by_cat = client_prefs.get('by_category', {}).get(category, [])
             for brand, _count in client_by_cat[:3]:
                 tokens = BRAND_TOKENS.get(brand)
@@ -1276,9 +1334,10 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                 if found:
                     кандидати = filtered
                     required_brand = tokens[0]
+                    джерело = '👤 профіль клієнта'
                     applied = True
                     break
-            # РІВЕНЬ 3: загальні дефолти
+            # РІВЕНЬ 4б: загальні дефолти
             if not applied:
                 priority_list = DEFAULT_BRAND_PRIORITY.get(category, [])
                 for priority_tokens in priority_list:
@@ -1286,6 +1345,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                     if found:
                         кандидати = filtered
                         required_brand = priority_tokens[0]
+                        джерело = '⚙️ дефолт'
                         break
 
         потребують_claude.append({
@@ -1299,6 +1359,8 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
             'category':         category,
             'brand_map':        brand_map,
             'client_slug':      client_slug,
+            'джерело':          джерело,
+            'brand_warning':    brand_warning,
         })
 
     if потребують_claude:
@@ -1314,6 +1376,10 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                 n = int(r['номер_кандидата']) - 1
                 n = max(0, min(n, len(пос['candidates'])-1))
                 found = пос['candidates'][n]
+                # Попередження якщо виробник з підказки не знайшовся
+                reason_full = reason
+                if пос.get('brand_warning'):
+                    reason_full = f"{пос['brand_warning']}. {reason}"
                 результати[idx] = {
                     'original':         пос['original'],
                     'normalized':       пос['normalized'],
@@ -1324,7 +1390,9 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                     'category':         пос['category'],
                     'confidence':       confidence,
                     'keyword_pct':      found.get('_match_pct', 0),
-                    'reason':           reason,
+                    'джерело':          пос.get('джерело', ''),
+                    'brand_warning':    пос.get('brand_warning', ''),
+                    'reason':           reason_full,
                     'fail_reason':      '',
                     'candidates_debug': пос['candidates_debug'],
                 }
@@ -1425,10 +1493,11 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list[str], 
                 'Од.':          qty_unit,
                 'Ціна':         r.get('ціна', ''),
                 'Збіг':         zbig_label,
+                'Джерело':      r.get('джерело', ''),
                 'Чому знайшло': r.get('reason', ''),
                 'Оригінал':     r.get('original', ''),
             })
-            if conf < 70 or kw < 50:
+            if conf < 70 or kw < 50 or r.get('brand_warning'):
                 low_conf_rows.append(
                     f"{r.get('original','')} → {r.get('назва','')} ({zbig_label}): {r.get('reason','')}"
                 )
@@ -1444,7 +1513,7 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list[str], 
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         # Лист 1: Знайдені товари
         df = pd.DataFrame(знайдено_rows) if знайдено_rows else pd.DataFrame(
-            columns=['Наименование','Кількість','Од.','Ціна','Збіг','Чому знайшло','Оригінал'])
+            columns=['Наименование','Кількість','Од.','Ціна','Збіг','Джерело','Чому знайшло','Оригінал'])
         df.to_excel(writer, index=False, sheet_name='Замовлення')
 
         # Лист 2: Не знайдено з діагностикою
@@ -1468,6 +1537,7 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list[str], 
 user_batches  = {}
 stop_flags    = {}
 pending_hints = {}
+last_results  = {}  # chat_id -> список результатів останнього замовлення (для вірно/помилка N)
 
 def safe_edit(chat_id, msg_id, text):
     """Оновлює повідомлення, ігнорує помилку якщо текст не змінився"""
@@ -1542,7 +1612,7 @@ def process_batch(chat_id: int):
         update(1, f"Файл {idx}/{len(items)}...")
         try:
             if item['type'] == 'photo':
-                позиції = normalize_photo(item['data'], item.get('caption', ''))
+                позиції = normalize_photo(item['data'], item.get('caption', ''), client_prefs)
                 всі_позиції.extend(позиції)
                 update(1, f"Файл {idx}/{len(items)}: розпізнано {len(позиції)} позицій")
             elif item['type'] == 'text':
@@ -1616,6 +1686,12 @@ def process_batch(chat_id: int):
         звіт += "\n" + "\n".join(errors)
 
     safe_edit(chat_id, msg_id, звіт)
+
+    # Зберігаємо результати для команд адміна "вірно N" / "помилка N"
+    last_results[chat_id] = {
+        'результати': [r for r in результати if r and r.get('знайдено')],
+        'client_slug': active_slug,
+    }
 
     # Логуємо використання для статистики адміна
     username = items[0].get('username', str(chat_id)) if items else str(chat_id)
@@ -1748,7 +1824,14 @@ def main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
 
 @bot.message_handler(commands=['start', 'help'])
 def handle_start(message):
-    admin_note = "\n\n👑 Ти адмін — доступні статистика, логи і підтвердження правил." if is_admin(message.from_user.id) else ""
+    admin_note = ""
+    if is_admin(message.from_user.id):
+        admin_note = """
+
+👑 *Адмін-команди:*
+`вірно 3` — рядок 3 з Excel підтверджено (завжди так підбирати)
+`помилка 5` — рядок 5 неправильний (ніколи так не підбирати)
+👑 Статистика / Логи / Правила на розгляд — кнопки внизу"""
     bot.reply_to(message, f"""👋 Привіт! Бот для підбору сантехніки.
 
 📸 Кинь фото рукописного списку — знайду в базі
@@ -1962,6 +2045,63 @@ def handle_pending(message):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# КОМАНДИ АДМІНА: ПОЗНАЧЕННЯ ПРАВИЛЬНО/НЕПРАВИЛЬНО
+# ═══════════════════════════════════════════════════════════════════════════════
+@bot.message_handler(func=lambda m: m.text and re.match(r'^(вірно|помилка)\s+\d+', m.text.lower().strip()))
+def handle_mark_result(message):
+    """
+    вірно 3   → рядок 3 останнього Excel позначається confirmed (✅)
+    помилка 5 → рядок 5 позначається banned (❌, бот більше не видасть цю пару)
+    Тільки адмін. Нумерація = номер рядка в листі 'Замовлення' (з 1).
+    """
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "⛔ Позначати результати може тільки адмін.")
+        return
+
+    m = re.match(r'^(вірно|помилка)\s+(\d+)', message.text.lower().strip())
+    action, row_num = m.group(1), int(m.group(2))
+
+    last = last_results.get(message.chat.id)
+    if not last or not last['результати']:
+        bot.reply_to(message, "⚠️ Немає останнього замовлення в пам'яті. Спочатку оброби фото.")
+        return
+
+    результати = last['результати']
+    if row_num < 1 or row_num > len(результати):
+        bot.reply_to(message, f"⚠️ Рядок {row_num} не існує. В останньому замовленні {len(результати)} позицій.")
+        return
+
+    r = результати[row_num - 1]
+    original = r.get('original', '')
+    catalog_name = r.get('назва', '')
+    category = r.get('category', 'other')
+    client_slug = last.get('client_slug')
+
+    if action == 'вірно':
+        # confirmed у загальному кеші + кеші клієнта
+        updated = cache_set_status(original, catalog_name, 'confirmed')
+        if not updated:
+            # Запису ще немає — створюємо confirmed напряму
+            cache_save(original, {}, r.get('normalized', original), catalog_name, category, 100)
+            cache_set_status(original, catalog_name, 'confirmed')
+        if client_slug:
+            clients.client_cache_set_status(client_slug, original, catalog_name, 'confirmed')
+        bot.reply_to(message,
+            f"✅ Підтверджено (рядок {row_num}):\n`{original}` → {catalog_name[:60]}\n"
+            f"Бот завжди видаватиме цей товар для цього запиту.",
+            parse_mode="Markdown")
+    else:
+        # banned — бот ніколи не видасть цю пару
+        cache_ban_pair(original, catalog_name, category)
+        if client_slug:
+            clients.client_cache_set_status(client_slug, original, catalog_name, 'banned')
+        bot.reply_to(message,
+            f"❌ Забанено (рядок {row_num}):\n`{original}` → {catalog_name[:60]}\n"
+            f"Бот більше ніколи не видасть цей товар для цього запиту.",
+            parse_mode="Markdown")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # КОМАНДИ КЛІЄНТІВ
 # ═══════════════════════════════════════════════════════════════════════════════
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('новий клієнт'))
@@ -2105,6 +2245,7 @@ def handle_text_search(message):
                      and not m.text.lower().startswith('забудь')
                      and not m.text.lower().startswith('клієнт')
                      and not m.text.lower().startswith('новий клієнт')
+                     and not re.match(r'^(вірно|помилка)\s+\d+', m.text.lower().strip())
                      and not m.text.startswith('📸')
                      and not m.text.startswith('🛑')
                      and not m.text.startswith('📋')
