@@ -1,157 +1,223 @@
 """
-build_catalog.py — одноразовий скрипт для побудови catalog.json
+build_catalog.py — збирає catalog.json з усіх xlsx/xls файлів прайсу.
 
-Запускай ОДИН РАЗ після оновлення xlsx файлів:
-  python build_catalog.py
+ПРОБЛЕМА ЯКУ ВИРІШУЄ:
+  Файли прайсу генеруються системою яка зберігає SharedStrings.xml
+  з ВЕЛИКОЇ літери (SharedStrings.xml замість sharedStrings.xml).
+  Стандартний openpyxl не знаходить цей файл і повертає порожні назви.
+  Цей скрипт читає xlsx напряму через zipfile+xml, обходячи баг.
 
-Читає всі xlsx файли → зберігає в catalog.json
-Формат: [{"name": "...", "brand": "...", "category": "...", "price": 0.0}, ...]
+ЗАПУСК:
+  python build_catalog.py --src ./  (або вкажи папку з xlsx файлами)
+  python build_catalog.py --src ./prais/
+
+ВИВОДИТЬ:
+  catalog.json у поточній директорії
 """
 
-import json, os
-import pandas as pd
-import openpyxl
+import os, re, json, zipfile, xml.etree.ElementTree as ET, argparse
+import xlrd  # pip install xlrd  (для старих .xls)
 
-# ─── СПИСОК ФАЙЛІВ ────────────────────────────────────────────────────────────
-# key = назва файлу xlsx (без .xlsx)
-# label = людська назва категорії
-CATALOG_FILES = [
-    ("adapters_reducers",        "Перехідники та редуктори"),
-    ("automation",               "Автоматика опалення"),
-    ("boilers",                  "Котли"),
-    ("fasteners_sealants",       "Кріплення та ущільнювачі"),
-    ("filtration",               "Фільтри та очистка"),
-    ("heating",                  "Опалення"),
-    ("hoses",                    "Шланги"),
-    ("insulation",               "Утеплювач"),
-    ("metal_plastic",            "Металопластик"),
-    ("mixers_faucets",           "Змішувачі та крани"),
-    ("plastic_ppr",              "Пластик ППР"),
-    ("pumps",                    "Насоси"),
-    ("push_systems",             "Системи PUSH"),
-    ("radiators_radiatorsvalve", "Радіатори та арматура"),
-    ("safety_valves",            "Арматура безпеки"),
-    ("sanitary_ware",            "Санфаянс"),
-    ("sewage",                   "Каналізація"),
-    ("shutoff_valves",           "Запірна арматура"),
-    ("siphons_fittings",         "Сифони та арматура"),
-    ("towel_warmers",            "Полотенцесушителі"),
-    ("underfloor_heating",       "Тепла підлога"),
-    ("water_heaters",            "Водонагрівачі"),
-    ("water_meters",             "Водолічильники"),
-]
+# ─── Відповідність імен файлів → категорія ──────────────────────────────────
+FILE_CATEGORIES = {
+    'пластик':       'plastic_ppr',
+    'ppr':           'plastic_ppr',
+    'ппр':           'plastic_ppr',
+    'металопластик': 'metal_plastic',
+    'push':          'push_systems',
+    'пуш':           'push_systems',
+    'каналізація':   'sewage',
+    'канализ':       'sewage',
+    'запірна':       'shutoff_valves',
+    'запорн':        'shutoff_valves',
+    'арматура':      'safety_valves',
+    'переходники':   'adapters_reducers',
+    'перехідники':   'adapters_reducers',
+    'насос':         'pumps',
+    'котли':         'boilers',
+    'котел':         'boilers',
+    'водонагр':      'water_heaters',
+    'бойлер':        'water_heaters',
+    'опалення':      'heating',
+    'автоматика':    'automation',
+    'очистка':       'filtration',
+    'фільтр':        'filtration',
+    'водомір':       'water_meters',
+    'водолічильник': 'water_meters',
+    'кріплення':     'fasteners_sealants',
+    'ущільнювач':    'fasteners_sealants',
+    'розхідник':     'fasteners_sealants',
+    'радіатор':      'radiators_radiatorsvalve',
+    'сифон':         'siphons_fittings',
+    'змішувач':      'mixers_faucets',
+    'санфаянс':      'sanitary_ware',
+    'підлога':       'underfloor_heating',
+    'тепла':         'underfloor_heating',
+    'рушникосушіл':  'towel_warmers',
+    'полотенце':     'towel_warmers',
+    'шланг':         'hoses',
+    'ізоляц':        'insulation',
+    'утеплювач':     'insulation',
+}
 
-# ─── ЯКЩО У ВАС ОДИН ВЕЛИКИЙ XLS/XLSX ПРАЙС ─────────────────────────────────
-# Розкоментуй цей блок і закоментуй блок вище + цикл нижче
-#
-# SINGLE_FILE = "прай.xls"   # або "прай.xlsx"
-#
-# def build_from_single_file():
-#     """Читає єдиний прайс-файл і будує catalog.json"""
-#     import xlrd  # pip install xlrd для .xls
-#     # або engine='openpyxl' для .xlsx
-#
-#     print(f"📖 Читаю {SINGLE_FILE}...")
-#     # Визначаємо engine
-#     if SINGLE_FILE.endswith('.xls'):
-#         # Конвертуємо через LibreOffice
-#         import subprocess
-#         subprocess.run(['soffice', '--headless', '--convert-to', 'xlsx',
-#                        SINGLE_FILE, '--outdir', '/tmp/'], check=True)
-#         xlsx_path = f"/tmp/{SINGLE_FILE.replace('.xls', '.xlsx')}"
-#     else:
-#         xlsx_path = SINGLE_FILE
-#
-#     df = pd.read_excel(xlsx_path, header=None)
-#
-#     catalog = []
-#     current_category = ''
-#     current_brand = ''
-#
-#     for _, row in df.iterrows():
-#         col_b, col_c, col_d = row[1], row[2], row[3]
-#
-#         if pd.isna(col_b) and pd.isna(col_d) and not pd.isna(col_c):
-#             col_c_str = str(col_c).strip()
-#             if col_c_str.isupper() and len(col_c_str) > 3:
-#                 current_category = col_c_str
-#             else:
-#                 current_brand = col_c_str
-#             continue
-#
-#         if not pd.isna(col_c) and not pd.isna(col_d) and isinstance(col_d, (int, float)):
-#             catalog.append({
-#                 'name':     str(col_c).strip(),
-#                 'brand':    current_brand,
-#                 'category': current_category,
-#                 'price':    float(col_d),
-#             })
-#
-#     return catalog
+def guess_category(filename: str) -> str:
+    fn = filename.lower()
+    for key, cat in FILE_CATEGORIES.items():
+        if key in fn:
+            return cat
+    return 'other'
 
+def clean_name(name: str) -> str:
+    """Прибирає {4/100} та зайві пробіли з назви"""
+    name = re.sub(r'\s*\{[^}]+\}', '', name)
+    name = re.sub(r'\s+', ' ', name).strip()
+    return name
 
-def load_xlsx(filename: str, label: str) -> list[dict]:
-    """Читає один xlsx файл і повертає список товарів"""
-    path = f"{filename}.xlsx"
-    if not os.path.exists(path):
-        print(f"  ⚠️  {path} не знайдено, пропускаю")
-        return []
-
+def is_product_row(name: str, price_str: str, artikul: str) -> bool:
+    """Визначає чи рядок є товаром (не заголовком/категорією)"""
+    if not name or len(name) < 5:
+        return False
+    # Заголовки і групи: коротко, великими, або починаються з *
+    if name.startswith('*'):
+        return False
+    # Якщо всі слова великими і немає цифр — скоріш за все заголовок
+    words = name.split()
+    if all(w.isupper() for w in words if w.isalpha()) and not any(c.isdigit() for c in name):
+        return False
+    # Є ціна > 0 або є артикул — товар
     try:
-        df = pd.read_excel(path, header=0)
-        cols = list(df.columns)
+        price = float(str(price_str).replace(',', '.').strip())
+        if price > 0:
+            return True
+    except (ValueError, TypeError):
+        pass
+    if artikul and str(artikul).strip() not in ('', 'nan', '0'):
+        return True
+    return False
 
-        # Перейменовуємо перші 4 колонки стандартно
-        rename = {}
-        if len(cols) >= 1: rename[cols[0]] = 'Наименование'
-        if len(cols) >= 2: rename[cols[1]] = 'Артикул'
-        if len(cols) >= 3: rename[cols[2]] = 'ОР'
-        if len(cols) >= 4: rename[cols[3]] = 'Код'
-        df = df.rename(columns=rename)
+# ─── Читання .xlsx (з виправленням регістру SharedStrings) ──────────────────
+def read_xlsx(path: str) -> list[dict]:
+    items = []
+    try:
+        with zipfile.ZipFile(path) as z:
+            names = z.namelist()
+            # Знаходимо SharedStrings незалежно від регістру
+            ss_path = next((n for n in names if n.lower() == 'xl/sharedstrings.xml'), None)
+            strings = []
+            if ss_path:
+                with z.open(ss_path) as f:
+                    tree = ET.parse(f)
+                    root = tree.getroot()
+                    ns = {'x': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+                    for si in root.findall('.//x:si', ns):
+                        texts = [t.text or '' for t in si.findall('.//x:t', ns)]
+                        strings.append(''.join(texts))
 
-        items = []
-        for _, row in df.iterrows():
-            name = str(row.get('Наименование', '')).strip()
-            if not name or name == 'nan':
-                continue
-            items.append({
-                'name':     name,
-                'brand':    '',     # у xlsx файлах бренд зазвичай у назві
-                'category': label,
-                'price':    0.0,    # ціна не важлива для пошуку
-            })
-
-        print(f"  ✅ {path}: {len(items)} позицій")
-        return items
-
+            # Читаємо worksheet
+            ws_path = next((n for n in names if n.lower() == 'xl/worksheets/sheet1.xml'), 'xl/worksheets/sheet1.xml')
+            with z.open(ws_path) as f:
+                tree = ET.parse(f)
+                root = tree.getroot()
+                ns = {'x': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+                for row in root.findall('.//x:row', ns):
+                    row_vals = []
+                    for c in row.findall('x:c', ns):
+                        t = c.get('t', '')
+                        v = c.find('x:v', ns)
+                        if v is None:
+                            row_vals.append('')
+                        elif t == 's':
+                            idx = int(v.text)
+                            row_vals.append(strings[idx] if idx < len(strings) else '')
+                        elif t == 'e':
+                            row_vals.append('')
+                        else:
+                            row_vals.append(v.text or '')
+                    if row_vals:
+                        items.append(row_vals)
     except Exception as e:
-        print(f"  ❌ {path}: {e}")
-        return []
+        print(f"  ⚠️  Помилка читання {path}: {e}")
+    return items
 
+# ─── Читання .xls (старий формат) ───────────────────────────────────────────
+def read_xls(path: str) -> list[list]:
+    items = []
+    try:
+        wb = xlrd.open_workbook(path)
+        ws = wb.sheet_by_index(0)
+        for i in range(ws.nrows):
+            items.append([str(ws.cell_value(i, j)) for j in range(ws.ncols)])
+    except Exception as e:
+        print(f"  ⚠️  Помилка читання {path}: {e}")
+    return items
 
-def main():
-    print("🔨 Будую catalog.json...\n")
-
-    # ── Варіант 1: багато xlsx файлів ──
+# ─── Головна функція ─────────────────────────────────────────────────────────
+def build_catalog(src_dir: str) -> list[dict]:
     catalog = []
-    for key, label in CATALOG_FILES:
-        items = load_xlsx(key, label)
-        catalog.extend(items)
+    total_files = 0
 
-    # ── Варіант 2: один великий прайс xls ──
-    # Розкоментуй якщо у тебе один файл:
-    # catalog = build_from_single_file()
+    for fname in sorted(os.listdir(src_dir)):
+        ext = fname.lower()
+        if not (ext.endswith('.xlsx') or ext.endswith('.xls')):
+            continue
+        if fname.lower().startswith('замовлення') or fname.lower().startswith('catalog'):
+            continue
 
-    if not catalog:
-        print("\n❌ Каталог порожній! Перевір наявність xlsx файлів.")
-        return
+        path = os.path.join(src_dir, fname)
+        category = guess_category(fname)
+        print(f"📄 {fname} → [{category}]", end=' ')
 
-    with open("catalog.json", "w", encoding="utf-8") as f:
-        json.dump(catalog, f, ensure_ascii=False, indent=2)
+        if ext.endswith('.xlsx'):
+            rows = read_xlsx(path)
+        else:
+            rows = read_xls(path)
 
-    print(f"\n✅ catalog.json збережено: {len(catalog)} позицій")
-    print("Тепер запускай: python bot.py")
+        count = 0
+        for row in rows:
+            # Забезпечуємо мінімум 4 колонки
+            while len(row) < 4:
+                row.append('')
+            name_raw = str(row[0]).strip()
+            artikul   = str(row[1]).strip()
+            price_str = str(row[2]).strip()
+            kod       = str(row[3]).strip()
+
+            name = clean_name(name_raw)
+            if not is_product_row(name, price_str, artikul):
+                continue
+
+            try:
+                price = float(price_str.replace(',', '.'))
+            except (ValueError, TypeError):
+                price = 0.0
+
+            catalog.append({
+                'name':      name,
+                'name_full': name_raw,
+                'artikul':   artikul if artikul not in ('nan', '0', '0.0', '') else '',
+                'kod':      kod.rstrip('.0') if kod not in ('nan', '') else '',
+                'category': category,
+                'price':    price,
+            })
+            count += 1
+
+        print(f"{count} товарів")
+        total_files += 1
+
+    print(f"\n✅ Всього: {len(catalog)} товарів з {total_files} файлів")
+    return catalog
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--src', default='.', help='Папка з xlsx/xls файлами')
+    parser.add_argument('--out', default='catalog.json', help='Вихідний файл')
+    args = parser.parse_args()
+
+    catalog = build_catalog(args.src)
+    if catalog:
+        with open(args.out, 'w', encoding='utf-8') as f:
+            json.dump(catalog, f, ensure_ascii=False, indent=None)
+        print(f"💾 Збережено: {args.out} ({os.path.getsize(args.out) // 1024} KB)")
+    else:
+        print("❌ Каталог порожній!")
