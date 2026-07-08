@@ -213,8 +213,9 @@ def build_catalog_from_xlsx() -> list[dict]:
                     except (ValueError, TypeError):
                         price = 0.0
                     catalog.append({
-                        'name':     name,
-                        'artikul':  artikul if artikul not in ('nan','0','0.0','') else '',
+                        'name':      name,
+                        'name_full': str(row[0]).strip(),
+                        'artikul':   artikul if artikul not in ('nan','0','0.0','') else '',
                         'kod':      kod if kod not in ('nan','') else '',
                         'category': category,
                         'price':    price,
@@ -262,7 +263,9 @@ for item in CATALOG:
     name = item.get('name', '')
     if 'виведено з асортименту' in name.lower():
         continue  # не продаємо
-    # Вирізаємо {N/M} упаковку
+    # Повна назва (з упаковкою) — для виводу в Excel і вставки в ERP
+    item['name_full'] = item.get('name_full') or name
+    # Чиста назва (без {N/M}) — для пошуку і токенів
     item['name'] = re.sub(r'\s*\{[^}]+\}', '', name).strip()
     _cleaned.append(item)
 CATALOG = _cleaned
@@ -1560,6 +1563,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                     'normalized':       пос['normalized'],
                     'знайдено':         True,
                     'назва':            found['name'],
+                    'назва_повна':      found.get('name_full', found['name']),
                     'артикул':          found.get('artikul', ''),
                     'ціна':             found.get('price', ''),
                     'qty':              пос['qty'],
@@ -1651,6 +1655,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                         'normalized':       пос['normalized'],
                         'знайдено':         True,
                         'назва':            found['name'],
+                        'назва_повна':      found.get('name_full', found['name']),
                         'артикул':          found.get('artikul', ''),
                         'ціна':             found.get('price', ''),
                         'qty':              пос['qty'],
@@ -1673,6 +1678,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                 if item['name'] == r['назва']:
                     r['ціна'] = item.get('price', '')
                     r['артикул'] = item.get('artikul', '')
+                    r['назва_повна'] = item.get('name_full', item['name'])
                     break
             r.pop('_from_cache', None)
             r.pop('_category', None)
@@ -1726,7 +1732,7 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list[str], 
             qty_num, qty_unit = parse_qty(r.get('qty', ''))
             знайдено_rows.append({
                 'Артикул':      r.get('артикул', ''),
-                'Наименование': r.get('назва', ''),
+                'Наименование': r.get('назва_повна') or r.get('назва', ''),
                 'Кількість':    qty_num,
                 'Од.':          qty_unit,
                 'Ціна':         r.get('ціна', ''),
