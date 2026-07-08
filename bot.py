@@ -328,7 +328,7 @@ import clients
   HERZ      — крани, арматура
   UNIPAK    — льон, паста-ущільнювач
   LEXLINE   — перехідники латунь
-  Giacomini — бінокль (вузол підключення радіатора)
+  Giacomini — автоматика, клапани (рідко)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 КРАНИ — ТИПИ І КОНТЕКСТ:
@@ -348,7 +348,7 @@ import clients
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 КАНАЛІЗАЦІЯ — РЕАЛЬНІ НАЗВИ З КАТАЛОГУ:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  ⚠️  90° у запиті → завжди шукати 87,5° в каталозі!
+  ⚠️  90° у запиті → пиши просто "87" БЕЗ ",5"! (в каталозі і 87° і 87,5° — токен 87 знайде обидва, а зайва "5" тягне трійники)
   умивальник = ф40 | ванна/душ = ф50 | унітаз/стояк = ф110
 
   ASG сіра (HTR):
@@ -498,7 +498,10 @@ PPR ФІТИНГИ — формат по виробниках:
   хлопушка           = Зворотний клапан пелюстковий
   зворотній клапан   = Клапан зворотного ходу
   під термо          = Кран кутовий під термоголовку
-  бінокль            = Вузол нижнього підключення радіатора
+  бінокль            = Кран з нак. гайкою кутовий Hidros (вузол нижн. підключ. радіатора)
+                       АБО "Вузол нижнього підключення" — шукати Hidros чи RAFTEC, НЕ Giacomini!
+  компенсаційна муфта = "Муфта вставна" в каталозі (канал., ф110х110)
+  надвижна муфта     = "Муфта вставна"
   елька              = Трубка для декоративного підключення радіатора
   вухастий           = Настінне коліно
   єврокон            = Євроконус для теплої підлоги
@@ -567,9 +570,16 @@ PPR ФІТИНГИ — формат по виробниках:
     "Коліно внут. канал. ф110 х 87,5°, сіре, HT Safe, OSTENDORF" ← забагато слів
 
   СЕРІЇ ДЛЯ ТРУБ (єдине що треба знати):
-    Опалення/гаряча PPR → додай слово "Fiber" (RAFTEC) або "Faser" (ASG)
-    Холодна PPR         → "PN20"
+    Опалення/гаряча PPR → "Fiber" (RAFTEC) | "Faser" (ASG) | "EVO" (Ekoplastik!)
+    Холодна PPR         → "PN20" | Ekoplastik → теж "EVO"
+    ⚠️ У Ekoplastik ВСІ труби = серія "EVO": "Труба PPR EVO ф25 Ekoplastik"
+       (НЕ Fiber Basalt, НЕ STABI — їх виведено!)
     Каналізація ASG     → "HTR" | OSTENDORF → "Safe" | безшумна → "S-LINE"
+
+  ПЕРЕХІД/РЕДУКЦІЯ PPR по виробниках:
+    Ekoplastik → "Муфта перехідна PPR ВВ ф 25х20 Ekoplastik"  (слово "перехідна ВВ"!)
+    RAFTEC     → "Муфта редукційна PPR ф 25х20 RAFTEC"
+    ⚠️ Шрабер = інструмент зачистки, НІКОЛИ не фітинг!
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ПРІОРИТЕТИ ПРИ ПОШУКУ:
@@ -583,6 +593,10 @@ PPR ФІТИНГИ — формат по виробниках:
 ТРУБИ — НЕСТАНДАРТНІ ДОВЖИНИ:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   0,3м → шукати 0,25м (так заведено в каталозі)
+  "EK" / "ЕК" на початку рядка = виробник Ekoplastik!
+  Шафа колекторна (будь-яка, ALPHAHAT тощо) → шукати ASG: "Шафа колекторна N контурів ASG"
+  Трійник перехідний 25х20х25 = редукційний → пиши "Трійник PPR 25х20х25 <виробник>"
+  Мірелон/мірслон = утеплювач для труб (Thermaflex FRZ теж підходить, не тільки PLM)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PUSH-СИСТЕМА (натяжна, PEX-A) — АНАЛОГ ПАЙКИ:
@@ -811,8 +825,10 @@ BRAND_TOKENS = {
     'termojet':     ['termojet', 'Termojet'],
     'термоджет':    ['termojet', 'Termojet'],
     # Ecosofy
-    'ecosofy':      ['ecosofy', 'Ecosofy'],
-    'екософі':      ['ecosofy', 'Ecosofy'],
+    'ecosofy':      ['ecosoft', 'Ecosoft', 'ecosofy'],
+    'ecosoft':      ['ecosoft', 'Ecosoft'],
+    'екософт':      ['ecosoft', 'Ecosoft'],
+    'екософі':      ['ecosoft', 'Ecosoft', 'ecosofy'],
     # ECO (тільки хомути!)
     'eco':          ['eco', 'ECO'],
     # Venta
@@ -836,6 +852,29 @@ BRAND_TOKENS = {
     'kan':          ['kan', 'KAN'],
     'fado':         ['fado', 'FADO'],
     'lexline':      ['lexline', 'LEXLINE'],
+    # Бренди що майстри пишуть прямо в рядках замовлення
+    'wilo':         ['wilo', 'WILO'],
+    'віло':         ['wilo', 'WILO'],
+    'grundfos':     ['grundfos', 'GRUNDFOS'],
+    'грундфос':     ['grundfos', 'GRUNDFOS'],
+    'bonomi':       ['bonomi', 'Bonomi'],
+    'бономі':       ['bonomi', 'Bonomi'],
+    'pattaroni':    ['pattaroni', 'Pattaroni'],
+    'k-flex':       ['k-flex', 'K-FLEX'],
+    'kflex':        ['k-flex', 'K-FLEX'],
+    'кфлекс':       ['k-flex', 'K-FLEX'],
+    'valsir':       ['valsir', 'Valsir'],
+    'meibes':       ['meibes', 'Meibes'],
+    'flamco':       ['flamco', 'Flamco'],
+    'reflex':       ['reflex', 'Reflex'],
+    'icma':         ['icma', 'Icma'],
+    'drazice':      ['drazice', 'Drazice'],
+    'дражице':      ['drazice', 'Drazice'],
+    'vaillant':     ['vaillant', 'Vaillant'],
+    'вайлант':      ['vaillant', 'Vaillant'],
+    'alcaplast':    ['alcaplast', 'AlcaPlast'],
+    'esbe':         ['esbe', 'ESBE'],
+    'grohe':        ['grohe', 'Grohe'],
     'purmo':        ['purmo', 'PURMO'],
     'пурмо':        ['purmo', 'PURMO'],
     'raftec gold':  ['raftec gold', 'RAFTEC GOLD'],
@@ -912,7 +951,7 @@ DEFAULT_BRAND_PRIORITY = {
     ],
     # Фільтри: Ecosofy, RAFTEC
     'filtration': [
-        ['ecosofy'],             # A
+        ['ecosoft', 'Ecosoft'],  # A
         ['raftec'],              # B
         ['plm', 'PLM'],          # B
     ],
@@ -1186,6 +1225,10 @@ def keyword_search(query: str, top_n: int = 12, brand_tokens: list = None) -> li
 
         total = raw_score - penalty
 
+        # (п/з) = під замовлення → в кінець списку (вибирається останнім)
+        if '(п/з)' in item['name']:
+            total -= 5
+
         # Відсоток: скільки токенів запиту знайдено в кандидаті
         max_possible = len(q_numbers) * 3 + len(q_words)
         match_pct = int((raw_score / max_possible * 100)) if max_possible > 0 else 0
@@ -1250,7 +1293,7 @@ def claude_pick_one_batch(позиції: list[dict], _retry: bool = True) -> li
 Правила (СУВОРО):
 1. Діаметр ОБОВ'ЯЗКОВО збігається — якщо запит ф20, кандидат ф40 = знайдено:false!
 2. Якщо є ВИРОБНИК — тільки він.
-3. Товари з позначкою "(виведено з асортименту)" або "(п/з)" — НЕ вибирати, краще знайдено:false.
+3. "(п/з)" = під замовлення: вибирай ТІЛЬКИ якщо звичайного аналога НЕМАЄ серед кандидатів (тоді в reason додай: пз під замовлення).
 4. PUSH-запит (натяжний) ≠ PPR-товар: якщо шукаємо натяжний фітинг а є тільки PPR — знайдено:false.
 confidence: 95=точний збіг, 80=майже точний, 60=схожий.
 reason/fail_reason: КОРОТКО (до 8 слів), БЕЗ лапок і спецсимволів всередині тексту!
@@ -1380,25 +1423,44 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
             # Кеш суперечить підказці менеджера → ігноруємо, шукаємо заново
 
         # ── Пошук з жорстким фільтром виробника ВСЕРЕДИНІ ──────────────────────
-        # Пріоритети: менеджер → клієнт → дефолти → без фільтру.
-        # Фільтр всередині keyword_search гарантує: сказав ОСТЕНДОРФ —
-        # ASG навіть не потрапить у кандидати.
+        # Пріоритети: менеджер → виробник З РЯДКА → клієнт → дефолти → без фільтру.
         required_brand = None
         brand_warning = ''
         джерело = ''
         кандидати = []
 
+        # Виробник згаданий прямо в рядку майстра (WILO, Bonomi, Herz, K-FLEX...)
+        line_brand_tokens = None
+        line_brand_name = ''
+        _text_lc = f"{original} {normalized}".lower()
+        for _bkey, _btoks in BRAND_TOKENS.items():
+            # межі слова: щоб 'eco' не збігалось з 'ecoflex', 'kan' з 'kanal'
+            if re.search(r'(?<![a-zа-яёіїєґ0-9])' + re.escape(_bkey) + r'(?![a-zа-яёіїєґ0-9])', _text_lc):
+                line_brand_tokens = _btoks
+                line_brand_name = _btoks[0]
+                break
+
         if manager_brand_tokens:
-            # РІВЕНЬ 1: менеджер вказав — шукаємо ТІЛЬКИ серед його товарів
+            # РІВЕНЬ 1: менеджер вказав у підказці — найвищий
             кандидати = keyword_search(normalized, top_n=12,
                                        brand_tokens=manager_brand_tokens)
             if кандидати:
                 required_brand = manager_brand_tokens[0]
                 джерело = '👨 менеджер'
             else:
-                # Виробника немає в каталозі для цього товару — fallback з ЯВНИМ попередженням
                 кандидати = keyword_search(normalized, top_n=12)
                 brand_warning = f"⚠️ {manager_brand_tokens[0]} відсутній в каталозі для цієї позиції"
+                джерело = '⚠️ fallback'
+        elif line_brand_tokens:
+            # РІВЕНЬ 1.5: виробник написаний У РЯДКУ майстра (WILO, Bonomi...)
+            кандидати = keyword_search(normalized, top_n=12,
+                                       brand_tokens=line_brand_tokens)
+            if кандидати:
+                required_brand = line_brand_name
+                джерело = '📝 з рядка'
+            else:
+                кандидати = keyword_search(normalized, top_n=12)
+                brand_warning = f"⚠️ {line_brand_name} відсутній в каталозі — підібрано аналог"
                 джерело = '⚠️ fallback'
         else:
             # РІВЕНЬ 2: преференції клієнта — теж пошук всередині виробника
@@ -1442,6 +1504,11 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
         # Прибираємо кандидатів забанених адміном для цього оригіналу
         кандидати_до_бану = кандидати[:]
         кандидати = [c for c in кандидати if not cache_is_banned(original, c['name'])]
+
+        # Шрабер = інструмент зачистки, НЕ фітинг! Вирізаємо якщо шукаємо муфту/перехід
+        if re.search(r'муфт|перех|редукц', normalized.lower()):
+            кандидати = [c for c in кандидати if 'шрабер' not in c['name'].lower()]
+
         if not кандидати:
             результати[i] = {
                 **пос,
@@ -1471,6 +1538,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
         })
 
     if потребують_claude:
+        retry_позиції = []
         відповіді = claude_pick_batch(потребують_claude)
         for j, пос in enumerate(потребують_claude):
             r = відповіді[j] if j < len(відповіді) else {'знайдено': False, 'confidence': 0}
@@ -1492,6 +1560,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                     'normalized':       пос['normalized'],
                     'знайдено':         True,
                     'назва':            found['name'],
+                    'артикул':          found.get('artikul', ''),
                     'ціна':             found.get('price', ''),
                     'qty':              пос['qty'],
                     'category':         пос['category'],
@@ -1535,6 +1604,66 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                     'fail_reason':      f"{fail_reason} | {auto_fail}" if fail_reason else auto_fail,
                     'candidates_debug': пос['candidates_debug'],
                 }
+                # Кандидат на другий шанс: був жорсткий виробник → спробуємо аналог
+                if пос.get('required_brand'):
+                    пос['_fail_reason_first'] = fail_reason
+                    retry_позиції.append(пос)
+
+    # ═══ ДРУГИЙ ШАНС: у вказаного виробника товару немає → шукаємо аналог ═══
+    # Приклад: труб Ekoplastik немає в каталозі → знайти Fiber трубу RAFTEC/ASG
+    # з явною позначкою "⚠️ аналог" замість чесного але марного "не знайдено".
+    if retry_позиції:
+        retry_batch = []
+        for пос in retry_позиції:
+            new_cands = keyword_search(пос['normalized'], top_n=12)
+            # ті самі захисти: бан + шрабер
+            new_cands = [c for c in new_cands
+                         if not cache_is_banned(пос['original'], c['name'])]
+            if re.search(r'муфт|перех|редукц', пос['normalized'].lower()):
+                new_cands = [c for c in new_cands if 'шрабер' not in c['name'].lower()]
+            # прибираємо кандидатів того ж виробника (їх Claude вже відхилив)
+            _rb = пос['required_brand'].lower()
+            new_cands = [c for c in new_cands if _rb not in c['name'].lower()] or new_cands
+            if new_cands:
+                retry_batch.append({
+                    'idx':              пос['idx'],
+                    'normalized':       пос['normalized'],
+                    'original':         пос['original'],
+                    'candidates':       new_cands,
+                    'candidates_debug': [c['name'] for c in new_cands[:5]],
+                    'qty':              пос['qty'],
+                    'required_brand':   None,   # без жорсткого виробника
+                    'category':         пос['category'],
+                    'brand_map':        пос['brand_map'],
+                    'client_slug':      None,   # аналоги НЕ кешуємо
+                    'old_brand':        пос['required_brand'],
+                })
+        if retry_batch:
+            відповіді2 = claude_pick_batch(retry_batch)
+            for j, пос in enumerate(retry_batch):
+                r = відповіді2[j] if j < len(відповіді2) else {'знайдено': False}
+                if r.get('знайдено') and r.get('номер_кандидата'):
+                    n = max(0, min(int(r['номер_кандидата']) - 1, len(пос['candidates'])-1))
+                    found = пос['candidates'][n]
+                    warn = f"⚠️ у {пос['old_brand']} немає — підібрано аналог"
+                    результати[пос['idx']] = {
+                        'original':         пос['original'],
+                        'normalized':       пос['normalized'],
+                        'знайдено':         True,
+                        'назва':            found['name'],
+                        'артикул':          found.get('artikul', ''),
+                        'ціна':             found.get('price', ''),
+                        'qty':              пос['qty'],
+                        'category':         пос['category'],
+                        'confidence':       int(r.get('confidence', 0)),
+                        'keyword_pct':      found.get('_match_pct', 0),
+                        'джерело':          '⚠️ аналог',
+                        'brand_warning':    warn,
+                        'reason':           f"{warn}. {r.get('reason', '')}",
+                        'fail_reason':      '',
+                        'candidates_debug': пос['candidates_debug'],
+                    }
+                # якщо і аналог не знайшовся — лишаємо перший fail-результат
 
     # ── Заповнюємо ціну для позицій з кешу ────────────────────────────────────
     for r in результати:
@@ -1543,6 +1672,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
             for item in CATALOG:
                 if item['name'] == r['назва']:
                     r['ціна'] = item.get('price', '')
+                    r['артикул'] = item.get('artikul', '')
                     break
             r.pop('_from_cache', None)
             r.pop('_category', None)
@@ -1595,6 +1725,7 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list[str], 
             zbig_label = f"🔍{kw}% / 🤖{conf}%"
             qty_num, qty_unit = parse_qty(r.get('qty', ''))
             знайдено_rows.append({
+                'Артикул':      r.get('артикул', ''),
                 'Наименование': r.get('назва', ''),
                 'Кількість':    qty_num,
                 'Од.':          qty_unit,
@@ -1609,18 +1740,20 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list[str], 
                     f"{r.get('original','')} → {r.get('назва','')} ({zbig_label}): {r.get('reason','')}"
                 )
         else:
+            _cands = r.get('candidates_debug', [])
             не_знайдено_rows.append({
-                'Оригінал':      r.get('original', ''),
-                'Нормалізовано': r.get('normalized', ''),
-                'Причина':       r.get('fail_reason', ''),
-                'Топ кандидати': ', '.join(r.get('candidates_debug', [])),
+                'Оригінал':          r.get('original', ''),
+                'Нормалізовано':     r.get('normalized', ''),
+                'Найближчий аналог': _cands[0] if _cands else '',
+                'Причина':           r.get('fail_reason', ''),
+                'Топ кандидати':     ', '.join(_cands),
             })
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         # Лист 1: Знайдені товари
         df = pd.DataFrame(знайдено_rows) if знайдено_rows else pd.DataFrame(
-            columns=['Наименование','Кількість','Од.','Ціна','Збіг','Джерело','Чому знайшло','Оригінал'])
+            columns=['Артикул','Наименование','Кількість','Од.','Ціна','Збіг','Джерело','Чому знайшло','Оригінал'])
         df.to_excel(writer, index=False, sheet_name='Замовлення')
 
         # Лист 2: Не знайдено з діагностикою
