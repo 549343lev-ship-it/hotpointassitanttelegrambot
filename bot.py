@@ -2489,6 +2489,11 @@ def handle_client(message):
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
+    # Той самий файл вже в поточному батчі? (захист від дублів Telegram)
+    fuid = message.photo[-1].file_unique_id
+    _b = user_batches.get(message.chat.id)
+    if _b and any(it.get('fuid') == fuid for it in _b.get('items', [])):
+        return
     for attempt in range(3):
         try:
             file_info = bot.get_file(message.photo[-1].file_id)
@@ -2499,6 +2504,7 @@ def handle_photo(message):
             full_caption = " | ".join(filter(None, [caption, hint]))
             add_to_batch(message.chat.id, {
                 'type': 'photo', 'data': image_b64, 'caption': full_caption,
+                'fuid': fuid,
                 'username': message.from_user.username or str(message.from_user.id),
             })
             return
@@ -2563,10 +2569,25 @@ def handle_stop(message):
 # ═══════════════════════════════════════════════════════════════════════════════
 app = Flask(__name__)
 
+# Дедуплікація: Telegram ресилає той самий апдейт якщо відповідь повільна
+_seen_update_ids = set()
+_seen_lock = threading.Lock()
+
 @app.route("/webhook", methods=["POST"])
 def tg_webhook():
     update = Update.de_json(flask_request.stream.read().decode("utf-8"))
-    bot.process_new_updates([update])
+    uid = getattr(update, 'update_id', None)
+    if uid is not None:
+        with _seen_lock:
+            if uid in _seen_update_ids:
+                return "ok", 200   # дубль-ретрай від Telegram — ігноруємо
+            _seen_update_ids.add(uid)
+            if len(_seen_update_ids) > 2000:   # тримаємо останню ~1000
+                for _old in sorted(_seen_update_ids)[:1000]:
+                    _seen_update_ids.discard(_old)
+    # Миттєвий 200 OK: обробка в фоновому потоці → Telegram не ретраїть
+    threading.Thread(target=bot.process_new_updates,
+                     args=([update],), daemon=True).start()
     return "ok", 200
 
 @app.route("/", methods=["GET"])
@@ -2586,10 +2607,10 @@ _PORT = int(os.environ.get("PORT", 10000))
 
 if _WEBHOOK_URL:
     try:
-        bot.remove_webhook()
+        bot.remove_webhook(drop_pending_updates=True)
         time.sleep(1)
         _wh = f"{_WEBHOOK_URL}/webhook"
-        bot.set_webhook(url=_wh)
+        bot.set_webhook(url=_wh, drop_pending_updates=True)
         print(f"✅ Webhook встановлено: {_wh}")
     except Exception as e:
         print(f"⚠️ Webhook помилка: {e}")
