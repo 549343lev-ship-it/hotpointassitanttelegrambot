@@ -1716,74 +1716,83 @@ def parse_qty(qty_str) -> tuple:
 
 
 def create_excel(результати: list[dict]) -> tuple[BytesIO, list[str], list[str]]:
-    знайдено_rows  = []
-    не_знайдено_rows = []
-    low_conf_rows  = []
+    """
+    ОДИН лист "Замовлення". Незнайдені НЕ ховаються у вкладку —
+    вони в основному листі з найближчим аналогом і ЧЕРВОНИМ підсвічуванням.
+    Сумнівні (низький збіг / fallback / аналог) — ЖОВТИМ.
+    """
+    from openpyxl.styles import PatternFill
+    RED    = PatternFill('solid', fgColor='FFC7CE')   # не знайдено (аналог під питанням)
+    YELLOW = PatternFill('solid', fgColor='FFF3B0')   # перевір
+
+    rows, flags = [], []
+    not_found_list, warn_list = [], []
 
     for r in результати:
         if not r:
             continue
         conf = r.get('confidence', 0)
         kw   = r.get('keyword_pct', 0)
+        qty_num, qty_unit = parse_qty(r.get('qty', ''))
 
         if r.get('знайдено'):
-            # Два показники: keyword пошук % і Claude впевненість %
-            zbig_label = f"🔍{kw}% / 🤖{conf}%"
-            qty_num, qty_unit = parse_qty(r.get('qty', ''))
-            знайдено_rows.append({
+            джерело = r.get('джерело', '')
+            підозріло = (conf < 70 or kw < 50 or r.get('brand_warning')
+                         or джерело in ('⚠️ fallback', '⚠️ аналог', '🔍 вільний пошук'))
+            rows.append({
                 'Артикул':      r.get('артикул', ''),
                 'Наименование': r.get('назва_повна') or r.get('назва', ''),
                 'Кількість':    qty_num,
                 'Од.':          qty_unit,
                 'Ціна':         r.get('ціна', ''),
-                'Збіг':         zbig_label,
-                'Джерело':      r.get('джерело', ''),
+                'Збіг':         f"🔍{kw}% / 🤖{conf}%",
+                'Джерело':      джерело,
                 'Чому знайшло': r.get('reason', ''),
                 'Оригінал':     r.get('original', ''),
             })
-            if conf < 70 or kw < 50 or r.get('brand_warning'):
-                low_conf_rows.append(
-                    f"{r.get('original','')} → {r.get('назва','')} ({zbig_label}): {r.get('reason','')}"
-                )
+            flags.append('warn' if підозріло else '')
+            if підозріло:
+                warn_list.append(r.get('original', ''))
         else:
-            _cands = r.get('candidates_debug', [])
-            не_знайдено_rows.append({
-                'Оригінал':          r.get('original', ''),
-                'Нормалізовано':     r.get('normalized', ''),
-                'Найближчий аналог': _cands[0] if _cands else '',
-                'Причина':           r.get('fail_reason', ''),
-                'Топ кандидати':     ', '.join(_cands),
+            # НЕ знайдено → найближчий аналог у головний лист, ЧЕРВОНИЙ рядок
+            cands = r.get('candidates_debug', [])
+            best = cands[0] if cands else ''
+            art, full, price = '', best, ''
+            if best:
+                for it in CATALOG:
+                    if it['name'] == best:
+                        art   = it.get('artikul', '')
+                        full  = it.get('name_full', best)
+                        price = it.get('price', '')
+                        break
+            rows.append({
+                'Артикул':      art,
+                'Наименование': full,
+                'Кількість':    qty_num,
+                'Од.':          qty_unit,
+                'Ціна':         price,
+                'Збіг':         '—',
+                'Джерело':      '❓ НЕ ЗНАЙДЕНО — аналог?',
+                'Чому знайшло': (r.get('fail_reason', '') or '')[:120],
+                'Оригінал':     r.get('original', ''),
             })
+            flags.append('nf')
+            not_found_list.append(r.get('original', '') or r.get('normalized', ''))
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        # Лист 1: Знайдені товари
-        df = pd.DataFrame(знайдено_rows) if знайдено_rows else pd.DataFrame(
+        df = pd.DataFrame(rows) if rows else pd.DataFrame(
             columns=['Артикул','Наименование','Кількість','Од.','Ціна','Збіг','Джерело','Чому знайшло','Оригінал'])
         df.to_excel(writer, index=False, sheet_name='Замовлення')
-
-        # Лист 2: Не знайдено з діагностикою
-        if не_знайдено_rows:
-            df2 = pd.DataFrame(не_знайдено_rows)
-            df2.to_excel(writer, index=False, sheet_name='Не знайдено (діагностика)')
-
-        # Лист 3: Низька впевненість
-        if low_conf_rows:
-            df3 = pd.DataFrame({'Перевір вручну': low_conf_rows})
-            df3.to_excel(writer, index=False, sheet_name='Перевір')
+        ws = writer.sheets['Замовлення']
+        for i, fl in enumerate(flags, start=2):   # 1-й рядок = заголовок
+            fill = RED if fl == 'nf' else (YELLOW if fl == 'warn' else None)
+            if fill:
+                for cell in ws[i]:
+                    cell.fill = fill
 
     output.seek(0)
-    not_found_list = [r.get('original','') or r.get('normalized','') for r in результати if r and not r.get('знайдено')]
-    return output, not_found_list, low_conf_rows
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# БАТЧ-МЕНЕДЖЕР
-# ═══════════════════════════════════════════════════════════════════════════════
-user_batches  = {}
-stop_flags    = {}
-pending_hints = {}
-last_results  = {}  # chat_id -> список результатів останнього замовлення (для вірно/помилка N)
+    return output, not_found_list, warn_list
 
 def safe_edit(chat_id, msg_id, text):
     """Оновлює повідомлення, ігнорує помилку якщо текст не змінився"""
@@ -1918,16 +1927,12 @@ def process_batch(chat_id: int):
     звіт = (
         f"✅ Готово!\n"
         f"━━━━━━━━━━━━━━━━━━━\n"
-        f"📦 Знайдено: {len(знайдено)}/{len(результати)}\n"
+        f"📦 Знайдено: {len(знайдено)}/{len([r for r in результати if r])}\n"
     )
     if not_found:
-        звіт += f"⚠️ Не знайдено: {len(not_found)} шт.\n"
-        звіт += "\n".join(f"  • {n[:50]}" for n in not_found[:4])
-        if len(not_found) > 4:
-            звіт += f"\n  ... та ще {len(not_found)-4}"
-        звіт += "\n📋 Детальна діагностика — лист 'Не знайдено (діагностика)' у файлі\n"
+        звіт += f"🟥 Червоні рядки (не знайдено, аналог під питанням): {len(not_found)}\n"
     if low_confidence:
-        звіт += f"\n🔶 Низька впевненість: {len(low_confidence)} шт. — лист 'Перевір'\n"
+        звіт += f"🟨 Жовті рядки (перевір): {len(low_confidence)}\n"
     if errors:
         звіт += "\n" + "\n".join(errors)
 
@@ -1935,7 +1940,7 @@ def process_batch(chat_id: int):
 
     # Зберігаємо результати для команд адміна "вірно N" / "помилка N"
     last_results[chat_id] = {
-        'результати': [r for r in результати if r and r.get('знайдено')],
+        'результати': [r for r in результати if r],   # всі рядки листа, включно з ❓
         'client_slug': active_slug,
     }
 
@@ -1950,6 +1955,13 @@ def process_batch(chat_id: int):
             clients.save_order(active_slug, результати, caption)
         except Exception as e:
             print(f"⚠️ Історія клієнта не збережена: {e}")
+
+    # 🎓 Кнопки навчання (тільки адміну)
+    if chat_id == ADMIN_ID:
+        mk = InlineKeyboardMarkup(row_width=2)
+        mk.add(InlineKeyboardButton("🎓 Навчання", callback_data="tr_go"),
+               InlineKeyboardButton("✖️ Закрити", callback_data="tr_close"))
+        bot.send_message(chat_id, "Перевір файл. Якщо є помилки — тапни Навчання:", reply_markup=mk)
 
 
 def add_to_batch(chat_id: int, item: dict):
@@ -2076,8 +2088,9 @@ def handle_start(message):
         admin_note = """
 
 👑 *Адмін-команди:*
-`вірно 3` — рядок 3 з Excel підтверджено (завжди так підбирати)
-`помилка 5` — рядок 5 неправильний (ніколи так не підбирати)
+`виправ 5` — 🎓 показує кнопки-варіанти для рядка 5, тап = навчено!
+`виправ 5 = коліно асг` — кнопки з пошуку по своєму тексту
+`вірно 3` / `помилка 5` — швидке підтвердження/бан рядка
 👑 Статистика / Логи / Правила на розгляд — кнопки внизу"""
     bot.reply_to(message, f"""👋 Привіт! Бот для підбору сантехніки.
 
@@ -2383,6 +2396,252 @@ def handle_mark_result(message):
             parse_mode="Markdown")
 
 
+@bot.message_handler(func=lambda m: m.text and re.match(r'^виправ\s+\d+', m.text.lower().strip()))
+def handle_fix(message):
+    """
+    🎓 НАВЧАННЯ В ОДИН ТАП:
+    виправ 5              → кнопки з кандидатами для рядка 5
+    виправ 5 = коліно асг → кнопки з результатів пошуку по тексту
+    Тап на правильний → старий варіант банится, новий = confirmed (+кеш клієнта).
+    """
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "⛔ Навчати може тільки адмін. Запропонуй через: правило <текст>")
+        return
+    m = re.match(r'^виправ\s+(\d+)(?:\s*=\s*(.+))?$', message.text.strip(), re.IGNORECASE)
+    row_num = int(m.group(1))
+    manual_text = (m.group(2) or '').strip()
+
+    last = last_results.get(message.chat.id)
+    if not last or not last['результати']:
+        bot.reply_to(message, "⚠️ Немає останнього замовлення в пам'яті.")
+        return
+    результати = last['результати']
+    if row_num < 1 or row_num > len(результати):
+        bot.reply_to(message, f"⚠️ Рядок {row_num} не існує (всього {len(результати)}).")
+        return
+
+    r = результати[row_num - 1]
+    # Кандидати: з ручного тексту / зі збережених / свіжий пошук
+    query = manual_text or r.get('normalized') or r.get('original', '')
+    cands = [c['name'] for c in keyword_search(query, top_n=8)]
+    cur = r.get('назва', '')
+    if cur in cands:
+        cands.remove(cur)
+    cands = cands[:8]
+    if not cands:
+        bot.reply_to(message, "😕 Кандидатів не знайдено. Спробуй: виправ {row} = <інший текст>")
+        return
+
+    _fix_state[message.chat.id] = {'row': row_num, 'cands': cands}
+    markup = InlineKeyboardMarkup(row_width=1)
+    for i, name in enumerate(cands):
+        markup.add(InlineKeyboardButton(f"{i+1}. {name[:55]}", callback_data=f"fx_{i}"))
+    markup.add(InlineKeyboardButton("❌ Правильного немає (просто забань поточний)", callback_data="fx_ban"))
+    bot.reply_to(message,
+        f"🎓 Рядок {row_num}: `{r.get('original','')[:50]}`\n"
+        f"Зараз: {cur[:60] or '(не знайдено)'}\n\n"
+        f"Тапни ПРАВИЛЬНИЙ варіант:",
+        parse_mode="Markdown", reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('fx_'))
+def handle_fix_pick(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "⛔ Тільки адмін")
+        return
+    state = _fix_state.pop(call.message.chat.id, None)
+    last = last_results.get(call.message.chat.id)
+    if not state or not last:
+        bot.answer_callback_query(call.id, "Сесія виправлення застаріла")
+        return
+    r = last['результати'][state['row'] - 1]
+    original     = r.get('original', '')
+    old_name     = r.get('назва', '')
+    category     = r.get('category', 'other')
+    client_slug  = last.get('client_slug')
+
+    # Старий (неправильний) — у бан
+    if old_name:
+        cache_ban_pair(original, old_name, category)
+        if client_slug:
+            clients.client_cache_set_status(client_slug, original, old_name, 'banned')
+
+    if call.data == "fx_ban":
+        bot.edit_message_text(f"❌ Забанено: `{original[:40]}` → {old_name[:50]}",
+            call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        bot.answer_callback_query(call.id, "Забанено")
+        return
+
+    idx = int(call.data[3:])
+    new_name = state['cands'][idx]
+    # Новий — confirmed у кеш бота і клієнта
+    cache_save(original, {}, r.get('normalized', original), new_name, category, 100)
+    cache_set_status(original, new_name, 'confirmed')
+    if client_slug:
+        clients.client_cache_save(client_slug, original, new_name, category, 100)
+        clients.client_cache_set_status(client_slug, original, new_name, 'confirmed')
+    # Оновлюємо в пам'яті щоб повторний "виправ" бачив нове
+    r['назва'] = new_name
+    bot.edit_message_text(
+        f"✅ Навчено!\n`{original[:40]}`\n❌ {old_name[:50] or '—'}\n✅ {new_name[:60]}",
+        call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    bot.answer_callback_query(call.id, "Збережено")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 🎓 ПРОСТЕ НАВЧАННЯ: кнопки → цифри рядків → причина → правильний варіант
+# ═══════════════════════════════════════════════════════════════════════════════
+def _tr_render_row(chat_id, msg_id=None):
+    """Показує поточний рядок з кнопками причин."""
+    st = _train_state.get(chat_id)
+    last = last_results.get(chat_id)
+    if not st or not last:
+        return
+    if st['i'] >= len(st['rows']):
+        done = len(st['rows'])
+        txt = f"✅ Навчання завершено — оброблено {done} рядк(ів)!"
+        if msg_id:
+            try: bot.edit_message_text(txt, chat_id, msg_id)
+            except Exception: bot.send_message(chat_id, txt)
+        else:
+            bot.send_message(chat_id, txt)
+        _train_state.pop(chat_id, None)
+        return
+    row = st['rows'][st['i']]
+    r = last['результати'][row - 1]
+    mk = InlineKeyboardMarkup(row_width=1)
+    mk.add(InlineKeyboardButton("🔴 Взагалі не той товар", callback_data="trw"),
+           InlineKeyboardButton("🏷 Не той виробник",      callback_data="trb"),
+           InlineKeyboardButton("🟡 Трохи промахнувся",     callback_data="trc"),
+           InlineKeyboardButton("⏭ Пропустити рядок",      callback_data="trs"))
+    txt = (f"🎓 Рядок {row} ({st['i']+1}/{len(st['rows'])})\n"
+           f"Написано: {r.get('original','')[:50]}\n"
+           f"Бот дав: {(r.get('назва','') or '❓ не знайдено')[:60]}\n\n"
+           f"Що не так?")
+    if msg_id:
+        try:
+            bot.edit_message_text(txt, chat_id, msg_id, reply_markup=mk)
+            st['msg_id'] = msg_id
+            return
+        except Exception:
+            pass
+    m = bot.send_message(chat_id, txt, reply_markup=mk)
+    st['msg_id'] = m.message_id
+
+
+@bot.callback_query_handler(func=lambda c: c.data in ("tr_go", "tr_close"))
+def tr_start(call):
+    if call.data == "tr_close":
+        try: bot.edit_message_text("✖️ Закрито. Гарної роботи!", call.message.chat.id, call.message.message_id)
+        except Exception: pass
+        bot.answer_callback_query(call.id)
+        return
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "⛔ Тільки адмін")
+        return
+    if not last_results.get(call.message.chat.id, {}).get('результати'):
+        bot.answer_callback_query(call.id, "Немає замовлення в пам'яті")
+        return
+    _train_state[call.message.chat.id] = {'stage': 'rows'}
+    try:
+        bot.edit_message_text(
+            "✍️ Напиши номери НЕПРАВИЛЬНИХ рядків через пробіл\n(номер = рядок у файлі, напр: 3 7 12)",
+            call.message.chat.id, call.message.message_id)
+    except Exception:
+        pass
+    bot.answer_callback_query(call.id)
+
+
+@bot.message_handler(func=lambda m: m.text and m.chat.id in _train_state
+                     and _train_state[m.chat.id].get('stage') == 'rows'
+                     and re.fullmatch(r'[\d\s,]+', m.text.strip()))
+def tr_rows(message):
+    last = last_results.get(message.chat.id)
+    total = len(last['результати']) if last else 0
+    nums = sorted({int(x) for x in re.findall(r'\d+', message.text)})
+    nums = [n for n in nums if 1 <= n <= total]
+    if not nums:
+        bot.reply_to(message, f"⚠️ Немає валідних номерів (в файлі {total} рядків). Спробуй ще:")
+        return
+    _train_state[message.chat.id] = {'stage': 'classify', 'rows': nums, 'i': 0}
+    _tr_render_row(message.chat.id)
+
+
+@bot.callback_query_handler(func=lambda c: c.data in ("trw", "trb", "trc", "trs", "trn") or c.data.startswith("trp_"))
+def tr_classify(call):
+    chat_id = call.message.chat.id
+    st = _train_state.get(chat_id)
+    last = last_results.get(chat_id)
+    if not st or not last:
+        bot.answer_callback_query(call.id, "Сесія застаріла")
+        return
+    row = st['rows'][st['i']]
+    r = last['результати'][row - 1]
+    original    = r.get('original', '')
+    old_name    = r.get('назва', '')
+    category    = r.get('category', 'other')
+    client_slug = last.get('client_slug')
+
+    def advance():
+        st['i'] += 1
+        st['stage'] = 'classify'
+        _tr_render_row(chat_id, st.get('msg_id'))
+
+    if call.data == "trs":                      # пропустити
+        bot.answer_callback_query(call.id, "Пропущено")
+        advance(); return
+
+    if call.data == "trn":                      # правильного немає серед кнопок
+        bot.answer_callback_query(call.id, "Ок, тільки бан")
+        advance(); return
+
+    if call.data.startswith("trp_"):            # вибір правильного
+        idx = int(call.data[4:])
+        new_name = st.get('cands', [])[idx]
+        cache_save(original, {}, r.get('normalized', original), new_name, category, 100)
+        cache_set_status(original, new_name, 'confirmed')
+        if client_slug:
+            clients.client_cache_save(client_slug, original, new_name, category, 100)
+            clients.client_cache_set_status(client_slug, original, new_name, 'confirmed')
+        r['назва'] = new_name
+        bot.answer_callback_query(call.id, "✅ Навчено!")
+        advance(); return
+
+    # ── Причина: trw / trb / trc → бан старого + кнопки правильних ──
+    if old_name:
+        cache_ban_pair(original, old_name, category)
+        if client_slug:
+            clients.client_cache_set_status(client_slug, original, old_name, 'banned')
+
+    query = r.get('normalized') or original
+    cands = [c['name'] for c in keyword_search(query, top_n=10) if c['name'] != old_name]
+    if call.data == "trb" and old_name:         # не той виробник → прибираємо його бренд
+        _ob = ''
+        for _k, _t in BRAND_TOKENS.items():
+            if any(x.lower() in old_name.lower() for x in _t):
+                _ob = _t[0].lower(); break
+        if _ob:
+            cands = [c for c in cands if _ob not in c.lower()] or cands
+    cands = cands[:7]
+    st['cands'] = cands
+    st['stage'] = 'pick'
+
+    mk = InlineKeyboardMarkup(row_width=1)
+    for i, name in enumerate(cands):
+        mk.add(InlineKeyboardButton(f"{i+1}. {name[:55]}", callback_data=f"trp_{i}"))
+    mk.add(InlineKeyboardButton("❌ Немає правильного (тільки бан)", callback_data="trn"))
+    txt = (f"🎓 Рядок {row}: {original[:45]}\n"
+           f"❌ Забанено: {old_name[:55] or '—'}\n\n"
+           f"Тапни ПРАВИЛЬНИЙ:")
+    try:
+        bot.edit_message_text(txt, chat_id, st.get('msg_id') or call.message.message_id, reply_markup=mk)
+        st['msg_id'] = st.get('msg_id') or call.message.message_id
+    except Exception:
+        m = bot.send_message(chat_id, txt, reply_markup=mk)
+        st['msg_id'] = m.message_id
+    bot.answer_callback_query(call.id)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # КОМАНДИ КЛІЄНТІВ
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2533,7 +2792,7 @@ def handle_text_search(message):
                      and not m.text.lower().startswith('забудь')
                      and not m.text.lower().startswith('клієнт')
                      and not m.text.lower().startswith('новий клієнт')
-                     and not re.match(r'^(вірно|помилка)\s+\d+', m.text.lower().strip())
+                     and not re.match(r'^(вірно|помилка|виправ)\s+\d+', m.text.lower().strip())
                      and not m.text.startswith('📸')
                      and not m.text.startswith('🛑')
                      and not m.text.startswith('📋')
