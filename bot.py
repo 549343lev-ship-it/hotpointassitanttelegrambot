@@ -1794,6 +1794,17 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list[str], 
     output.seek(0)
     return output, not_found_list, warn_list
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# СТАН ЧАТІВ (в пам'яті процесу, chat_id → ...)
+# ═══════════════════════════════════════════════════════════════════════════════
+user_batches:  dict = {}   # chat_id -> {'items': [...], 'timer': Timer}
+stop_flags:    dict = {}   # chat_id -> True, поки триває обробка батчу
+last_results:  dict = {}   # chat_id -> {'результати': [...], 'client_slug': str}
+_train_state:  dict = {}   # chat_id -> {'stage': ..., 'rows': [...], 'i': int}
+_fix_state:    dict = {}   # chat_id -> {'row': int, 'cands': [...]}
+pending_hints: dict = {}   # chat_id -> текстова підказка, чекає на фото
+
 def safe_edit(chat_id, msg_id, text):
     """Оновлює повідомлення, ігнорує помилку якщо текст не змінився"""
     try:
