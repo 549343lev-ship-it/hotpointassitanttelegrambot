@@ -1866,6 +1866,110 @@ _train_state  = {}   # chat_id → {'stage', 'rows', 'i', 'cands'} діалог 
 BATCH_TIMEOUT = 4    # секунд чекати між фото перед обробкою
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# АДМІН-СИСТЕМА
+# ═══════════════════════════════════════════════════════════════════════════════
+ADMIN_ID = 395121797  # @Bhltaraslev
+
+PENDING_RULES_FILE = "pending_rules.json"
+USAGE_LOG_FILE     = "usage_log.json"
+
+def is_admin(user_id: int) -> bool:
+    return user_id == ADMIN_ID
+
+def load_pending_rules() -> list:
+    if os.path.exists(PENDING_RULES_FILE):
+        try:
+            with open(PENDING_RULES_FILE, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def save_pending_rules(rules: list):
+    with open(PENDING_RULES_FILE, "w", encoding="utf-8") as f:
+        json.dump(rules, f, ensure_ascii=False, indent=2)
+
+def add_pending_rule(rule_text: str, user_id: int, username: str):
+    rules = load_pending_rules()
+    rules.append({
+        "rule":     rule_text,
+        "user_id":  user_id,
+        "username": username or str(user_id),
+        "date":     time.strftime("%Y-%m-%d %H:%M"),
+    })
+    save_pending_rules(rules)
+    return len(rules)
+
+def log_usage(chat_id: int, username: str, total: int, found: int, files: int):
+    try:
+        log = []
+        if os.path.exists(USAGE_LOG_FILE):
+            with open(USAGE_LOG_FILE, encoding="utf-8") as f:
+                log = json.load(f)
+        log.append({
+            "chat_id":  chat_id,
+            "username": username or str(chat_id),
+            "date":     time.strftime("%Y-%m-%d %H:%M"),
+            "total":    total,
+            "found":    found,
+            "files":    files,
+        })
+        log = log[-1000:]
+        with open(USAGE_LOG_FILE, "w", encoding="utf-8") as f:
+            json.dump(log, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"⚠️ Лог не записано: {e}")
+
+def get_usage_stats() -> str:
+    if not os.path.exists(USAGE_LOG_FILE):
+        return "📊 Статистика порожня — ще не було замовлень."
+    try:
+        with open(USAGE_LOG_FILE, encoding="utf-8") as f:
+            log = json.load(f)
+    except Exception:
+        return "⚠️ Помилка читання логу."
+    if not log:
+        return "📊 Статистика порожня."
+
+    users = {}
+    for rec in log:
+        u = rec.get("username", "?")
+        if u not in users:
+            users[u] = {"orders": 0, "total": 0, "found": 0}
+        users[u]["orders"] += 1
+        users[u]["total"]  += rec.get("total", 0)
+        users[u]["found"]  += rec.get("found", 0)
+
+    lines = [f"📊 *Статистика* (останні {len(log)} замовлень)\n"]
+    for u, s in sorted(users.items(), key=lambda x: -x[1]["orders"]):
+        pct = int(s["found"] / s["total"] * 100) if s["total"] else 0
+        lines.append(f"👤 {u}: {s['orders']} замовл., {s['total']} позицій, знайдено {pct}%")
+
+    lines.append("\n🕐 Останні 5:")
+    for rec in log[-5:]:
+        lines.append(f"• {rec['date']} — {rec['username']}: {rec['found']}/{rec['total']}")
+
+    return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TELEGRAM ХЕНДЛЕРИ
+# ═══════════════════════════════════════════════════════════════════════════════
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+
+def main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
+    kb = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    kb.add(KeyboardButton("📸 Як користуватись"), KeyboardButton("🛑 Стоп"))
+    kb.add(KeyboardButton("📋 Запропонувати правило"), KeyboardButton("📊 Кеш"))
+    kb.add(KeyboardButton("👥 Кеш клієнта"), KeyboardButton("👥 Клієнти"))
+    if is_admin(user_id):
+        kb.add(KeyboardButton("👑 Статистика"), KeyboardButton("👑 Правила на розгляд"))
+        kb.add(KeyboardButton("👑 Логи"))
+    return kb
+
+
+
 def process_batch(chat_id: int):
     batch = user_batches.pop(chat_id, None)
     if not batch:
@@ -2042,107 +2146,7 @@ def add_to_batch(chat_id: int, item: dict):
     timer.start()
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# АДМІН-СИСТЕМА
-# ═══════════════════════════════════════════════════════════════════════════════
-ADMIN_ID = 395121797  # @Bhltaraslev
 
-PENDING_RULES_FILE = "pending_rules.json"
-USAGE_LOG_FILE     = "usage_log.json"
-
-def is_admin(user_id: int) -> bool:
-    return user_id == ADMIN_ID
-
-def load_pending_rules() -> list:
-    if os.path.exists(PENDING_RULES_FILE):
-        try:
-            with open(PENDING_RULES_FILE, encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return []
-    return []
-
-def save_pending_rules(rules: list):
-    with open(PENDING_RULES_FILE, "w", encoding="utf-8") as f:
-        json.dump(rules, f, ensure_ascii=False, indent=2)
-
-def add_pending_rule(rule_text: str, user_id: int, username: str):
-    rules = load_pending_rules()
-    rules.append({
-        "rule":     rule_text,
-        "user_id":  user_id,
-        "username": username or str(user_id),
-        "date":     time.strftime("%Y-%m-%d %H:%M"),
-    })
-    save_pending_rules(rules)
-    return len(rules)
-
-def log_usage(chat_id: int, username: str, total: int, found: int, files: int):
-    try:
-        log = []
-        if os.path.exists(USAGE_LOG_FILE):
-            with open(USAGE_LOG_FILE, encoding="utf-8") as f:
-                log = json.load(f)
-        log.append({
-            "chat_id":  chat_id,
-            "username": username or str(chat_id),
-            "date":     time.strftime("%Y-%m-%d %H:%M"),
-            "total":    total,
-            "found":    found,
-            "files":    files,
-        })
-        log = log[-1000:]
-        with open(USAGE_LOG_FILE, "w", encoding="utf-8") as f:
-            json.dump(log, f, ensure_ascii=False)
-    except Exception as e:
-        print(f"⚠️ Лог не записано: {e}")
-
-def get_usage_stats() -> str:
-    if not os.path.exists(USAGE_LOG_FILE):
-        return "📊 Статистика порожня — ще не було замовлень."
-    try:
-        with open(USAGE_LOG_FILE, encoding="utf-8") as f:
-            log = json.load(f)
-    except Exception:
-        return "⚠️ Помилка читання логу."
-    if not log:
-        return "📊 Статистика порожня."
-
-    users = {}
-    for rec in log:
-        u = rec.get("username", "?")
-        if u not in users:
-            users[u] = {"orders": 0, "total": 0, "found": 0}
-        users[u]["orders"] += 1
-        users[u]["total"]  += rec.get("total", 0)
-        users[u]["found"]  += rec.get("found", 0)
-
-    lines = [f"📊 *Статистика* (останні {len(log)} замовлень)\n"]
-    for u, s in sorted(users.items(), key=lambda x: -x[1]["orders"]):
-        pct = int(s["found"] / s["total"] * 100) if s["total"] else 0
-        lines.append(f"👤 {u}: {s['orders']} замовл., {s['total']} позицій, знайдено {pct}%")
-
-    lines.append("\n🕐 Останні 5:")
-    for rec in log[-5:]:
-        lines.append(f"• {rec['date']} — {rec['username']}: {rec['found']}/{rec['total']}")
-
-    return "\n".join(lines)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# TELEGRAM ХЕНДЛЕРИ
-# ═══════════════════════════════════════════════════════════════════════════════
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
-
-def main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
-    kb = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    kb.add(KeyboardButton("📸 Як користуватись"), KeyboardButton("🛑 Стоп"))
-    kb.add(KeyboardButton("📋 Запропонувати правило"), KeyboardButton("📊 Кеш"))
-    kb.add(KeyboardButton("👥 Кеш клієнта"), KeyboardButton("👥 Клієнти"))
-    if is_admin(user_id):
-        kb.add(KeyboardButton("👑 Статистика"), KeyboardButton("👑 Правила на розгляд"))
-        kb.add(KeyboardButton("👑 Логи"))
-    return kb
 
 
 @bot.message_handler(commands=['start', 'help'])
