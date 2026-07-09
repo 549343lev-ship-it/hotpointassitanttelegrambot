@@ -2121,7 +2121,7 @@ def kb_howto(message):
 
 3. Отримай Excel з підібраними товарами""", parse_mode="Markdown")
 
-@bot.message_handler(func=lambda m: m.text == "🛑 Стоп")
+@bot.message_handler(func=lambda m: m.text and m.text.strip().lower().lstrip("🛑🔴⛔ ").strip() == "стоп")
 def kb_stop(message):
     handle_stop(message)
 
@@ -2774,6 +2774,41 @@ def handle_photo(message):
                 time.sleep(2)
 
 
+@bot.message_handler(content_types=['document'])
+def handle_document(message):
+    """Фото надіслане як ФАЙЛ (без стиснення) — обробляємо як фото."""
+    doc = message.document
+    mime = (doc.mime_type or '').lower()
+    fname = (doc.file_name or '').lower()
+    is_image = mime.startswith('image/') or fname.endswith(('.jpg', '.jpeg', '.png', '.webp'))
+    if not is_image:
+        bot.reply_to(message, "📎 Це не зображення. Надішли фото списку (можна як файл jpg/png).")
+        return
+    fuid = doc.file_unique_id
+    _b = user_batches.get(message.chat.id)
+    if _b and any(it.get('fuid') == fuid for it in _b.get('items', [])):
+        return
+    for attempt in range(3):
+        try:
+            file_info = bot.get_file(doc.file_id)
+            downloaded = bot.download_file(file_info.file_path)
+            image_b64 = base64.b64encode(downloaded).decode('utf-8')
+            caption = message.caption or ""
+            hint = pending_hints.pop(message.chat.id, "")
+            full_caption = " | ".join(filter(None, [caption, hint]))
+            add_to_batch(message.chat.id, {
+                'type': 'photo', 'data': image_b64, 'caption': full_caption,
+                'fuid': fuid,
+                'username': message.from_user.username or str(message.from_user.id),
+            })
+            return
+        except Exception as e:
+            if attempt == 2:
+                bot.reply_to(message, f"❌ Не вдалося завантажити файл: {e}")
+            else:
+                time.sleep(2)
+
+
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('пошук'))
 def handle_text_search(message):
     запит = message.text[5:].strip()
@@ -2866,10 +2901,16 @@ _PORT = int(os.environ.get("PORT", 10000))
 
 if _WEBHOOK_URL:
     try:
-        bot.remove_webhook(drop_pending_updates=True)
+        try:
+            bot.remove_webhook()
+        except Exception:
+            pass
         time.sleep(1)
         _wh = f"{_WEBHOOK_URL}/webhook"
-        bot.set_webhook(url=_wh, drop_pending_updates=True)
+        try:
+            bot.set_webhook(url=_wh, drop_pending_updates=True)
+        except TypeError:
+            bot.set_webhook(url=_wh)   # стара версія telebot без параметра
         print(f"✅ Webhook встановлено: {_wh}")
     except Exception as e:
         print(f"⚠️ Webhook помилка: {e}")
