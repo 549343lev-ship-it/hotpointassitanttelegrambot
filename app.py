@@ -49,9 +49,15 @@ def webhook():
             print(f"📥 upd {uid}: callback {update.callback_query.data}")
     except Exception:
         pass
-    # Миттєвий 200 → Telegram не ретраїть; обробка у фоні
-    threading.Thread(target=tg_bot.process_new_updates,
-                     args=([update],), daemon=True).start()
+    # Миттєвий 200 → Telegram не ретраїть; обробка у фоні з логуванням помилок
+    def _safe_process(upd):
+        try:
+            tg_bot.process_new_updates([upd])
+        except Exception as e:
+            import traceback
+            print(f"❌ Помилка обробки upd {uid}: {e}", flush=True)
+            traceback.print_exc()
+    threading.Thread(target=_safe_process, args=(update,), daemon=True).start()
     return "ok", 200
 
 # Webhook: сумісно зі старими версіями telebot
