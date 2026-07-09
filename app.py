@@ -54,6 +54,11 @@ def webhook():
         import traceback
         try:
             print(f"🔄 Починаю обробку upd {uid}...", flush=True)
+            # Детальна діагностика update
+            if upd.message:
+                m = upd.message
+                print(f"  msg: chat_id={m.chat.id} type={m.chat.type} text={repr(m.text)} photo={'yes' if m.photo else 'no'}", flush=True)
+                print(f"  entities={m.entities} content_type={getattr(m,'content_type','?')}", flush=True)
             tg_bot.process_new_updates([upd])
             print(f"✅ Обробку upd {uid} завершено", flush=True)
         except Exception as e:
