@@ -51,11 +51,13 @@ def webhook():
         pass
     # Миттєвий 200 → Telegram не ретраїть; обробка у фоні з логуванням помилок
     def _safe_process(upd):
+        import traceback
         try:
+            print(f"🔄 Починаю обробку upd {uid}...", flush=True)
             tg_bot.process_new_updates([upd])
+            print(f"✅ Обробку upd {uid} завершено", flush=True)
         except Exception as e:
-            import traceback
-            print(f"❌ Помилка обробки upd {uid}: {e}", flush=True)
+            print(f"❌ Помилка обробки upd {uid}: {type(e).__name__}: {e}", flush=True)
             traceback.print_exc()
     threading.Thread(target=_safe_process, args=(update,), daemon=True).start()
     return "ok", 200
