@@ -1853,6 +1853,18 @@ def safe_edit(chat_id, msg_id, text):
         pass
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# ГЛОБАЛЬНІ СТАНИ (повинні бути визначені ДО всіх хендлерів і process_batch)
+# ═══════════════════════════════════════════════════════════════════════════════
+user_batches  = {}   # chat_id → {'items': [], 'timer': Timer}
+stop_flags    = {}   # chat_id → True якщо стоп
+pending_hints = {}   # chat_id → текст підказки до наступного фото
+last_results  = {}   # chat_id → {'результати': [...], 'client_slug': ...}
+_fix_state    = {}   # chat_id → {'row': N, 'cands': [...]} активне виправлення
+_train_state  = {}   # chat_id → {'stage', 'rows', 'i', 'cands'} діалог навчання
+BATCH_TIMEOUT = 4    # секунд чекати між фото перед обробкою
+
+
 def process_batch(chat_id: int):
     batch = user_batches.pop(chat_id, None)
     if not batch:
