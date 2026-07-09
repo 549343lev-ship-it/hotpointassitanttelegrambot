@@ -181,7 +181,8 @@ def build_catalog_from_xlsx() -> list[dict]:
     Використовує zipfile напряму через баг openpyxl з регістром SharedStrings.xml.
     """
     catalog = []
-    search_dirs = ['.', 'src', os.path.dirname(os.path.abspath(__file__))]
+    _bot_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+    search_dirs = ['.', 'src', _bot_dir]
 
     for key, category in CATALOG_FILES:
         found = False
