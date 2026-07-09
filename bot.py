@@ -272,7 +272,39 @@ CATALOG = _cleaned
 print(f"🧹 Очистка: вирізано упаковку {{N/M}}, викинуто {_before - len(CATALOG)} виведених. Актуально: {len(CATALOG)}")
 
 def tokenize(text: str) -> set:
-    return set(re.findall(r'[а-яёіїєґa-z0-9]+', text.lower()))
+    """
+    Нормалізована токенізація для сантехніки:
+    - "ф25" / "ф 25" → "25"
+    - "25х4,2" → "25"  (товщина стінки < 15 мм — прибираємо)
+    - "25х3/4" → "25" "3_4"  (різьба — зберігаємо обидва)
+    - "ф110 х 87" → "110" "87"  (два розміри > 15 — обидва)
+    - "3/4" → "3_4"  (дюйми)
+    - "87,5°" → "87"
+    """
+    t = text.lower()
+    # Спочатку рятуємо "NхM/K" (розмір × різьба): 25х3/4 → "25 3_4"
+    t = re.sub(r'(\d+)\s*[хxX×]\s*(\d+)/(\d+)', r'\1 \2_\3', t)
+    # Звичайні дюйми
+    t = re.sub(r'(\d+)/(\d+)', r'\1_\2', t)
+    # ф25 / ф 25 / d25 → 25
+    t = re.sub(r'[фfдd]\s*(\d)', r'\1', t)
+    # "25х4,2мм" → "25" (тільки якщо товщина < 15)
+    def strip_thickness(m):
+        d1, d2_str = m.group(1), m.group(2)
+        if '_' in d2_str:
+            return m.group(0)
+        try:
+            if float(d2_str.replace(',', '.')) < 15:
+                return d1
+        except Exception:
+            pass
+        return m.group(0)
+    t = re.sub(r'(\d+)\s*[хxX×]\s*(\d+(?:[.,]\d+)?)', strip_thickness, t)
+    # 87,5 → 87
+    t = re.sub(r'(8[67])[.,]5', r'\1', t)
+    # Залишки дробів
+    t = re.sub(r'(?<![0-9_])\d+[.,]\d+(?![0-9_])', '', t)
+    return set(re.findall(r'[а-яёіїєґa-z]+|[0-9]+_[0-9]+|[0-9]+', t))
 
 # Токени будуються при першому пошуку (lazy) щоб gunicorn стартував швидко
 _tokens_built = False
@@ -978,46 +1010,65 @@ DEFAULT_BRAND_PRIORITY = {
 
 def parse_caption_brands(caption: str) -> dict:
     """
-    Парсить підказку менеджера і повертає словник:
-    { category_key: [brand_tokens] }
-
-    Приклад підказки: "пластик - екопластик\nкрани - рафтек"
-    Результат: { 'plastic_ppr': ['ekoplastik','екопластик','wavin'],
-                 'shutoff_valves': ['raftec','рафтек'] }
+    Парсить підказку менеджера У БУДЬ-ЯКОМУ ФОРМАТІ:
+      крани рафтек
+      пайка - екопластик
+      каналізація: остендорф
+      пайка екопластик; крани рафтек
+      усе raftec
+      рафтек  (тільки виробник — до всіх категорій)
+    Повертає: {category: [brand_tokens]}
     """
-    brand_map = {}
-    if not caption:
-        return brand_map
+    if not caption or not caption.strip():
+        return {}
 
-    # Розбиваємо по рядках і крапках з комою
-    lines = re.split(r'[\n;,]+', caption.lower())
-    for line in lines:
-        # Шукаємо розділювач: "-", "=", ":"
-        parts = re.split(r'[-=:]', line, maxsplit=1)
-        if len(parts) != 2:
-            continue
-        group_raw = parts[0].strip()
-        brand_raw = parts[1].strip()
+    cap_low = caption.lower().strip()
+    result = {}
 
-        # Знаходимо категорію
-        category = None
-        for alias, cat_key in CATEGORY_ALIASES.items():
-            if alias in group_raw:
-                category = cat_key
-                break
+    # Шукаємо всі відомі виробники і категорії в тексті
+    found_brands = {}   # позиція → (brand_key, brand_tokens)
+    found_cats = {}     # позиція → category_value
 
-        # Знаходимо токени виробника
-        tokens = None
-        for brand_key, brand_toks in BRAND_TOKENS.items():
-            if brand_key in brand_raw:
-                tokens = brand_toks
-                break
+    for bkey, btoks in BRAND_TOKENS.items():
+        pattern = r'(?<![a-zа-яёіїєґ0-9])' + re.escape(bkey) + r'(?![a-zа-яёіїєґ0-9])'
+        for m in re.finditer(pattern, cap_low):
+            found_brands[m.start()] = (bkey, btoks)
 
-        if category and tokens:
-            brand_map[category] = tokens
+    for alias, cat in CATEGORY_ALIASES.items():
+        pattern = r'(?<![a-zа-яёіїєґ0-9])' + re.escape(alias) + r'(?![a-zа-яёіїєґ0-9])'
+        for m in re.finditer(pattern, cap_low):
+            found_cats[m.start()] = cat
 
-    return brand_map
+    if not found_brands:
+        return {}
 
+    # Якщо є "усе"/"все"/"all" або категорій немає → виробник до ВСІХ категорій
+    is_global = bool(re.search(r'(усе|все|all|будь.яка|будь яка)', cap_low))
+    if is_global or not found_cats:
+        # Перший знайдений виробник = дефолт для всього
+        first_brand = sorted(found_brands.items())[0][1]
+        for cat in set(CATEGORY_ALIASES.values()):
+            result[cat] = first_brand[1]
+        return result
+
+    # Прив'язуємо кожного виробника до найближчої категорії зліва
+    brand_positions = sorted(found_brands.keys())
+    cat_positions   = sorted(found_cats.keys())
+
+    # Для кожної категорії — знайти наступного виробника справа (або зліва якщо немає)
+    for cat_pos, cat_val in found_cats.items():
+        # Шукаємо виробника після категорії в межах 60 символів
+        best_brand = None
+        best_dist  = 999
+        for bp, (bk, btoks) in found_brands.items():
+            dist = bp - cat_pos
+            if -30 < dist < 60 and abs(dist) < best_dist:
+                best_dist  = abs(dist)
+                best_brand = btoks
+        if best_brand and cat_val not in result:
+            result[cat_val] = best_brand
+
+    return result
 
 def filter_by_brand(candidates: list[dict], brand_tokens: list[str]) -> tuple[list[dict], bool]:
     """
@@ -2880,8 +2931,13 @@ def tg_webhook():
                 for _old in sorted(_seen_update_ids)[:1000]:
                     _seen_update_ids.discard(_old)
     # Миттєвий 200 OK: обробка в фоновому потоці → Telegram не ретраїть
-    threading.Thread(target=bot.process_new_updates,
-                     args=([update],), daemon=True).start()
+    def _safe_process(upd):
+        try:
+            bot.process_new_updates([upd])
+        except Exception as e:
+            print(f"❌ Помилка обробки upd {uid}: {e}", flush=True)
+            import traceback; traceback.print_exc()
+    threading.Thread(target=_safe_process, args=(update,), daemon=True).start()
     return "ok", 200
 
 @app.route("/", methods=["GET"])
