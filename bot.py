@@ -21,7 +21,25 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 ANTHROPIC_KEY  = os.environ.get("ANTHROPIC_KEY", "")
 GEMINI_KEY     = os.environ.get("GEMINI_KEY", "")
 
-bot           = telebot.TeleBot(TELEGRAM_TOKEN)
+# КРИТИЧНО: threaded=False!
+# За замовчуванням telebot виконує хендлери у своєму ThreadPool, де винятки
+# зберігаються мовчки і піднімаються тільки в polling. З webhook вони ЗНИКАЮТЬ:
+# process_new_updates повертається "успішно", а відповідь не відправляється.
+_ExcBase = getattr(telebot, 'ExceptionHandler', object)
+
+class _LogExc(_ExcBase):
+    def handle(self, exception):
+        import traceback
+        print(f"❌ ПОМИЛКА В ХЕНДЛЕРІ: {exception}", flush=True)
+        traceback.print_exc()
+        return True
+
+try:
+    bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False, exception_handler=_LogExc())
+except TypeError:
+    # стара версія telebot без exception_handler
+    bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False)
+
 claude        = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 gemini_client = genai_new.Client(api_key=GEMINI_KEY)
 
