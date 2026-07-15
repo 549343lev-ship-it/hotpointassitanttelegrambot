@@ -46,6 +46,11 @@ gemini_client = genai_new.Client(api_key=GEMINI_KEY)
 CATALOG_PATH = "catalog.json"
 RULES_FILE   = "rules.txt"
 
+# Кеш нормалізацій (auto/confirmed/banned) і профілі клієнтів
+from cache import (cache_lookup, cache_save, cache_delete, get_cache,
+                   cache_set_status, cache_ban_pair, is_banned as cache_is_banned)
+import clients
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # АДМІН
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -254,34 +259,101 @@ def add_rule(rule: str):
 # ═══════════════════════════════════════════════════════════════════════════════
 BRAND_TOKENS = {
     'raftec':      ['raftec', 'RAFTEC'],
-    'рафтек':     ['raftec', 'RAFTEC'],
+    'рафтек':      ['raftec', 'RAFTEC'],
     'ekoplastik':  ['ekoplastik', 'Ekoplastik'],
     'екопластик':  ['ekoplastik', 'Ekoplastik'],
+    'екопласт':    ['ekoplastik', 'Ekoplastik'],
     'asg':         ['asg', 'ASG'],
     'асг':         ['asg', 'ASG'],
-    'ostendorf':   ['ostendorf', 'OSTENDORF', 'Safe'],
-    'остендорф':   ['ostendorf', 'OSTENDORF', 'Safe'],
+    'ostendorf':   ['ostendorf', 'OSTENDORF'],
+    'остендорф':   ['ostendorf', 'OSTENDORF'],
     'plm':         ['plm', 'PLM'],
     'hidros':      ['hidros', 'Hidros', 'HIDROS'],
     'хідрос':      ['hidros', 'Hidros'],
+    'гідрос':      ['hidros', 'Hidros'],
+    'idmar':       ['idmar', 'IDMAR'],
     'termojet':    ['termojet', 'Termojet'],
     'термоджет':   ['termojet', 'Termojet'],
+    'tatra':       ['tatra', 'TATRA', 'Tatra-Line'],
+    'татра':       ['tatra', 'TATRA'],
     'rehau':       ['rehau', 'REHAU'],
     'рехау':       ['rehau', 'REHAU'],
     'ecosoft':     ['ecosoft', 'Ecosoft'],
     'екософт':     ['ecosoft', 'Ecosoft'],
+    'biasi':       ['biasi', 'BIASI'],
+    'біасі':       ['biasi', 'BIASI'],
+    'valrom':      ['valrom', 'Valrom'],
+    'unipak':      ['unipak', 'Unipak'],
+    'kan':         ['kan', 'KAN'],
+    'herz':        ['herz', 'HERZ', 'Herz'],
+    'герц':        ['herz', 'HERZ'],
+    'giacomini':   ['giacomini', 'Giacomini'],
+    'джикоміні':   ['giacomini', 'Giacomini'],
+    'danfoss':     ['danfoss', 'Danfoss'],
+    'данфос':      ['danfoss', 'Danfoss'],
+    'wilo':        ['wilo', 'WILO'],
+    'віло':        ['wilo', 'WILO'],
+    'grundfos':    ['grundfos', 'GRUNDFOS'],
+    'грундфос':    ['grundfos', 'GRUNDFOS'],
+    'bonomi':      ['bonomi', 'Bonomi'],
+    'бономі':      ['bonomi', 'Bonomi'],
+    'pattaroni':   ['pattaroni', 'Pattaroni'],
+    'k-flex':      ['k-flex', 'K-FLEX'],
+    'kflex':       ['k-flex', 'K-FLEX'],
+    'кфлекс':      ['k-flex', 'K-FLEX'],
+    'valsir':      ['valsir', 'Valsir'],
+    'meibes':      ['meibes', 'Meibes'],
+    'flamco':      ['flamco', 'Flamco'],
+    'reflex':      ['reflex', 'Reflex'],
+    'icma':        ['icma', 'Icma'],
+    'drazice':     ['drazice', 'Drazice'],
+    'дражице':     ['drazice', 'Drazice'],
+    'vaillant':    ['vaillant', 'Vaillant'],
+    'вайлант':     ['vaillant', 'Vaillant'],
+    'alcaplast':   ['alcaplast', 'AlcaPlast'],
+    'esbe':        ['esbe', 'ESBE'],
+    'grohe':       ['grohe', 'Grohe'],
+    'thermaflex':  ['thermaflex', 'Thermaflex'],
+}
+
+# Категорії — те що менеджер може написати в підказці
+CATEGORY_ALIASES = {
+    'каналізація': 'sewage', 'канал': 'sewage', 'каналізац': 'sewage',
+    'пайка': 'plastic_ppr', 'ппр': 'plastic_ppr', 'ppr': 'plastic_ppr',
+    'пластик': 'plastic_ppr', 'поліпропілен': 'plastic_ppr',
+    'кран': 'shutoff_valves', 'крани': 'shutoff_valves',
+    'арматура': 'shutoff_valves', 'вентил': 'shutoff_valves',
+    'пуш': 'push_systems', 'push': 'push_systems', 'пекс': 'push_systems',
+    'pex': 'push_systems', 'натяжн': 'push_systems', 'гільз': 'push_systems',
+    'насос': 'pumps', 'насоси': 'pumps',
+    'радіатор': 'radiators_radiatorsvalve', 'радіатори': 'radiators_radiatorsvalve',
+    'утепл': 'insulation', 'ізоляц': 'insulation', 'мірелон': 'insulation',
+    'фільтр': 'filtration', 'очист': 'filtration',
+    'металопласт': 'metal_plastic', 'мп': 'metal_plastic',
+    'котел': 'boilers', 'котли': 'boilers',
+    'бойлер': 'water_heaters', 'водонагрів': 'water_heaters',
+    'тепла підлога': 'underfloor_heating', 'тп': 'underfloor_heating',
+    'сифон': 'siphons_fittings',
+    'змішувач': 'mixers_faucets',
+    'кріплення': 'fasteners_sealants', 'хомут': 'fasteners_sealants',
+    'перехідник': 'adapters_reducers',
+    'опалення': 'heating',
+    'шланг': 'hoses',
+    'рушникосуш': 'towel_warmers',
 }
 
 DEFAULT_BRAND_PRIORITY = {
-    'sewage':         [['ostendorf','OSTENDORF','Safe'], ['asg','ASG']],
+    'sewage':         [['asg','ASG'], ['ostendorf','OSTENDORF']],
     'plastic_ppr':    [['ekoplastik','Ekoplastik'], ['asg','ASG'], ['raftec','RAFTEC']],
     'shutoff_valves': [['raftec','RAFTEC']],
     'adapters_reducers': [['raftec','RAFTEC']],
     'filtration':     [['ecosoft','Ecosoft']],
-    'radiators_radiatorsvalve': [['hidros','Hidros']],
-    'pumps':          [['termojet','Termojet']],
+    'radiators_radiatorsvalve': [['hidros','Hidros'], ['idmar','IDMAR']],
+    'pumps':          [['tatra','TATRA'], ['termojet','Termojet']],
     'insulation':     [['plm','PLM']],
-    'push_systems':   [['raftec','RAFTEC']],
+    'push_systems':   [['raftec','RAFTEC'], ['rehau','REHAU']],
+    'metal_plastic':  [['raftec','RAFTEC']],
+    'fasteners_sealants': [['eco','ECO']],
 }
 
 def keyword_search(query: str, top_n: int = 12, brand_tokens: list = None) -> list[dict]:
@@ -314,53 +386,92 @@ def keyword_search(query: str, top_n: int = 12, brand_tokens: list = None) -> li
     return result
 
 def parse_caption_brands(caption: str) -> dict:
-    if not caption: return {}
-    cap_lc = caption.lower().strip()
-    result = {}
-    CATEGORY_ALIASES = {
-        'каналізація': 'sewage', 'канал': 'sewage',
-        'пайка': 'plastic_ppr', 'ппр': 'plastic_ppr', 'пластик': 'plastic_ppr',
-        'крани': 'shutoff_valves', 'кран': 'shutoff_valves', 'арматура': 'shutoff_valves',
-        'пуш': 'push_systems', 'push': 'push_systems', 'пекс': 'push_systems',
-        'насос': 'pumps', 'радіатор': 'radiators_radiatorsvalve',
-        'утеплювач': 'insulation', 'фільтр': 'filtration',
-    }
+    """
+    Розуміє підказки менеджера в БУДЬ-ЯКОМУ форматі:
+      крани рафтек              (без роздільників)
+      пайка - екопластик        (з тире)
+      каналізація: остендорф    (з двокрапкою)
+      усе raftec / все рафтек   (один виробник на все)
+      пуш рафтек, канал асг     (через кому)
+    Повертає {category: [brand_tokens]}.
+    """
+    if not caption or not caption.strip():
+        return {}
+    cap = caption.lower()
+
+    # Позиції всіх виробників (з межами слова)
     found_brands = {}
-    for bkey, btoks in BRAND_TOKENS.items():
-        if re.search(r'(?<![a-zа-яёіїєґ0-9])' + re.escape(bkey) + r'(?![a-zа-яёіїєґ0-9])', cap_lc):
-            for m in re.finditer(re.escape(bkey), cap_lc):
-                found_brands[m.start()] = btoks
+    for bk, bt in BRAND_TOKENS.items():
+        for m in re.finditer(r'(?<![a-zа-яёіїєґ0-9])' + re.escape(bk) + r'(?![a-zа-яёіїєґ0-9])', cap):
+            found_brands[m.start()] = bt
+    if not found_brands:
+        return {}
+
+    # Позиції категорій (лівий кордон слова, справа може бути закінчення)
     found_cats = {}
     for alias, cat in CATEGORY_ALIASES.items():
-        for m in re.finditer(re.escape(alias), cap_lc):
+        for m in re.finditer(r'(?<![a-zа-яёіїєґ])' + re.escape(alias), cap):
             found_cats[m.start()] = cat
-    if not found_brands: return {}
-    is_global = bool(re.search(r'\b(усе|все|all)\b', cap_lc))
-    if is_global or not found_cats:
-        first_brand = sorted(found_brands.items())[0][1]
+
+    result = {}
+    # "усе/все X" або виробник без категорій → на всі категорії
+    if re.search(r'(?<![а-я])(усе|все|всё|all)(?![а-я])', cap) or not found_cats:
+        first = found_brands[min(found_brands)]
         for cat in set(CATEGORY_ALIASES.values()):
-            result[cat] = first_brand
+            result[cat] = first
         return result
-    for cat_pos, cat_val in found_cats.items():
-        best, best_dist = None, 999
-        for bp, btoks in found_brands.items():
-            dist = bp - cat_pos
-            if -30 < dist < 60 and abs(dist) < best_dist:
-                best_dist = abs(dist)
-                best = btoks
-        if best and cat_val not in result:
-            result[cat_val] = best
+
+    # Кожній категорії — найближчий виробник (справа до 60 символів або зліва до 30)
+    for cpos, cat in found_cats.items():
+        best, best_d = None, 999
+        for bpos, bt in found_brands.items():
+            d = bpos - cpos
+            if -30 < d < 60 and abs(d) < best_d:
+                best_d, best = abs(d), bt
+        if best and cat not in result:
+            result[cat] = best
     return result
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ЗНАННЯ САНТЕХНІКИ (коротко для Gemini)
 # ═══════════════════════════════════════════════════════════════════════════════
 ЗНАННЯ = """
-КАНАЛІЗАЦІЯ: 90°→ шукати 87 (без ,5). ASG→HTR, OSTENDORF→HT Safe. умивальник=ф40, ванна=ф50, стояк=ф110.
-PPR: МРЗ/МРН=зовнішня різьба, МРВ=внутрішня. ВВ→МРЗ, ВЗ→МРВ. Ekoplastik труби=EVO. Fiber=опалення.
-PUSH (натяжна, PEX-A): маркер "натяжний"+"PUSH". PUSH16≈PPR20. Гільзи обов'язкові!
-Труба 0,3м→0,25м. EK/ЄК=Ekoplastik. Бінокль=кран кутовий Hidros. Компенсаційна муфта=Муфта вставна.
-НОРМАЛІЗАЦІЯ: коротко! "Труба PPR Fiber ф25 RAFTEC" (без товщини!), "Коліно канал ф110 87 OSTENDORF"
+АБРЕВІАТУРИ (PPR з латунню): МРЗ/МРН=муфта різьба зовнішня; МРВ=внутрішня; КРЗ/КРН=коліно зовн; КРВ=внутр.
+2 параметри (25х3/4)=муфта/коліно з різьбою; 3 параметри (20х16х20)=трійник. Кран ВВ→МРЗ; Кран ВЗ→МРВ.
+Діаметр 16 → скоріш PUSH-система.
+
+НОРМАЛІЗАЦІЯ — КОРОТКО (не вигадуй товщину стінки/PN!):
+✅ "Труба PPR Fiber ф25 RAFTEC" | "Коліно канал ф110 87 OSTENDORF" (87 БЕЗ ,5!) | "Муфта PPR МРЗ 25х3/4 Ekoplastik"
+Виробника пиши ТІЛЬКИ якщо він у підказці менеджера або в самому рядку; інакше НЕ додавай!
+
+ТРУБИ PPR: опалення/гаряча→Fiber(RAFTEC)/Faser(ASG)/EVO(Ekoplastik); холодна→PN20.
+⚠️ Ekoplastik ВСІ труби = серія EVO (Fiber Basalt/STABI виведено)!
+ПЕРЕХІД PPR: Ekoplastik="Муфта перехідна PPR ВВ ф25х20"; RAFTEC="Муфта редукційна". Шрабер=інструмент, НЕ фітинг!
+
+КАНАЛІЗАЦІЯ: 90°→пиши "87" (без ,5!). ASG=HTR; OSTENDORF=HT Safe; безшумна=S-LINE.
+умивальник=ф40, ванна/душ=ф50, унітаз/стояк=ф110. Компенсаційна/надвижна муфта="Муфта вставна".
+
+PUSH (натяжна, PEX-A): маркер "натяжний"+"PUSH". Якщо є PEX/пекс/16 → ВСЕ замовлення PUSH!
+PUSH16≈PPR20, PUSH20≈PPR25. Назви: "Кутник натяжний ф25х25 PUSH RAFTEC", "Трійник натяжний ф25х16х25"
+(БЕЗ слова редукційний!), "Муфта натяжна ф20х16", "Гільза натяжна ф16" (НЕ насувна!). Гільзи обов'язкові!
+
+ІНШЕ: Труба 0,3м→шукай 0,25м. EK/ЄК=Ekoplastik. Бінокль=кран з нак.гайкою кутовий Hidros.
+Шафа колекторна→ASG. Мірелон=утеплювач (Thermaflex FRZ теж ок).
+
+КОМПЛЕКТ ТЕПЛОЇ ПІДЛОГИ "гребінка N контурів" (розгортай!): якщо варіант не вказано → Варіант 2.
+В1 (дешевий): колектор Raftec STEEL Nконт + євроконус 3/4 хN×2 + кінцевий елемент + термоголовка M30х1,5
+виносний датчик + кран кут. під термоголовку 3/4 + компл.підкл.насоса PCNR03 + насос Termojet APE 25/40/130
++ кран кульовий ВВ 3/4 х2 + МРЗ ф25х3/4 Ekoplastik х2.
+В2 (популярний): вузол SUR03 Raftec + колектор STEEL + євроконус хN×2 + кінц.елемент + насос Termojet
++ напівзгін пара 3/4 + кран ВВ BLACK + кран ВЗ BLACK + МРЗ ф25х3/4 х2.
+В3 (дорогий): вузол LSG-161H GOLD + колектор GOLD з єврокон. + кінц.елемент + насос + кран амер. ВЗ DN25 1"
+DRBS3 + МРЗ ф32х1 + МРЗ ф25х3/4.
+
+ПІДКЛЮЧКА КОТЛА: крани кут. з нак.гайкою ВВ+ВЗ (1/2 і 3/4 пари) + фільтри BLACK 1/2 і 3/4
++ МРЗ ф20х1/2 х2 + МРЗ ф25х3/4 х2.
+РАДІАТОР бокове: клапан радіаторний кут. х2 + компл.термостат. + МРЗ ф20х1/2 + Hidros тип22.
+РАДІАТОР нижнє VK: Hidros тип22 VK + вент.вставка VK + термоголовка WHITE + вузол нижн.підкл. 1/2х3/4
++ муфта з євроконусом ф20х3/4.
 """
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -400,6 +511,32 @@ JSON масив ТІЛЬКИ:
         return json.loads(raw)
     except Exception as e:
         return [{"original": f"Помилка OCR: {e}", "normalized": "", "qty": ""}]
+
+def normalize_text(text: str, caption: str = "") -> list[dict]:
+    """Нормалізація текстового запиту (команда 'пошук')."""
+    rules = get_rules()
+    rules_block = f"\nПравила менеджера:\n{rules}" if rules else ""
+    prompt = f"""Ти — експерт сантехніки України. Текстовий запит менеджера.
+ПІДКАЗКА: {caption}{rules_block}
+ЗНАННЯ: {ЗНАННЯ}
+
+ЗАПИТ: {text}
+
+Розбий на позиції, нормалізуй (КОРОТКО!), витягни кількість.
+JSON масив ТІЛЬКИ:
+[{{"original":"...","normalized":"...","qty":"...","category":"plastic_ppr/sewage/push_systems/shutoff_valves/pumps/radiators_radiatorsvalve/filtration/insulation/other"}}]"""
+    try:
+        resp = gemini_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[genai_types.Part.from_text(text=prompt)]
+        )
+        raw = resp.text.strip().replace('```json','').replace('```','').strip()
+        if '[' in raw and ']' in raw:
+            raw = raw[raw.index('['):raw.rindex(']')+1]
+        return json.loads(raw)
+    except Exception as e:
+        return [{"original": text, "normalized": text, "qty": "", "category": "other"}]
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CLAUDE ВИБІР
@@ -453,36 +590,109 @@ JSON рівно {len(позиції)} елементів:
 # FIND ITEMS
 # ═══════════════════════════════════════════════════════════════════════════════
 def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
+    """
+    4 РІВНІ ПРІОРИТЕТУ:
+      1. Слова менеджера (підказка) — перебиває ВСЕ, включно з кешами
+      1.5 Виробник у самому рядку майстра (WILO, Bonomi, Herz...)
+      2. Кеш клієнта (тільки якщо не суперечить рівню 1)
+      3. Кеш бота (тільки якщо не суперечить рівню 1)
+      4. Профіль клієнта → дефолти → вільний пошук
+    Плюс: бан-фільтр, шрабер-фільтр, retry-аналог з ⚠️.
+    """
     результати = [None] * len(позиції)
     потребують_claude = []
+    retry_позиції = []
 
     for i, пос in enumerate(позиції):
         if progress_cb: progress_cb(i+1, len(позиції))
-        original   = пос.get('original', '')
-        normalized = пос.get('normalized', '')
-        category   = пос.get('category', 'other')
-        brand_map  = пос.get('_brand_map', {})
+        original     = пос.get('original', '')
+        normalized   = пос.get('normalized', '')
+        category     = пос.get('category', 'other')
+        brand_map    = пос.get('_brand_map', {})
+        client_slug  = пос.get('_client_slug')
+        client_prefs = пос.get('_client_prefs', {})
         manager_brand = brand_map.get(category)
 
+        # РІВЕНЬ 1.5: виробник у самому рядку (шукаємо ТІЛЬКИ в original)
+        line_brand = None
+        _orig_lc = original.lower()
+        for bk, bt in BRAND_TOKENS.items():
+            if re.search(r'(?<![a-zа-яёіїєґ0-9])' + re.escape(bk) + r'(?![a-zа-яёіїєґ0-9])', _orig_lc):
+                line_brand = bt
+                break
+        hard_brand = manager_brand or line_brand   # жорсткий виробник рівня 1/1.5
+
+        # РІВЕНЬ 2: кеш клієнта (поважає hard_brand)
+        if client_slug:
+            c = clients.client_cache_lookup(client_slug, original,
+                                            required_brand_tokens=hard_brand)
+            if c:
+                результати[i] = {
+                    'original': original, 'normalized': normalized,
+                    'знайдено': True, 'назва': c['catalog_name'],
+                    'назва_повна': '', 'артикул': '', 'ціна': '',
+                    'qty': пос.get('qty',''), 'category': c.get('category', category),
+                    'confidence': c.get('confidence', 0), 'keyword_pct': 100,
+                    'джерело': '👤 кеш клієнта' + (' ✅' if c.get('status')=='confirmed' else ''),
+                    'reason': f"З кешу клієнта ({c.get('confidence',0)}%)",
+                    'fail_reason': '', 'candidates_debug': [], '_from_cache': True,
+                }
+                continue
+
+        # РІВЕНЬ 3: кеш бота (banned вирізає cache_lookup; перевіряємо hard_brand)
+        cached = cache_lookup(original, brand_map)
+        if cached:
+            ok = True
+            if hard_brand:
+                nl = cached.get('catalog_name','').lower()
+                ok = any(t.lower() in nl for t in hard_brand)
+            if ok:
+                результати[i] = {
+                    'original': original, 'normalized': cached.get('normalized', normalized),
+                    'знайдено': True, 'назва': cached['catalog_name'],
+                    'назва_повна': '', 'артикул': '', 'ціна': '',
+                    'qty': пос.get('qty',''), 'category': cached.get('category', category),
+                    'confidence': cached.get('confidence',0), 'keyword_pct': 100,
+                    'джерело': '🤖 кеш бота' + (' ✅' if cached.get('status')=='confirmed' else ''),
+                    'reason': f"З кешу ({cached.get('confidence',0)}%)",
+                    'fail_reason': '', 'candidates_debug': [], '_from_cache': True,
+                }
+                continue
+            # кеш суперечить підказці — ігноруємо, шукаємо заново
+
+        # ── Пошук: фільтр виробника ВСЕРЕДИНІ keyword_search ──────────────────
         кандидати = []
         required_brand = None
         джерело = ''
+        brand_warning = ''
 
-        if manager_brand:
-            кандидати = keyword_search(normalized, top_n=12, brand_tokens=manager_brand)
+        if hard_brand:
+            кандидати = keyword_search(normalized, top_n=12, brand_tokens=hard_brand)
             if кандидати:
-                required_brand = manager_brand[0]
-                джерело = '👨 менеджер'
+                required_brand = hard_brand[0]
+                джерело = '👨 менеджер' if manager_brand else '📝 з рядка'
             else:
                 кандидати = keyword_search(normalized, top_n=12)
+                brand_warning = f"⚠️ {hard_brand[0]} відсутній для цієї позиції"
                 джерело = '⚠️ fallback'
         else:
-            for priority in DEFAULT_BRAND_PRIORITY.get(category, []):
-                кандидати = keyword_search(normalized, top_n=12, brand_tokens=priority)
+            # РІВЕНЬ 4а: преференції клієнта з історії
+            for brand, _cnt in client_prefs.get('by_category', {}).get(category, [])[:3]:
+                bt = BRAND_TOKENS.get(brand)
+                if not bt: continue
+                кандидати = keyword_search(normalized, top_n=12, brand_tokens=bt)
                 if кандидати:
-                    required_brand = priority[0]
-                    джерело = '⚙️ дефолт'
+                    required_brand = bt[0]
+                    джерело = '👤 профіль клієнта'
                     break
+            # РІВЕНЬ 4б: дефолти
+            if not кандидати:
+                for pt in DEFAULT_BRAND_PRIORITY.get(category, []):
+                    кандидати = keyword_search(normalized, top_n=12, brand_tokens=pt)
+                    if кандидати:
+                        required_brand = pt[0]
+                        джерело = '⚙️ дефолт'
+                        break
             if not кандидати:
                 кандидати = keyword_search(normalized, top_n=12)
                 джерело = '🔍 вільний'
@@ -494,11 +704,26 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                               'candidates_debug': []}
             continue
 
+        # Бан-фільтр (позначені адміном як помилка)
+        кандидати = [c for c in кандидати if not cache_is_banned(original, c['name'])]
+        # Шрабер = інструмент, не фітинг
+        if re.search(r'муфт|перех|редукц', normalized.lower()):
+            кандидати = [c for c in кандидати if 'шрабер' not in c['name'].lower()]
+        if not кандидати:
+            результати[i] = {**пос, 'знайдено': False, 'назва': '', 'артикул': '',
+                              'ціна': '', 'confidence': 0, 'джерело': '',
+                              'reason': '', 'fail_reason': 'всі кандидати забанені',
+                              'candidates_debug': []}
+            continue
+
         потребують_claude.append({
             'idx': i, 'normalized': normalized, 'original': original,
-            'candidates': кандидати, 'candidates_debug': [c['name'] for c in кандидати[:5]],
-            'qty': пос.get('qty', ''), 'required_brand': required_brand,
-            'category': category, 'brand_map': brand_map, 'джерело': джерело,
+            'candidates': кандидати,
+            'candidates_debug': [c['name'] for c in кандидати[:5]],
+            'qty': пос.get('qty',''), 'required_brand': required_brand,
+            'category': category, 'brand_map': brand_map,
+            'client_slug': client_slug, 'джерело': джерело,
+            'brand_warning': brand_warning,
         })
 
     if потребують_claude:
@@ -510,6 +735,9 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
             if r.get('знайдено') and r.get('номер_кандидата'):
                 n = max(0, min(int(r['номер_кандидата'])-1, len(пос['candidates'])-1))
                 found = пос['candidates'][n]
+                reason = r.get('reason', '')
+                if пос.get('brand_warning'):
+                    reason = f"{пос['brand_warning']}. {reason}"
                 результати[idx] = {
                     'original': пос['original'], 'normalized': пос['normalized'],
                     'знайдено': True, 'назва': found['name'],
@@ -518,17 +746,79 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                     'ціна': found.get('price', ''), 'qty': пос['qty'],
                     'category': пос['category'], 'confidence': conf,
                     'keyword_pct': found.get('_match_pct', 0),
-                    'джерело': пос['джерело'], 'reason': r.get('reason', ''),
-                    'fail_reason': '', 'candidates_debug': пос['candidates_debug'],
+                    'джерело': пос['джерело'],
+                    'brand_warning': пос.get('brand_warning',''),
+                    'reason': reason, 'fail_reason': '',
+                    'candidates_debug': пос['candidates_debug'],
                 }
+                # Кешуємо успіх (auto, confirmed/banned не перезаписуються)
+                cache_save(пос['original'], пос['brand_map'], пос['normalized'],
+                           found['name'], пос['category'], conf)
+                if пос.get('client_slug'):
+                    clients.client_cache_save(пос['client_slug'], пос['original'],
+                                              found['name'], пос['category'], conf)
             else:
                 результати[idx] = {
                     'original': пос['original'], 'normalized': пос['normalized'],
                     'знайдено': False, 'назва': '', 'артикул': '', 'ціна': '',
-                    'qty': пос['qty'], 'confidence': conf, 'джерело': '',
+                    'qty': пос['qty'], 'category': пос['category'],
+                    'confidence': conf, 'джерело': '',
                     'reason': '', 'fail_reason': r.get('fail_reason', 'не знайдено'),
                     'candidates_debug': пос['candidates_debug'],
                 }
+                # Кандидат на другий шанс (аналог іншого виробника)
+                if пос.get('required_brand'):
+                    retry_позиції.append(пос)
+
+        # ═══ ДРУГИЙ ШАНС: у виробника немає → аналог з явним ⚠️ ═══
+        if retry_позиції:
+            retry_batch = []
+            for пос in retry_позиції:
+                nc = keyword_search(пос['normalized'], top_n=12)
+                nc = [c for c in nc if not cache_is_banned(пос['original'], c['name'])]
+                if re.search(r'муфт|перех|редукц', пос['normalized'].lower()):
+                    nc = [c for c in nc if 'шрабер' not in c['name'].lower()]
+                _rb = пос['required_brand'].lower()
+                nc2 = [c for c in nc if _rb not in c['name'].lower()]
+                nc = nc2 or nc
+                if nc:
+                    retry_batch.append({**пос, 'candidates': nc,
+                        'candidates_debug': [c['name'] for c in nc[:5]],
+                        'required_brand': None, 'old_brand': пос['required_brand']})
+            if retry_batch:
+                відп2 = claude_pick_batch(retry_batch)
+                for j, пос in enumerate(retry_batch):
+                    r = відп2[j] if j < len(відп2) else {'знайдено': False}
+                    if r.get('знайдено') and r.get('номер_кандидата'):
+                        n = max(0, min(int(r['номер_кандидата'])-1, len(пос['candidates'])-1))
+                        found = пос['candidates'][n]
+                        warn = f"⚠️ у {пос['old_brand']} немає — аналог"
+                        результати[пос['idx']] = {
+                            'original': пос['original'], 'normalized': пос['normalized'],
+                            'знайдено': True, 'назва': found['name'],
+                            'назва_повна': found.get('name_full', found['name']),
+                            'артикул': found.get('artikul',''),
+                            'ціна': found.get('price',''), 'qty': пос['qty'],
+                            'category': пос['category'],
+                            'confidence': int(r.get('confidence',0)),
+                            'keyword_pct': found.get('_match_pct',0),
+                            'джерело': '⚠️ аналог', 'brand_warning': warn,
+                            'reason': f"{warn}. {r.get('reason','')}",
+                            'fail_reason': '',
+                            'candidates_debug': пос['candidates_debug'],
+                        }
+                        # аналоги НЕ кешуємо
+
+    # Ціна/артикул/повна назва для кешованих результатів
+    for r in результати:
+        if r and r.get('_from_cache') and r.get('назва'):
+            for it in CATALOG:
+                if it['name'] == r['назва']:
+                    r['ціна'] = it.get('price','')
+                    r['артикул'] = it.get('artikul','')
+                    r['назва_повна'] = it.get('name_full', it['name'])
+                    break
+            r.pop('_from_cache', None)
     return результати
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -561,7 +851,7 @@ def create_excel(результати: list[dict]):
         qty_num, qty_unit = parse_qty(r.get('qty', ''))
 
         if r.get('знайдено'):
-            suspicious = conf < 70 or kw < 50 or r.get('джерело','') in ('⚠️ fallback','🔍 вільний')
+            suspicious = conf < 70 or kw < 50 or r.get('brand_warning') or r.get('джерело','') in ('⚠️ fallback','🔍 вільний','⚠️ аналог')
             rows.append({
                 'Артикул':      r.get('артикул', ''),
                 'Наименование': r.get('назва_повна') or r.get('назва', ''),
@@ -569,6 +859,7 @@ def create_excel(результати: list[dict]):
                 'Ціна':         r.get('ціна', ''),
                 'Збіг':         f"🔍{kw}%/🤖{conf}%",
                 'Джерело':      r.get('джерело', ''),
+                'Чому знайшло': r.get('reason', ''),
                 'Оригінал':     r.get('original', ''),
             })
             flags.append('warn' if suspicious else '')
@@ -586,6 +877,7 @@ def create_excel(результати: list[dict]):
                 'Кількість': qty_num, 'Од.': qty_unit,
                 'Ціна': price, 'Збіг': '—',
                 'Джерело': '❓ НЕ ЗНАЙДЕНО',
+                'Чому знайшло': (r.get('fail_reason','') or '')[:100],
                 'Оригінал': r.get('original', ''),
             })
             flags.append('nf')
@@ -594,7 +886,7 @@ def create_excel(результати: list[dict]):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df = pd.DataFrame(rows) if rows else pd.DataFrame(
-            columns=['Артикул','Наименование','Кількість','Од.','Ціна','Збіг','Джерело','Оригінал'])
+            columns=['Артикул','Наименование','Кількість','Од.','Ціна','Збіг','Джерело','Чому знайшло','Оригінал'])
         df.to_excel(writer, index=False, sheet_name='Замовлення')
         ws = writer.sheets['Замовлення']
         for i, fl in enumerate(flags, start=2):
@@ -628,7 +920,15 @@ def process_batch(chat_id: int):
     stop_flags.pop(chat_id, None)
     items = batch['items']
 
-    status = bot.send_message(chat_id, f"⏳ Обробляю {len(items)} файл(ів)...")
+    active_slug = clients.get_active(chat_id)
+    client_prefs = clients.get_preferences(active_slug) if active_slug else {}
+    client_name = ''
+    if active_slug:
+        _p = clients.get_profile(active_slug)
+        client_name = _p['name'] if _p else active_slug
+    client_line = f"\n👤 Клієнт: {client_name}" if client_name else ""
+
+    status = bot.send_message(chat_id, f"⏳ Обробляю {len(items)} файл(ів)...{client_line}")
     msg_id = status.message_id
 
     всі_позиції, errors = [], []
@@ -641,6 +941,8 @@ def process_batch(chat_id: int):
             safe_edit(chat_id, msg_id, f"📖 Читаю файл {idx}/{len(items)}...")
             if item['type'] == 'photo':
                 позиції = normalize_photo(item['data'], item.get('caption',''))
+            elif item['type'] == 'text':
+                позиції = normalize_text(item['text'], item.get('caption',''))
             else:
                 позиції = []
             всі_позиції.extend(позиції)
@@ -656,6 +958,9 @@ def process_batch(chat_id: int):
     brand_map = parse_caption_brands(caption)
     for п in всі_позиції:
         п['_brand_map'] = brand_map
+        if active_slug:
+            п['_client_slug'] = active_slug
+            п['_client_prefs'] = client_prefs
 
     safe_edit(chat_id, msg_id, f"🔍 Шукаю {len(всі_позиції)} позицій...")
 
@@ -686,7 +991,12 @@ def process_batch(chat_id: int):
                InlineKeyboardButton("✖️ Закрити",  callback_data="tr_close"))
         bot.send_message(chat_id, "Перевір файл. Якщо помилки — тапни Навчання:", reply_markup=mk)
 
-    last_results[chat_id] = {'результати': [r for r in результати if r], 'client_slug': None}
+    last_results[chat_id] = {'результати': [r for r in результати if r], 'client_slug': active_slug}
+    if active_slug:
+        try:
+            clients.save_order(active_slug, результати, caption)
+        except Exception as e:
+            print(f"⚠️ Історія клієнта: {e}")
     username = items[0].get('username', str(chat_id)) if items else str(chat_id)
     log_usage(chat_id, username, total, len(знайдено), len(items))
 
@@ -756,11 +1066,27 @@ def kb_cache(message):
 
 @bot.message_handler(func=lambda m: m.text == "👥 Клієнти")
 def kb_clients(message):
-    bot.reply_to(message, "Функція профілів клієнтів в розробці.")
+    handle_clients_list(message)
 
 @bot.message_handler(func=lambda m: m.text == "👥 Кеш клієнта")
 def kb_client_cache(message):
-    bot.reply_to(message, "Кеш клієнта: функція в розробці.")
+    slug = clients.get_active(message.chat.id)
+    if not slug:
+        bot.reply_to(message, "Немає активного клієнта.\nАктивуй: `клієнт <ім'я>`", parse_mode="Markdown")
+        return
+    p = clients.get_profile(slug)
+    name = p['name'] if p else slug
+    cache = clients.get_client_cache(slug)
+    if not cache:
+        bot.reply_to(message, f"👥 Кеш *{name}* порожній.", parse_mode="Markdown")
+        return
+    icons = {'confirmed':'✅','banned':'❌','auto':'🔹'}
+    lines = []
+    for k, v in list(cache.items())[-10:]:
+        lines.append(f"{icons.get(v.get('status','auto'),'🔹')} `{k[:35]}` → {v.get('catalog_name','')[:45]}")
+    bot.reply_to(message,
+        f"👥 Кеш *{name}*: {len(cache)} записів\n✅ підтв | ❌ бан | 🔹 авто\n\n" + "\n".join(lines),
+        parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text == "👑 Статистика")
 def kb_stats(message):
@@ -891,8 +1217,18 @@ def tr_classify(call):
     if call.data.startswith("trp_"):
         idx = int(call.data[4:])
         new_name = st.get('cands', [])[idx]
-        # Просто додаємо правило в rules.txt
-        add_rule(f"{r.get('original','')} = {new_name}")
+        original = r.get('original','')
+        cat = r.get('category','other')
+        # Старе → бан, нове → confirmed (кеш бота + клієнта)
+        if old_name:
+            cache_ban_pair(original, old_name, cat)
+            if last.get('client_slug'):
+                clients.client_cache_set_status(last['client_slug'], original, old_name, 'banned')
+        cache_save(original, {}, r.get('normalized', original), new_name, cat, 100)
+        cache_set_status(original, new_name, 'confirmed')
+        if last.get('client_slug'):
+            clients.client_cache_save(last['client_slug'], original, new_name, cat, 100)
+            clients.client_cache_set_status(last['client_slug'], original, new_name, 'confirmed')
         r['назва'] = new_name
         try:
             bot.edit_message_text(
@@ -902,9 +1238,24 @@ def tr_classify(call):
         bot.answer_callback_query(call.id, "✅ Збережено")
         advance(); return
 
-    # Причина вибрана → показати кандидатів
-    query = r.get('normalized') or r.get('original', '')
-    cands = [c['name'] for c in keyword_search(query, top_n=8) if c['name'] != old_name][:7]
+    # Причина вибрана → бан старого + кандидати
+    original = r.get('original','')
+    cat = r.get('category','other')
+    if old_name:
+        cache_ban_pair(original, old_name, cat)
+        if last.get('client_slug'):
+            clients.client_cache_set_status(last['client_slug'], original, old_name, 'banned')
+    query = r.get('normalized') or original
+    cands = [c['name'] for c in keyword_search(query, top_n=10) if c['name'] != old_name]
+    if call.data == "trb" and old_name:   # не той виробник → прибрати його бренд
+        _ob = ''
+        for _k, _t in BRAND_TOKENS.items():
+            if any(x.lower() in old_name.lower() for x in _t):
+                _ob = _t[0].lower(); break
+        if _ob:
+            _f = [c for c in cands if _ob not in c.lower()]
+            cands = _f or cands
+    cands = cands[:7]
     st['cands'] = cands
     mk = InlineKeyboardMarkup(row_width=1)
     for i, name in enumerate(cands):
@@ -931,8 +1282,14 @@ def handle_virno(message):
     if row < 1 or row > len(last['результати']):
         bot.reply_to(message, f"⚠️ Рядок {row} не існує."); return
     r = last['результати'][row-1]
-    add_rule(f"ПІДТВЕРДЖЕНО: {r.get('original','')} = {r.get('назва','')}")
-    bot.reply_to(message, f"✅ Рядок {row} підтверджено:\n`{r.get('назва','')[:60]}`", parse_mode="Markdown")
+    original, назва, cat = r.get('original',''), r.get('назва',''), r.get('category','other')
+    if not cache_set_status(original, назва, 'confirmed'):
+        cache_save(original, {}, r.get('normalized', original), назва, cat, 100)
+        cache_set_status(original, назва, 'confirmed')
+    if last.get('client_slug'):
+        clients.client_cache_save(last['client_slug'], original, назва, cat, 100)
+        clients.client_cache_set_status(last['client_slug'], original, назва, 'confirmed')
+    bot.reply_to(message, f"✅ Рядок {row} підтверджено (завжди так):\n`{назва[:60]}`", parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text and re.match(r'^помилка\s+\d+', m.text.lower()))
 def handle_pomylka(message):
@@ -944,8 +1301,159 @@ def handle_pomylka(message):
     if row < 1 or row > len(last['результати']):
         bot.reply_to(message, f"⚠️ Рядок {row} не існує."); return
     r = last['результати'][row-1]
-    add_rule(f"ПОМИЛКА: {r.get('original','')} НЕ є {r.get('назва','')}")
-    bot.reply_to(message, f"❌ Рядок {row} позначено як помилку:\n`{r.get('назва','')[:60]}`", parse_mode="Markdown")
+    original, назва, cat = r.get('original',''), r.get('назва',''), r.get('category','other')
+    cache_ban_pair(original, назва, cat)
+    if last.get('client_slug'):
+        clients.client_cache_set_status(last['client_slug'], original, назва, 'banned')
+    bot.reply_to(message, f"❌ Рядок {row} забанено (ніколи так):\n`{назва[:60]}`", parse_mode="Markdown")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# КОМАНДИ КЛІЄНТІВ
+# ═══════════════════════════════════════════════════════════════════════════════
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('новий клієнт'))
+def handle_new_client(message):
+    rest = message.text[12:].strip()
+    if not rest:
+        bot.reply_to(message, "Формат: `новий клієнт Петренко, примітка`", parse_mode="Markdown")
+        return
+    parts = rest.split(',', 1)
+    name = parts[0].strip()
+    notes = parts[1].strip() if len(parts) > 1 else ""
+    ok, result = clients.create_client(name, notes)
+    if ok:
+        clients.set_active(message.chat.id, result)
+        bot.reply_to(message, f"✅ Створено *{name}* і активовано. Кидай фото!", parse_mode="Markdown")
+    else:
+        bot.reply_to(message, f"⚠️ {result}")
+
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().strip() == 'клієнти')
+def handle_clients_list(message):
+    index = clients.list_clients()
+    if not index:
+        bot.reply_to(message, "📁 Клієнтів немає.\n`новий клієнт <ім'я>`", parse_mode="Markdown")
+        return
+    lines = []
+    for slug, name in sorted(index.items(), key=lambda x: x[1]):
+        p = clients.get_profile(slug)
+        lines.append(f"• {name} ({p.get('orders_count',0) if p else 0} зам.)")
+    bot.reply_to(message, f"📁 Клієнти ({len(index)}):\n" + "\n".join(lines))
+
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('клієнт'))
+def handle_client(message):
+    rest = message.text[6:].strip()
+    if not rest:
+        slug = clients.get_active(message.chat.id)
+        if slug:
+            p = clients.get_profile(slug)
+            bot.reply_to(message, f"👤 Активний: *{p['name'] if p else slug}*\n`клієнт стоп` — скинути", parse_mode="Markdown")
+        else:
+            bot.reply_to(message, "Немає активного.\n`клієнт <ім'я>` — активувати", parse_mode="Markdown")
+        return
+    if rest.lower() in ('стоп', 'скинути', 'off'):
+        clients.clear_active(message.chat.id)
+        bot.reply_to(message, "✅ Клієнта скинуто.")
+        return
+    if ':' in rest:
+        name_part, note = rest.split(':', 1)
+        slug = clients.find_client(name_part.strip())
+        if not slug:
+            bot.reply_to(message, f"⚠️ '{name_part.strip()}' не знайдено.")
+            return
+        clients.add_note(slug, note.strip())
+        bot.reply_to(message, "✅ Примітку додано.")
+        return
+    slug = clients.find_client(rest)
+    if not slug:
+        bot.reply_to(message, f"⚠️ '{rest}' не знайдено.\n`новий клієнт {rest}`", parse_mode="Markdown")
+        return
+    clients.set_active(message.chat.id, slug)
+    p = clients.get_profile(slug)
+    prefs = clients.get_preferences(slug)
+    top = ", ".join(b for b, _ in prefs.get('top_brands', [])[:3]) or "ще немає даних"
+    notes = p.get('notes', []) if p else []
+    notes_s = "\n".join(f"  • {n}" for n in notes[-3:] if n) or "  —"
+    bot.reply_to(message,
+        f"✅ Активовано: *{p['name'] if p else slug}*\n"
+        f"📦 Замовлень: {p.get('orders_count',0) if p else 0}\n"
+        f"🏷 Топ виробники: {top}\n📝 Примітки:\n{notes_s}\n\nКидай фото!",
+        parse_mode="Markdown")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ВИПРАВ N [= текст] — навчання одним тапом
+# ═══════════════════════════════════════════════════════════════════════════════
+@bot.message_handler(func=lambda m: m.text and re.match(r'^виправ\s+\d+', m.text.lower().strip()))
+def handle_fix(message):
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "⛔ Тільки адмін. Запропонуй: `правило <текст>`", parse_mode="Markdown")
+        return
+    m = re.match(r'^виправ\s+(\d+)(?:\s*=\s*(.+))?$', message.text.strip(), re.IGNORECASE)
+    row = int(m.group(1))
+    manual = (m.group(2) or '').strip()
+    last = last_results.get(message.chat.id)
+    if not last or not last['результати']:
+        bot.reply_to(message, "⚠️ Немає замовлення в пам'яті.")
+        return
+    if row < 1 or row > len(last['результати']):
+        bot.reply_to(message, f"⚠️ Рядок {row} не існує (всього {len(last['результати'])}).")
+        return
+    r = last['результати'][row-1]
+    query = manual or r.get('normalized') or r.get('original','')
+    cur = r.get('назва','')
+    cands = [c['name'] for c in keyword_search(query, top_n=9) if c['name'] != cur][:8]
+    if not cands:
+        bot.reply_to(message, "😕 Кандидатів немає. Спробуй: `виправ N = інший текст`", parse_mode="Markdown")
+        return
+    _fix_state[message.chat.id] = {'row': row, 'cands': cands}
+    mk = InlineKeyboardMarkup(row_width=1)
+    for i, name in enumerate(cands):
+        mk.add(InlineKeyboardButton(f"{i+1}. {name[:55]}", callback_data=f"fx_{i}"))
+    mk.add(InlineKeyboardButton("❌ Немає правильного (тільки бан)", callback_data="fx_ban"))
+    bot.reply_to(message,
+        f"🎓 Рядок {row}: `{r.get('original','')[:45]}`\n"
+        f"Зараз: {cur[:60] or '(не знайдено)'}\n\nТапни ПРАВИЛЬНИЙ:",
+        parse_mode="Markdown", reply_markup=mk)
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith('fx_'))
+def handle_fix_pick(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "⛔ Тільки адмін")
+        return
+    st = _fix_state.pop(call.message.chat.id, None)
+    last = last_results.get(call.message.chat.id)
+    if not st or not last:
+        bot.answer_callback_query(call.id, "Сесія застаріла")
+        return
+    r = last['результати'][st['row']-1]
+    original = r.get('original','')
+    old_name = r.get('назва','')
+    cat = r.get('category','other')
+    cslug = last.get('client_slug')
+    if old_name:
+        cache_ban_pair(original, old_name, cat)
+        if cslug:
+            clients.client_cache_set_status(cslug, original, old_name, 'banned')
+    if call.data == "fx_ban":
+        bot.edit_message_text(f"❌ Забанено: `{original[:40]}` → {old_name[:50]}",
+            call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        bot.answer_callback_query(call.id, "Забанено")
+        return
+    idx = int(call.data[3:])
+    new_name = st['cands'][idx]
+    cache_save(original, {}, r.get('normalized', original), new_name, cat, 100)
+    cache_set_status(original, new_name, 'confirmed')
+    if cslug:
+        clients.client_cache_save(cslug, original, new_name, cat, 100)
+        clients.client_cache_set_status(cslug, original, new_name, 'confirmed')
+    r['назва'] = new_name
+    bot.edit_message_text(
+        f"✅ Навчено!\n`{original[:40]}`\n❌ {old_name[:50] or '—'}\n✅ {new_name[:60]}",
+        call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    bot.answer_callback_query(call.id, "Збережено")
 
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('правило'))
@@ -972,8 +1480,18 @@ def handle_rule(message):
 
 @bot.message_handler(commands=['кеш', 'cache'])
 def handle_cache_info(message):
-    bot.reply_to(message, "📋 Кеш нормалізацій: використовується rules.txt для навчання.\n"
-                          "Команди: `вірно N`, `помилка N`, `виправ N`", parse_mode="Markdown")
+    cache = get_cache()
+    if not cache:
+        bot.reply_to(message, "📋 Кеш порожній — заповниться після замовлень.")
+        return
+    icons = {'confirmed':'✅','banned':'❌','auto':'🔹'}
+    lines = []
+    for k, v in list(cache.items())[-8:]:
+        orig = k.split("::")[0][:35]
+        lines.append(f"{icons.get(v.get('status','auto'),'🔹')} `{orig}` → {v.get('catalog_name','')[:45]}")
+    bot.reply_to(message,
+        f"📋 Кеш: *{len(cache)}* записів\n✅ підтв | ❌ бан | 🔹 авто\n\n" + "\n".join(lines),
+        parse_mode="Markdown")
 
 
 @bot.message_handler(content_types=['photo'])
@@ -1039,8 +1557,9 @@ def handle_document(message):
 def handle_text_search(message):
     запит = message.text[5:].strip()
     if запит:
+        hint = pending_hints.pop(message.chat.id, "")
         add_to_batch(message.chat.id, {
-            'type': 'photo', 'data': None, 'caption': запит,
+            'type': 'text', 'text': запит, 'caption': hint,
             'username': message.from_user.username or str(message.from_user.id),
         })
     else:
@@ -1062,6 +1581,8 @@ def handle_stop(message):
                      and not m.text.lower().startswith('пошук')
                      and not m.text.lower().startswith('правило')
                      and not re.match(r'^(вірно|помилка|виправ)\s+\d+', m.text.lower().strip())
+                     and not m.text.lower().startswith('клієнт')
+                     and not m.text.lower().startswith('новий клієнт')
                      and not m.text.startswith(('📸','🛑','📋','📊','👥','👑')))
 def handle_text_hint(message):
     text = message.text.strip()
