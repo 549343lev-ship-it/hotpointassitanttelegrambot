@@ -85,6 +85,8 @@ def _fuzzy_match(original: str, brand_map: dict, threshold: float = 0.82) -> dic
     best_entry = None
 
     for cached_key, entry in _CACHE.items():
+        if entry.get('status') == 'banned':
+            continue  # бан-записи невидимі для видачі (тільки для is_banned)
         # Перевіряємо виробників
         parts = cached_key.split("::", 1)
         cached_brands = parts[1] if len(parts) > 1 else ""
@@ -139,9 +141,18 @@ def cache_save(original: str, brand_map: dict, normalized: str,
         return
     key = _cache_key(original, brand_map)
     existing = _CACHE.get(key)
-    # Не чіпаємо записи які адмін вже підтвердив або забанив
-    if existing and existing.get('status') in ('confirmed', 'banned'):
-        return
+    if existing:
+        st = existing.get('status')
+        if st == 'confirmed':
+            return  # рішення адміна не перезаписуємо
+        if st == 'banned':
+            if existing.get('catalog_name') == catalog_name:
+                return  # це саме забанений товар
+            # Бан зберігаємо (суфіксний ключ), основний — новому запису
+            i = 1
+            while f"{key}::ban{i}" in _CACHE:
+                i += 1
+            _CACHE[f"{key}::ban{i}"] = existing
     _CACHE[key] = {
         "normalized":   normalized,
         "catalog_name": catalog_name,
