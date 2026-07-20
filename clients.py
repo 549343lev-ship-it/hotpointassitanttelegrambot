@@ -311,8 +311,17 @@ def client_cache_save(slug: str, original: str, catalog_name: str,
             cache = {}
     key = re.sub(r'\s+', ' ', original.lower().strip())
     existing = cache.get(key)
-    if existing and existing.get('status') in ('confirmed', 'banned'):
-        return  # не чіпаємо рішення адміна
+    if existing:
+        st = existing.get('status')
+        if st == 'confirmed':
+            return
+        if st == 'banned':
+            if existing.get('catalog_name') == catalog_name:
+                return
+            i = 1
+            while f"{key}::ban{i}" in cache:
+                i += 1
+            cache[f"{key}::ban{i}"] = existing
     cache[key] = {
         "catalog_name": catalog_name,
         "category":     category,
