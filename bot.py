@@ -177,6 +177,58 @@ def save_pending_rules(rules):
     with open(PENDING_RULES_FILE, "w", encoding="utf-8") as f:
         json.dump(rules, f, ensure_ascii=False, indent=2)
 
+# ─── Черга ВИПРАВЛЕНЬ від звичайних користувачів (адмін підтверджує) ─────────
+PENDING_FIXES_FILE = "pending_fixes.json"
+
+def load_pending_fixes() -> list:
+    if os.path.exists(PENDING_FIXES_FILE):
+        try:
+            with open(PENDING_FIXES_FILE, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []
+
+def save_pending_fixes(fixes: list):
+    with open(PENDING_FIXES_FILE, "w", encoding="utf-8") as f:
+        json.dump(fixes, f, ensure_ascii=False, indent=2)
+
+def add_pending_fix(fix: dict) -> int:
+    fixes = load_pending_fixes()
+    fix["date"] = time.strftime("%Y-%m-%d %H:%M")
+    fixes.append(fix)
+    save_pending_fixes(fixes)
+    return len(fixes)
+
+def apply_fix(fix: dict):
+    """Застосовує підтверджене виправлення: старе → banned, нове → confirmed."""
+    original = fix.get('original', '')
+    cat      = fix.get('category', 'other')
+    old      = fix.get('old_name')
+    new      = fix.get('new_name')
+    slug     = fix.get('client_slug')
+    if old:
+        cache_ban_pair(original, old, cat)
+        if slug:
+            clients.client_cache_set_status(slug, original, old, 'banned')
+    if new:
+        cache_save(original, {}, fix.get('normalized', original), new, cat, 100)
+        cache_set_status(original, new, 'confirmed')
+        if slug:
+            clients.client_cache_save(slug, original, new, cat, 100)
+            clients.client_cache_set_status(slug, original, new, 'confirmed')
+
+def notify_admin_fix(username, original, old_name, new_name, n):
+    try:
+        bot.send_message(ADMIN_ID,
+            f"🔔 Виправлення від @{username} (в черзі: {n})\n"
+            f"«{(original or '')[:45]}»\n"
+            f"❌ {(old_name or '—')[:55]}\n"
+            f"✅ {(new_name or '(тільки заборонити старе)')[:55]}\n\n"
+            f"Підтвердити: 👑 Правила на розгляд")
+    except Exception:
+        pass
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # КАТАЛОГ
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1078,12 +1130,13 @@ def process_batch(chat_id: int):
     if errors: звіт += "\n" + "\n".join(errors)
     safe_edit(chat_id, msg_id, звіт)
 
-    # Кнопки навчання адміну
-    if chat_id == ADMIN_ID:
-        mk = InlineKeyboardMarkup()
-        mk.add(InlineKeyboardButton("🎓 Навчання", callback_data="tr_go"),
-               InlineKeyboardButton("✖️ Закрити",  callback_data="tr_close"))
-        bot.send_message(chat_id, "Перевір файл. Якщо помилки — тапни Навчання:", reply_markup=mk)
+    # Кнопки навчання — для всіх (адмін застосовує одразу, інші → на розгляд)
+    mk = InlineKeyboardMarkup()
+    mk.add(InlineKeyboardButton("🎓 Навчання", callback_data="tr_go"),
+           InlineKeyboardButton("✖️ Закрити",  callback_data="tr_close"))
+    note = "" if chat_id == ADMIN_ID else "\n(твої виправлення підтверджує адмін)"
+    bot.send_message(chat_id, f"Перевір файл. Якщо є помилки — тапни Навчання:{note}",
+                     reply_markup=mk)
 
     last_results[chat_id] = {'результати': [r for r in результати if r], 'client_slug': active_slug}
     if active_slug:
@@ -1128,27 +1181,69 @@ def main_keyboard(uid: int) -> ReplyKeyboardMarkup:
 # ═══════════════════════════════════════════════════════════════════════════════
 @bot.message_handler(commands=['start', 'help'])
 def handle_start(message):
+    admin = is_admin(message.from_user.id)
     admin_note = ""
-    if is_admin(message.from_user.id):
-        admin_note = "\n\n👑 Адмін:\n`вірно 3` / `помилка 5` — навчання\n`виправ 5` — кнопки варіантів"
-    bot.reply_to(message,
-        f"👋 Привіт! Бот підбору сантехніки.\n\n"
-        f"📸 Кинь фото списку — знайду в базі\n"
-        f"📝 *пошук <текст>* — текстовий запит\n"
-        f"📋 *правило <текст>* — навчи новому сленгу\n"
-        f"🛑 /stop — зупинити{admin_note}",
+    if admin:
+        admin_note = ("\n\n👑 *Адмін:* твої виправлення застосовуються одразу. "
+                      "Чужі — чекають у «👑 Правила на розгляд».")
+    else:
+        admin_note = "\n\n_Твої виправлення і правила підтверджує адмін._"
+    bot.reply_to(message, f"""👋 Привіт! Я підбираю сантехніку з бази по фото списку.
+
+*📋 ЯК ПРАЦЮВАТИ (3 кроки):*
+1️⃣ Напиши виробників (кожен рядок = категорія):
+`каналізація остендорф`
+`пайка екопластик`
+`крани рафтек`
+2️⃣ Кинь фото рукописного списку (можна кілька)
+3️⃣ Отримай Excel: 🟥 не знайдено, 🟨 перевір
+
+*👤 ПОСТІЙНІ КЛІЄНТИ (щоб бот пам'ятав звички):*
+`новий клієнт Петренко` — створити профіль (один раз)
+`клієнт Петренко` — активуй ПЕРЕД фото! Бот візьме
+його минулі підбори і улюблених виробників.
+`клієнт стоп` — вимкнути | `клієнти` — список
+
+*🎓 ЯКЩО БОТ ПОМИЛИВСЯ:*
+Після файлу тапни «🎓 Навчання» → напиши номери
+неправильних рядків (напр: `3 7 12`) → вибери що не так
+→ тапни правильний варіант. Все!
+Або швидко: `вірно 3` / `помилка 5` / `виправ 5`{admin_note}
+
+`пошук <текст>` — підбір без фото | /stop — зупинити""",
         parse_mode="Markdown",
         reply_markup=main_keyboard(message.from_user.id))
 
-
 @bot.message_handler(func=lambda m: m.text == "📸 Як користуватись")
 def kb_howto(message):
-    bot.reply_to(message,
-        "📸 *Як користуватись:*\n\n"
-        "1. Напиши підказку:\n`каналізація остендорф\nпайка екопластик\nкрани рафтек`\n\n"
-        "2. Кинь фото списку від майстра\n\n"
-        "3. Отримай Excel з підібраними товарами",
-        parse_mode="Markdown")
+    bot.reply_to(message, """📸 *ПОВНА ІНСТРУКЦІЯ*
+
+*Крок 1. Клієнт (якщо постійний):*
+`клієнт Петренко` — і бот згадає ВСІ його минулі
+замовлення: які виробники брав, які саме товари.
+Повторний список знайдеться швидше і точніше.
+Новий? → `новий клієнт Петренко`
+
+*Крок 2. Виробники:*
+Напиши повідомлення-підказку, кожен рядок окремо:
+`каналізація остендорф`
+`пайка екопластик`
+`пуш рафтек`
+Або одним словом на все: `усе рафтек`
+
+*Крок 3. Фото:*
+Кинь фото списку (можна одразу кілька — почекай
+4 сек, бот збере їх в одне замовлення).
+
+*Крок 4. Перевір Excel:*
+🟥 червоний = не знайдено (в рядку — найближчий аналог)
+🟨 жовтий = сумнівно, глянь оком
+Колонка «Джерело» показує звідки взявся вибір.
+
+*Крок 5. Навчи якщо є помилки:*
+Тапни «🎓 Навчання» під файлом → номери рядків
+(`3 7 12`) → причину → правильний варіант.
+Наступного разу бот вже не помилиться!""", parse_mode="Markdown")
 
 @bot.message_handler(func=lambda m: m.text in ("🛑 Стоп", "🛑 стоп"))
 def kb_stop(message):
@@ -1219,17 +1314,27 @@ def kb_pending(message):
 
 def show_pending_rules(chat_id):
     rules = load_pending_rules()
-    if not rules:
-        bot.send_message(chat_id, "✅ Немає правил на розгляд.")
+    fixes = load_pending_fixes()
+    if not rules and not fixes:
+        bot.send_message(chat_id, "✅ Немає нічого на розгляд.")
         return
     for i, r in enumerate(rules):
         mk = InlineKeyboardMarkup()
         mk.add(InlineKeyboardButton("✅ Підтвердити", callback_data=f"approve_{i}"),
                InlineKeyboardButton("❌ Відхилити",   callback_data=f"reject_{i}"))
         bot.send_message(chat_id,
-            f"📋 #{i+1} від {r['username']} ({r['date']}):\n`{r['rule']}`",
-            parse_mode="Markdown", reply_markup=mk)
-
+            f"📋 Правило #{i+1} від {r['username']} ({r['date']}):\n{r['rule']}",
+            reply_markup=mk)
+    for i, f in enumerate(fixes):
+        mk = InlineKeyboardMarkup()
+        mk.add(InlineKeyboardButton("✅ Застосувати", callback_data=f"fixok_{i}"),
+               InlineKeyboardButton("❌ Відхилити",   callback_data=f"fixno_{i}"))
+        bot.send_message(chat_id,
+            f"🎓 Виправлення #{i+1} від {f['username']} ({f.get('date','')}):\n"
+            f"«{f.get('original','')[:45]}»\n"
+            f"❌ {(f.get('old_name') or '—')[:55]}\n"
+            f"✅ {(f.get('new_name') or '(тільки заборонити старе)')[:55]}",
+            reply_markup=mk)
 @bot.callback_query_handler(func=lambda c: c.data.startswith(('approve_','reject_')))
 def handle_rule_decision(call):
     if not is_admin(call.from_user.id):
@@ -1252,14 +1357,51 @@ def handle_rule_decision(call):
             call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     bot.answer_callback_query(call.id, "Готово")
 
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith(('fixok_', 'fixno_')))
+def handle_fixq_decision(call):
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "⛔ Тільки адмін")
+        return
+    action, idx = call.data.split('_')
+    idx = int(idx)
+    fixes = load_pending_fixes()
+    if idx >= len(fixes):
+        bot.answer_callback_query(call.id, "Вже оброблено")
+        return
+    fix = fixes.pop(idx)
+    save_pending_fixes(fixes)
+    who = fix.get('username', '?')
+    if action == 'fixok':
+        apply_fix(fix)
+        bot.edit_message_text(
+            f"✅ ЗАСТОСОВАНО (від @{who}):\n«{fix.get('original','')[:40]}»\n"
+            f"❌ {(fix.get('old_name') or '—')[:50]}\n✅ {(fix.get('new_name') or 'бан')[:50]}",
+            call.message.chat.id, call.message.message_id)
+        try:
+            bot.send_message(fix['user_id'],
+                f"✅ Твоє виправлення підтверджено адміном:\n"
+                f"«{fix.get('original','')[:40]}» → {(fix.get('new_name') or 'заборонено')[:55]}")
+        except Exception:
+            pass
+    else:
+        bot.edit_message_text(
+            f"❌ ВІДХИЛЕНО (від @{who}):\n«{fix.get('original','')[:40]}»",
+            call.message.chat.id, call.message.message_id)
+        try:
+            bot.send_message(fix['user_id'],
+                f"❌ Твоє виправлення відхилено адміном:\n«{fix.get('original','')[:40]}»")
+        except Exception:
+            pass
+    bot.answer_callback_query(call.id, "Готово")
+
+
 @bot.callback_query_handler(func=lambda c: c.data in ("tr_go","tr_close"))
 def tr_start(call):
     if call.data == "tr_close":
         try: bot.edit_message_text("✖️ Закрито.", call.message.chat.id, call.message.message_id)
         except Exception: pass
         bot.answer_callback_query(call.id); return
-    if not is_admin(call.from_user.id):
-        bot.answer_callback_query(call.id, "⛔ Тільки адмін"); return
     _train_state[call.message.chat.id] = {'stage': 'rows'}
     try:
         bot.edit_message_text(
@@ -1310,9 +1452,14 @@ def tr_classify(call):
     last = last_results.get(chat_id)
     if not st or not last:
         bot.answer_callback_query(call.id, "Сесія застаріла"); return
+    admin = is_admin(call.from_user.id)
     row = st['rows'][st['i']]
     r = last['результати'][row-1]
-    old_name = r.get('назва', '')
+    original = r.get('original','')
+    old_name = r.get('назва','')
+    cat = r.get('category','other')
+    cslug = last.get('client_slug')
+    uname = call.from_user.username or str(call.from_user.id)
 
     def advance():
         st['i'] += 1
@@ -1322,42 +1469,71 @@ def tr_classify(call):
         bot.answer_callback_query(call.id, "Пропущено"); advance(); return
 
     if call.data == "trn":
-        bot.answer_callback_query(call.id, "Ок"); advance(); return
+        if old_name:
+            if admin:
+                cache_ban_pair(original, old_name, cat)
+                if cslug:
+                    clients.client_cache_set_status(cslug, original, old_name, 'banned')
+                bot.answer_callback_query(call.id, "❌ Забанено")
+            else:
+                n = add_pending_fix({'original': original, 'old_name': old_name,
+                                     'new_name': None, 'category': cat,
+                                     'client_slug': cslug,
+                                     'normalized': r.get('normalized',''),
+                                     'user_id': call.from_user.id, 'username': uname})
+                notify_admin_fix(uname, original, old_name, None, n)
+                bot.answer_callback_query(call.id, "📥 Надіслано адміну")
+        else:
+            bot.answer_callback_query(call.id, "Ок")
+        advance(); return
 
     if call.data.startswith("trp_"):
         idx = int(call.data[4:])
-        new_name = st.get('cands', [])[idx]
-        original = r.get('original','')
-        cat = r.get('category','other')
-        # Старе → бан, нове → confirmed (кеш бота + клієнта)
-        if old_name:
-            cache_ban_pair(original, old_name, cat)
-            if last.get('client_slug'):
-                clients.client_cache_set_status(last['client_slug'], original, old_name, 'banned')
-        cache_save(original, {}, r.get('normalized', original), new_name, cat, 100)
-        cache_set_status(original, new_name, 'confirmed')
-        if last.get('client_slug'):
-            clients.client_cache_save(last['client_slug'], original, new_name, cat, 100)
-            clients.client_cache_set_status(last['client_slug'], original, new_name, 'confirmed')
-        r['назва'] = new_name
-        try:
-            bot.edit_message_text(
-                f"✅ Навчено!\n`{r.get('original','')[:40]}` → {new_name[:60]}",
-                chat_id, st.get('msg_id', call.message.message_id), parse_mode="Markdown")
-        except Exception: pass
-        bot.answer_callback_query(call.id, "✅ Збережено")
+        cands = st.get('cands', [])
+        if idx >= len(cands):
+            bot.answer_callback_query(call.id, "Застаріло"); return
+        new_name = cands[idx]
+        if admin:
+            if old_name:
+                cache_ban_pair(original, old_name, cat)
+                if cslug:
+                    clients.client_cache_set_status(cslug, original, old_name, 'banned')
+            cache_save(original, {}, r.get('normalized', original), new_name, cat, 100)
+            cache_set_status(original, new_name, 'confirmed')
+            if cslug:
+                clients.client_cache_save(cslug, original, new_name, cat, 100)
+                clients.client_cache_set_status(cslug, original, new_name, 'confirmed')
+            r['назва'] = new_name
+            try:
+                bot.edit_message_text(
+                    f"✅ Навчено!\n{original[:40]}\n❌ {old_name[:50] or '—'}\n✅ {new_name[:60]}",
+                    chat_id, st.get('msg_id', call.message.message_id))
+            except Exception: pass
+            bot.answer_callback_query(call.id, "✅ Збережено")
+        else:
+            n = add_pending_fix({'original': original, 'old_name': old_name or None,
+                                 'new_name': new_name, 'category': cat,
+                                 'client_slug': cslug,
+                                 'normalized': r.get('normalized',''),
+                                 'user_id': call.from_user.id, 'username': uname})
+            notify_admin_fix(uname, original, old_name, new_name, n)
+            try:
+                bot.edit_message_text(
+                    f"📥 Надіслано адміну на підтвердження (черга: {n})\n"
+                    f"{original[:40]}\n❌ {old_name[:50] or '—'}\n✅ {new_name[:60]}",
+                    chat_id, st.get('msg_id', call.message.message_id))
+            except Exception: pass
+            bot.answer_callback_query(call.id, "📥 На розгляді")
         advance(); return
 
-    # Причина вибрана → бан старого + кандидати
-    original = r.get('original','')
-    cat = r.get('category','other')
-    if old_name:
+    # Причина (trw/trb/trc): адмін банить одразу, користувач — при виборі нового
+    if old_name and admin:
         cache_ban_pair(original, old_name, cat)
-        if last.get('client_slug'):
-            clients.client_cache_set_status(last['client_slug'], original, old_name, 'banned')
+        if cslug:
+            clients.client_cache_set_status(cslug, original, old_name, 'banned')
     query = r.get('normalized') or original
     cands = [c['name'] for c in keyword_search(query, top_n=10) if c['name'] != old_name]
-    if call.data == "trb" and old_name:   # не той виробник → прибрати його бренд
+    if call.data == "trb" and old_name:
         _ob = ''
         for _k, _t in BRAND_TOKENS.items():
             if any(x.lower() in old_name.lower() for x in _t):
@@ -1368,23 +1544,22 @@ def tr_classify(call):
     cands = cands[:7]
     st['cands'] = cands
     mk = InlineKeyboardMarkup(row_width=1)
-    for i, name in enumerate(cands):
-        mk.add(InlineKeyboardButton(f"{i+1}. {name[:55]}", callback_data=f"trp_{i}"))
+    for i2, name in enumerate(cands):
+        mk.add(InlineKeyboardButton(f"{i2+1}. {name[:55]}", callback_data=f"trp_{i2}"))
     mk.add(InlineKeyboardButton("❌ Немає правильного", callback_data="trn"))
+    hdr = "❌ Забанено" if admin else "❌ Позначено як помилку"
     try:
         bot.edit_message_text(
-            f"🎓 Рядок {row}: {r.get('original','')[:45]}\n"
-            f"❌ Старе: {old_name[:55] or '—'}\n\nТапни ПРАВИЛЬНИЙ:",
+            f"🎓 Рядок {row}: {original[:45]}\n{hdr}: {old_name[:55] or '—'}\n\nТапни ПРАВИЛЬНИЙ:",
             chat_id, st.get('msg_id', call.message.message_id), reply_markup=mk)
     except Exception:
-        m = bot.send_message(chat_id, f"Тапни правильний варіант:", reply_markup=mk)
-        st['msg_id'] = m.message_id
+        m2 = bot.send_message(chat_id, "Тапни правильний варіант:", reply_markup=mk)
+        st['msg_id'] = m2.message_id
     bot.answer_callback_query(call.id)
 
 
 @bot.message_handler(func=lambda m: m.text and re.match(r'^вірно\s+\d+', m.text.lower()))
 def handle_virno(message):
-    if not is_admin(message.from_user.id): return
     row = int(re.search(r'\d+', message.text).group())
     last = last_results.get(message.chat.id)
     if not last:
@@ -1393,17 +1568,28 @@ def handle_virno(message):
         bot.reply_to(message, f"⚠️ Рядок {row} не існує."); return
     r = last['результати'][row-1]
     original, назва, cat = r.get('original',''), r.get('назва',''), r.get('category','other')
-    if not cache_set_status(original, назва, 'confirmed'):
-        cache_save(original, {}, r.get('normalized', original), назва, cat, 100)
-        cache_set_status(original, назва, 'confirmed')
-    if last.get('client_slug'):
-        clients.client_cache_save(last['client_slug'], original, назва, cat, 100)
-        clients.client_cache_set_status(last['client_slug'], original, назва, 'confirmed')
-    bot.reply_to(message, f"✅ Рядок {row} підтверджено (завжди так):\n`{назва[:60]}`", parse_mode="Markdown")
+    if not назва:
+        bot.reply_to(message, "⚠️ Цей рядок не знайдено — використай `виправ N`", parse_mode="Markdown"); return
+    if is_admin(message.from_user.id):
+        if not cache_set_status(original, назва, 'confirmed'):
+            cache_save(original, {}, r.get('normalized', original), назва, cat, 100)
+            cache_set_status(original, назва, 'confirmed')
+        if last.get('client_slug'):
+            clients.client_cache_save(last['client_slug'], original, назва, cat, 100)
+            clients.client_cache_set_status(last['client_slug'], original, назва, 'confirmed')
+        bot.reply_to(message, f"✅ Рядок {row} підтверджено (завжди так):\n{назва[:60]}")
+    else:
+        uname = message.from_user.username or str(message.from_user.id)
+        n = add_pending_fix({'original': original, 'old_name': None, 'new_name': назва,
+                             'category': cat, 'client_slug': last.get('client_slug'),
+                             'normalized': r.get('normalized',''),
+                             'user_id': message.from_user.id, 'username': uname})
+        notify_admin_fix(uname, original, None, назва, n)
+        bot.reply_to(message, f"📥 Підтвердження рядка {row} надіслано адміну (черга: {n})")
+
 
 @bot.message_handler(func=lambda m: m.text and re.match(r'^помилка\s+\d+', m.text.lower()))
 def handle_pomylka(message):
-    if not is_admin(message.from_user.id): return
     row = int(re.search(r'\d+', message.text).group())
     last = last_results.get(message.chat.id)
     if not last:
@@ -1412,10 +1598,21 @@ def handle_pomylka(message):
         bot.reply_to(message, f"⚠️ Рядок {row} не існує."); return
     r = last['результати'][row-1]
     original, назва, cat = r.get('original',''), r.get('назва',''), r.get('category','other')
-    cache_ban_pair(original, назва, cat)
-    if last.get('client_slug'):
-        clients.client_cache_set_status(last['client_slug'], original, назва, 'banned')
-    bot.reply_to(message, f"❌ Рядок {row} забанено (ніколи так):\n`{назва[:60]}`", parse_mode="Markdown")
+    if not назва:
+        bot.reply_to(message, "⚠️ Рядок і так не знайдено."); return
+    if is_admin(message.from_user.id):
+        cache_ban_pair(original, назва, cat)
+        if last.get('client_slug'):
+            clients.client_cache_set_status(last['client_slug'], original, назва, 'banned')
+        bot.reply_to(message, f"❌ Рядок {row} забанено (ніколи так):\n{назва[:60]}")
+    else:
+        uname = message.from_user.username or str(message.from_user.id)
+        n = add_pending_fix({'original': original, 'old_name': назва, 'new_name': None,
+                             'category': cat, 'client_slug': last.get('client_slug'),
+                             'normalized': r.get('normalized',''),
+                             'user_id': message.from_user.id, 'username': uname})
+        notify_admin_fix(uname, original, назва, None, n)
+        bot.reply_to(message, f"📥 Позначку помилки рядка {row} надіслано адміну (черга: {n})")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1497,9 +1694,6 @@ def handle_client(message):
 # ═══════════════════════════════════════════════════════════════════════════════
 @bot.message_handler(func=lambda m: m.text and re.match(r'^виправ\s+\d+', m.text.lower().strip()))
 def handle_fix(message):
-    if not is_admin(message.from_user.id):
-        bot.reply_to(message, "⛔ Тільки адмін. Запропонуй: `правило <текст>`", parse_mode="Markdown")
-        return
     m = re.match(r'^виправ\s+(\d+)(?:\s*=\s*(.+))?$', message.text.strip(), re.IGNORECASE)
     row = int(m.group(1))
     manual = (m.group(2) or '').strip()
@@ -1530,40 +1724,70 @@ def handle_fix(message):
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith('fx_'))
 def handle_fix_pick(call):
-    if not is_admin(call.from_user.id):
-        bot.answer_callback_query(call.id, "⛔ Тільки адмін")
-        return
     st = _fix_state.pop(call.message.chat.id, None)
     last = last_results.get(call.message.chat.id)
     if not st or not last:
         bot.answer_callback_query(call.id, "Сесія застаріла")
         return
+    admin = is_admin(call.from_user.id)
     r = last['результати'][st['row']-1]
     original = r.get('original','')
     old_name = r.get('назва','')
     cat = r.get('category','other')
     cslug = last.get('client_slug')
-    if old_name:
-        cache_ban_pair(original, old_name, cat)
-        if cslug:
-            clients.client_cache_set_status(cslug, original, old_name, 'banned')
+    uname = call.from_user.username or str(call.from_user.id)
+
     if call.data == "fx_ban":
-        bot.edit_message_text(f"❌ Забанено: `{original[:40]}` → {old_name[:50]}",
-            call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-        bot.answer_callback_query(call.id, "Забанено")
+        if not old_name:
+            bot.answer_callback_query(call.id, "Нема чого банити"); return
+        if admin:
+            cache_ban_pair(original, old_name, cat)
+            if cslug:
+                clients.client_cache_set_status(cslug, original, old_name, 'banned')
+            bot.edit_message_text(f"❌ Забанено: {original[:40]} → {old_name[:50]}",
+                call.message.chat.id, call.message.message_id)
+            bot.answer_callback_query(call.id, "Забанено")
+        else:
+            n = add_pending_fix({'original': original, 'old_name': old_name, 'new_name': None,
+                                 'category': cat, 'client_slug': cslug,
+                                 'normalized': r.get('normalized',''),
+                                 'user_id': call.from_user.id, 'username': uname})
+            notify_admin_fix(uname, original, old_name, None, n)
+            bot.edit_message_text(f"📥 Надіслано адміну (черга: {n}):\nзаборонити {old_name[:50]}",
+                call.message.chat.id, call.message.message_id)
+            bot.answer_callback_query(call.id, "📥 На розгляді")
         return
+
     idx = int(call.data[3:])
+    if idx >= len(st.get('cands', [])):
+        bot.answer_callback_query(call.id, "Застаріло"); return
     new_name = st['cands'][idx]
-    cache_save(original, {}, r.get('normalized', original), new_name, cat, 100)
-    cache_set_status(original, new_name, 'confirmed')
-    if cslug:
-        clients.client_cache_save(cslug, original, new_name, cat, 100)
-        clients.client_cache_set_status(cslug, original, new_name, 'confirmed')
-    r['назва'] = new_name
-    bot.edit_message_text(
-        f"✅ Навчено!\n`{original[:40]}`\n❌ {old_name[:50] or '—'}\n✅ {new_name[:60]}",
-        call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-    bot.answer_callback_query(call.id, "Збережено")
+    if admin:
+        if old_name:
+            cache_ban_pair(original, old_name, cat)
+            if cslug:
+                clients.client_cache_set_status(cslug, original, old_name, 'banned')
+        cache_save(original, {}, r.get('normalized', original), new_name, cat, 100)
+        cache_set_status(original, new_name, 'confirmed')
+        if cslug:
+            clients.client_cache_save(cslug, original, new_name, cat, 100)
+            clients.client_cache_set_status(cslug, original, new_name, 'confirmed')
+        r['назва'] = new_name
+        bot.edit_message_text(
+            f"✅ Навчено!\n{original[:40]}\n❌ {old_name[:50] or '—'}\n✅ {new_name[:60]}",
+            call.message.chat.id, call.message.message_id)
+        bot.answer_callback_query(call.id, "Збережено")
+    else:
+        n = add_pending_fix({'original': original, 'old_name': old_name or None,
+                             'new_name': new_name, 'category': cat, 'client_slug': cslug,
+                             'normalized': r.get('normalized',''),
+                             'user_id': call.from_user.id, 'username': uname})
+        notify_admin_fix(uname, original, old_name, new_name, n)
+        bot.edit_message_text(
+            f"📥 Надіслано адміну на підтвердження (черга: {n})\n"
+            f"{original[:40]}\n❌ {old_name[:50] or '—'}\n✅ {new_name[:60]}",
+            call.message.chat.id, call.message.message_id)
+        bot.answer_callback_query(call.id, "📥 На розгляді")
 
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('правило'))
