@@ -46,6 +46,13 @@ gemini_client = genai_new.Client(api_key=GEMINI_KEY)
 CATALOG_PATH = "catalog.json"
 RULES_FILE   = "rules.txt"
 
+# 💾 Постійне сховище (гілка GitHub botdata): відновлюємо дані ДО імпорту кешу
+try:
+    import storage
+    storage.restore()
+except Exception as _e:
+    print(f"⚠️ storage restore: {_e}", flush=True)
+
 # Кеш нормалізацій (auto/confirmed/banned) і профілі клієнтів
 from cache import (cache_lookup, cache_save, cache_delete, get_cache,
                    cache_set_status, cache_ban_pair, is_banned as cache_is_banned)
@@ -102,6 +109,60 @@ def get_usage_stats() -> str:
     for rec in log[-5:]:
         lines.append(f"• {rec['date']} — {rec['username']}: {rec['found']}/{rec['total']}")
     return "\n".join(lines)
+
+NOT_FOUND_FILE = "not_found_log.json"
+
+def log_not_found(rows: list):
+    """Накопичує незнайдені позиції для звіту 'Діри каталогу'."""
+    if not rows:
+        return
+    try:
+        log = []
+        if os.path.exists(NOT_FOUND_FILE):
+            with open(NOT_FOUND_FILE, encoding="utf-8") as f:
+                log = json.load(f)
+        for r in rows:
+            log.append({
+                "original":   r.get("original", "")[:80],
+                "normalized": r.get("normalized", "")[:80],
+                "date":       time.strftime("%Y-%m-%d"),
+            })
+        log = log[-2000:]
+        with open(NOT_FOUND_FILE, "w", encoding="utf-8") as f:
+            json.dump(log, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"⚠️ log_not_found: {e}")
+
+def get_catalog_gaps() -> str:
+    """Топ незнайдених запитів — що треба додати в прайси."""
+    if not os.path.exists(NOT_FOUND_FILE):
+        return "🕳 Порожньо — все знаходилось."
+    try:
+        with open(NOT_FOUND_FILE, encoding="utf-8") as f:
+            log = json.load(f)
+    except Exception:
+        return "⚠️ Помилка читання."
+    if not log:
+        return "🕳 Порожньо."
+    groups = {}
+    for rec in log:
+        key = re.sub(r"\s+", " ", (rec.get("normalized") or rec.get("original","")).lower()).strip()
+        if not key:
+            continue
+        if key not in groups:
+            groups[key] = {"n": 0, "show": rec.get("normalized") or rec.get("original",""),
+                           "orig": rec.get("original",""), "last": rec.get("date","")}
+        groups[key]["n"] += 1
+        groups[key]["last"] = rec.get("date", groups[key]["last"])
+    top = sorted(groups.values(), key=lambda g: -g["n"])[:20]
+    lines = [f"🕳 ДІРИ КАТАЛОГУ — топ незнайдених ({len(log)} записів):\n"]
+    for i, g in enumerate(top, 1):
+        lines.append(f"{i}. ×{g['n']}  {g['show'][:48]}")
+        if g['orig'] and g['orig'].lower() != g['show'].lower():
+            lines.append(f"      (писали: {g['orig'][:45]})")
+    lines.append("\n➡️ Ці товари варто додати в прайси або створити правило.")
+    return "\n".join(lines)
+
 
 def load_pending_rules():
     if os.path.exists(PENDING_RULES_FILE):
@@ -716,6 +777,36 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                               'candidates_debug': []}
             continue
 
+        # ⚡ АВТО-ПРИЙОМ: очевидний збіг → без Claude (швидше, дешевше, надійніше)
+        # Умови: топ-1 ≥95%, ВСІ числа запиту є в назві, відрив від №2 ≥25%,
+        # і виробник не в fallback (інакше потрібне попередження Claude-шляху).
+        if кандидати and not brand_warning:
+            top = кандидати[0]
+            q_toks = tokenize(normalized)
+            q_nums = {t for t in q_toks if t[0].isdigit()}
+            top_toks = top.get('_tokens', set())
+            gap_ok = (len(кандидати) == 1 or
+                      top.get('_match_pct', 0) - кандидати[1].get('_match_pct', 0) >= 25)
+            if (q_nums and q_nums.issubset(top_toks)
+                    and top.get('_match_pct', 0) >= 95 and gap_ok):
+                результати[i] = {
+                    'original': original, 'normalized': normalized,
+                    'знайдено': True, 'назва': top['name'],
+                    'назва_повна': top.get('name_full', top['name']),
+                    'артикул': top.get('artikul', ''),
+                    'ціна': top.get('price', ''), 'qty': пос.get('qty', ''),
+                    'category': category, 'confidence': 95,
+                    'keyword_pct': top.get('_match_pct', 0),
+                    'джерело': '⚡ точний збіг', 'brand_warning': '',
+                    'reason': 'Всі розміри і назва збіглись — вибрано без AI',
+                    'fail_reason': '',
+                    'candidates_debug': [c['name'] for c in кандидати[:3]],
+                }
+                cache_save(original, brand_map, normalized, top['name'], category, 95)
+                if client_slug:
+                    clients.client_cache_save(client_slug, original, top['name'], category, 95)
+                continue
+
         потребують_claude.append({
             'idx': i, 'normalized': normalized, 'original': original,
             'candidates': кандидати,
@@ -970,6 +1061,9 @@ def process_batch(chat_id: int):
 
     результати = find_items(всі_позиції, progress_cb=progress)
 
+    # Лог незнайдених для звіту "Діри каталогу"
+    log_not_found([r for r in результати if r and not r.get('знайдено')])
+
     safe_edit(chat_id, msg_id, "📊 Формую Excel...")
     excel, not_found, warn = create_excel(результати)
 
@@ -999,6 +1093,10 @@ def process_batch(chat_id: int):
             print(f"⚠️ Історія клієнта: {e}")
     username = items[0].get('username', str(chat_id)) if items else str(chat_id)
     log_usage(chat_id, username, total, len(знайдено), len(items))
+    try:
+        storage.save_now()
+    except Exception as _e:
+        print(f"⚠️ storage: {_e}")
 
 def add_to_batch(chat_id: int, item: dict):
     if chat_id not in user_batches:
@@ -1022,7 +1120,7 @@ def main_keyboard(uid: int) -> ReplyKeyboardMarkup:
     kb.add(KeyboardButton("👥 Клієнти"), KeyboardButton("👥 Кеш клієнта"))
     if is_admin(uid):
         kb.add(KeyboardButton("👑 Статистика"), KeyboardButton("👑 Правила на розгляд"))
-        kb.add(KeyboardButton("👑 Логи"))
+        kb.add(KeyboardButton("👑 Логи"), KeyboardButton("👑 Діри каталогу"))
     return kb
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1101,6 +1199,18 @@ def kb_logs(message):
         return
     with open(USAGE_LOG_FILE, "rb") as f:
         bot.send_document(message.chat.id, f, visible_file_name="usage_log.json")
+
+@bot.message_handler(func=lambda m: m.text == "👑 Діри каталогу")
+def kb_gaps(message):
+    if not is_admin(message.from_user.id):
+        return
+    bot.reply_to(message, get_catalog_gaps())
+
+@bot.message_handler(commands=['діри', 'gaps'])
+def handle_gaps(message):
+    if not is_admin(message.from_user.id):
+        return
+    bot.reply_to(message, get_catalog_gaps())
 
 @bot.message_handler(func=lambda m: m.text == "👑 Правила на розгляд")
 def kb_pending(message):
@@ -1594,5 +1704,10 @@ def handle_text_hint(message):
         t.daemon = True
         t.start()
 
+
+try:
+    storage.start_autosave(60)
+except Exception as _e:
+    print(f"⚠️ storage autosave: {_e}", flush=True)
 
 print("🤖 bot.py завантажено, хендлери зареєстровані", flush=True)
