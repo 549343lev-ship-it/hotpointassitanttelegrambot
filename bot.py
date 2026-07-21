@@ -1,6 +1,21 @@
 """
 bot.py — Telegram бот підбору сантехніки (Hotpoint).
 Gemini OCR → keyword пошук → Claude вибір → Excel.
+
+ЗНАЧКИ-КАРАКУЛІ МАЙСТРІВ (малюють замість слів!):
+⊥ / Т-подібна вилка (навіть під кутом) = ТРІЙНИК: "⊥110х110х90" → Трійник канал 110х110 87.
+∠ / L / дві з'єднані лінії кутом = КОЛІНО: "∠110х45" → Коліно канал 110 45.
+-//- / —//— = ПОВТОР типу з попереднього рядка (новий розмір).
+Рядок без типу ("х45=10шт", "ф50х1м=3шт") = продовження ПОПЕРЕДНЬОГО типу.
+
+ПРОЕКТНІ ПОЗНАЧЕННЯ (специфікації PDF):
+Ду15/Dn15=1/2 | Ду20=3/4 | Ду25=1 | Ду32=1 1/4 | Ду40=1 1/2 | Ду50=2
+ЗР = зовнішня різьба (=МРЗ) | ВР = внутрішня (=МРВ)
+Групи: "Труба Stabi Plus: Ekoplastik" + підрядки "32х4,4 м 40" → успадковуй тип
+і виробника групи ("Труба PPR EVO ф32 Ekoplastik", 40 м). Виробник у колонці = виробник рядка.
+
+⚠️ PUSH СТРОГО: push_systems ТІЛЬКИ якщо явно написано пуш/push/натяжн/PEX.
+Голі розміри БЕЗ цих слів = НЕ push! "⊥110" = трійник каналізації, НЕ натяжний!
 """
 import os, json, re, base64, threading, time
 from io import BytesIO
@@ -381,6 +396,7 @@ BRAND_TOKENS = {
     'ostendorf':   ['ostendorf', 'OSTENDORF'],
     'остендорф':   ['ostendorf', 'OSTENDORF'],
     'plm':         ['plm', 'PLM'],
+    'плм':         ['plm', 'PLM'],
     'hidros':      ['hidros', 'Hidros', 'HIDROS'],
     'хідрос':      ['hidros', 'Hidros'],
     'гідрос':      ['hidros', 'Hidros'],
@@ -500,96 +516,63 @@ def keyword_search(query: str, top_n: int = 12, brand_tokens: list = None) -> li
 
 def parse_caption_brands(caption: str) -> dict:
     """
-    Розуміє підказки менеджера в БУДЬ-ЯКОМУ форматі:
-      крани рафтек              (без роздільників)
-      пайка - екопластик        (з тире)
-      каналізація: остендорф    (з двокрапкою)
-      усе raftec / все рафтек   (один виробник на все)
-      пуш рафтек, канал асг     (через кому)
-    Повертає {category: [brand_tokens]}.
+    ПОСТРОКОВИЙ парсинг (кожен рядок/кома = окрема пара категорія+виробник).
+    Фікс: бренд з попереднього рядка більше НЕ краде чужу категорію.
     """
     if not caption or not caption.strip():
         return {}
-    cap = caption.lower()
-
-    # Позиції всіх виробників (з межами слова)
-    found_brands = {}
-    for bk, bt in BRAND_TOKENS.items():
-        for m in re.finditer(r'(?<![a-zа-яёіїєґ0-9])' + re.escape(bk) + r'(?![a-zа-яёіїєґ0-9])', cap):
-            found_brands[m.start()] = bt
-    if not found_brands:
-        return {}
-
-    # Позиції категорій (лівий кордон слова, справа може бути закінчення)
-    found_cats = {}
-    for alias, cat in CATEGORY_ALIASES.items():
-        for m in re.finditer(r'(?<![a-zа-яёіїєґ])' + re.escape(alias), cap):
-            found_cats[m.start()] = cat
-
     result = {}
-    # "усе/все X" або виробник без категорій → на всі категорії
-    if re.search(r'(?<![а-я])(усе|все|всё|all)(?![а-я])', cap) or not found_cats:
-        first = found_brands[min(found_brands)]
+    chunks = re.split(r'[\n,;|]+', caption.lower())
+
+    def _find_brands(text):
+        out = {}
+        for bk, bt in BRAND_TOKENS.items():
+            for m in re.finditer(r'(?<![a-zа-яёіїєґ0-9])' + re.escape(bk) + r'(?![a-zа-яёіїєґ0-9])', text):
+                out[m.start()] = bt
+        return out
+
+    def _find_cats(text):
+        out = {}
+        for alias, cat in CATEGORY_ALIASES.items():
+            for m in re.finditer(r'(?<![a-zа-яёіїєґ])' + re.escape(alias), text):
+                out[m.start()] = cat
+        return out
+
+    all_text = caption.lower()
+    if re.search(r'(?<![а-я])(усе|все|всё|all)(?![а-я])', all_text):
+        fb = _find_brands(all_text)
+        if fb:
+            first = fb[min(fb)]
+            for cat in set(CATEGORY_ALIASES.values()):
+                result[cat] = first
+            return result
+
+    global_brands = {}
+    for chunk in chunks:
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        brands = _find_brands(chunk)
+        cats = _find_cats(chunk)
+        if brands and cats:
+            for cpos, cat in cats.items():
+                best, best_score = None, 1e9
+                for bpos, bt in brands.items():
+                    d = bpos - cpos
+                    score = d if d >= 0 else abs(d) + 100
+                    if score < best_score:
+                        best_score, best = score, bt
+                if best and cat not in result:
+                    result[cat] = best
+        elif brands and not cats:
+            global_brands.update(brands)
+
+    if not result and global_brands:
+        first = global_brands[min(global_brands)]
         for cat in set(CATEGORY_ALIASES.values()):
             result[cat] = first
-        return result
-
-    # Кожній категорії — найближчий виробник (справа до 60 символів або зліва до 30)
-    for cpos, cat in found_cats.items():
-        best, best_d = None, 999
-        for bpos, bt in found_brands.items():
-            d = bpos - cpos
-            if -30 < d < 60 and abs(d) < best_d:
-                best_d, best = abs(d), bt
-        if best and cat not in result:
-            result[cat] = best
     return result
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ЗНАННЯ САНТЕХНІКИ (коротко для Gemini)
-# ═══════════════════════════════════════════════════════════════════════════════
-ЗНАННЯ = """
-АБРЕВІАТУРИ (PPR з латунню): МРЗ/МРН=муфта різьба зовнішня; МРВ=внутрішня; КРЗ/КРН=коліно зовн; КРВ=внутр.
-2 параметри (25х3/4)=муфта/коліно з різьбою; 3 параметри (20х16х20)=трійник. Кран ВВ→МРЗ; Кран ВЗ→МРВ.
-Діаметр 16 → скоріш PUSH-система.
-
-НОРМАЛІЗАЦІЯ — КОРОТКО (не вигадуй товщину стінки/PN!):
-✅ "Труба PPR Fiber ф25 RAFTEC" | "Коліно канал ф110 87 OSTENDORF" (87 БЕЗ ,5!) | "Муфта PPR МРЗ 25х3/4 Ekoplastik"
-Виробника пиши ТІЛЬКИ якщо він у підказці менеджера або в самому рядку; інакше НЕ додавай!
-
-ТРУБИ PPR: опалення/гаряча→Fiber(RAFTEC)/Faser(ASG)/EVO(Ekoplastik); холодна→PN20.
-⚠️ Ekoplastik ВСІ труби = серія EVO (Fiber Basalt/STABI виведено)!
-ПЕРЕХІД PPR: Ekoplastik="Муфта перехідна PPR ВВ ф25х20"; RAFTEC="Муфта редукційна". Шрабер=інструмент, НЕ фітинг!
-
-КАНАЛІЗАЦІЯ: 90°→пиши "87" (без ,5!). ASG=HTR; OSTENDORF=HT Safe; безшумна=S-LINE.
-умивальник=ф40, ванна/душ=ф50, унітаз/стояк=ф110. Компенсаційна/надвижна муфта="Муфта вставна".
-
-PUSH (натяжна, PEX-A): маркер "натяжний"+"PUSH". Якщо є PEX/пекс/16 → ВСЕ замовлення PUSH!
-PUSH16≈PPR20, PUSH20≈PPR25. Назви: "Кутник натяжний ф25х25 PUSH RAFTEC", "Трійник натяжний ф25х16х25"
-(БЕЗ слова редукційний!), "Муфта натяжна ф20х16", "Гільза натяжна ф16" (НЕ насувна!). Гільзи обов'язкові!
-
-ІНШЕ: Труба 0,3м→шукай 0,25м. EK/ЄК=Ekoplastik. Бінокль=кран з нак.гайкою кутовий Hidros.
-Шафа колекторна→ASG. Мірелон=утеплювач (Thermaflex FRZ теж ок).
-
-КОМПЛЕКТ ТЕПЛОЇ ПІДЛОГИ "гребінка N контурів" (розгортай!): якщо варіант не вказано → Варіант 2.
-В1 (дешевий): колектор Raftec STEEL Nконт + євроконус 3/4 хN×2 + кінцевий елемент + термоголовка M30х1,5
-виносний датчик + кран кут. під термоголовку 3/4 + компл.підкл.насоса PCNR03 + насос Termojet APE 25/40/130
-+ кран кульовий ВВ 3/4 х2 + МРЗ ф25х3/4 Ekoplastik х2.
-В2 (популярний): вузол SUR03 Raftec + колектор STEEL + євроконус хN×2 + кінц.елемент + насос Termojet
-+ напівзгін пара 3/4 + кран ВВ BLACK + кран ВЗ BLACK + МРЗ ф25х3/4 х2.
-В3 (дорогий): вузол LSG-161H GOLD + колектор GOLD з єврокон. + кінц.елемент + насос + кран амер. ВЗ DN25 1"
-DRBS3 + МРЗ ф32х1 + МРЗ ф25х3/4.
-
-ПІДКЛЮЧКА КОТЛА: крани кут. з нак.гайкою ВВ+ВЗ (1/2 і 3/4 пари) + фільтри BLACK 1/2 і 3/4
-+ МРЗ ф20х1/2 х2 + МРЗ ф25х3/4 х2.
-РАДІАТОР бокове: клапан радіаторний кут. х2 + компл.термостат. + МРЗ ф20х1/2 + Hidros тип22.
-РАДІАТОР нижнє VK: Hidros тип22 VK + вент.вставка VK + термоголовка WHITE + вузол нижн.підкл. 1/2х3/4
-+ муфта з євроконусом ф20х3/4.
-"""
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# НОРМАЛІЗАЦІЯ (Gemini)
-# ═══════════════════════════════════════════════════════════════════════════════
 def normalize_photo(image_b64: str, caption: str = "", client_prefs: dict = None) -> list[dict]:
     rules = get_rules()
     rules_block = f"\nПравила менеджера:\n{rules}" if rules else ""
@@ -649,6 +632,47 @@ JSON масив ТІЛЬКИ:
         return json.loads(raw)
     except Exception as e:
         return [{"original": text, "normalized": text, "qty": "", "category": "other"}]
+
+
+def normalize_pdf(pdf_b64: str, caption: str = "") -> list[dict]:
+    """Специфікація з PDF (проектна документація) — Gemini читає PDF нативно."""
+    rules = get_rules()
+    rules_block = f"\nПравила менеджера:\n{rules}" if rules else ""
+    brand_map = parse_caption_brands(caption)
+    brand_hint = ""
+    if brand_map:
+        lines = [f"  {cat} → {toks[0]}" for cat, toks in brand_map.items()]
+        brand_hint = "\n⚠️ ВИРОБНИКИ (суворо!):\n" + "\n".join(lines)
+
+    prompt = f"""Ти — експерт сантехніки. Це ПРОЕКТНА СПЕЦИФІКАЦІЯ (PDF, розділ ОВ).
+ПІДКАЗКА: {caption}{brand_hint}{rules_block}
+ЗНАННЯ: {ЗНАННЯ}
+
+ЗАВДАННЯ: знайди таблиці специфікації (Найменування | Тип | Виробник | Од | Кількість).
+Витягни КОЖНУ позицію. Пам'ятай:
+- Групи ("Труба Stabi Plus: Ekoplastik" + підрядки розмірів) → успадковуй тип+виробника
+- Виробник з колонки → у normalized
+- section = розділ/блок позиції ("До П1", "Арматура", "Опалення", "Фітинги"...)
+- Ду→дюйми, ЗР→МРЗ, ВР→МРВ
+- Вентиляційне (Vents, повітроводи) включай теж — не знайдеться, це нормально
+
+JSON масив ТІЛЬКИ:
+[{{"original":"як у специфікації","normalized":"коротка назва","qty":"к-ть з од","category":"...","section":"розділ"}}]"""
+    try:
+        pdf_bytes = base64.b64decode(pdf_b64)
+        resp = gemini_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                genai_types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
+                genai_types.Part.from_text(text=prompt)
+            ]
+        )
+        raw = resp.text.strip().replace('```json','').replace('```','').strip()
+        if '[' in raw and ']' in raw:
+            raw = raw[raw.index('['):raw.rindex(']')+1]
+        return json.loads(raw)
+    except Exception as e:
+        return [{"original": f"Помилка PDF: {e}", "normalized": "", "qty": "", "category": "other"}]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1002,6 +1026,7 @@ def create_excel(результати: list[dict]):
                 'Ціна':         r.get('ціна', ''),
                 'Збіг':         f"🔍{kw}%/🤖{conf}%",
                 'Джерело':      r.get('джерело', ''),
+                'Розділ':       r.get('розділ', ''),
                 'Чому знайшло': r.get('reason', ''),
                 'Оригінал':     r.get('original', ''),
             })
@@ -1020,6 +1045,7 @@ def create_excel(результати: list[dict]):
                 'Кількість': qty_num, 'Од.': qty_unit,
                 'Ціна': price, 'Збіг': '—',
                 'Джерело': '❓ НЕ ЗНАЙДЕНО',
+                'Розділ': r.get('розділ', ''),
                 'Чому знайшло': (r.get('fail_reason','') or '')[:100],
                 'Оригінал': r.get('original', ''),
             })
@@ -1029,7 +1055,7 @@ def create_excel(результати: list[dict]):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df = pd.DataFrame(rows) if rows else pd.DataFrame(
-            columns=['Артикул','Наименование','Кількість','Од.','Ціна','Збіг','Джерело','Чому знайшло','Оригінал'])
+            columns=['Артикул','Наименование','Кількість','Од.','Ціна','Збіг','Джерело','Розділ','Чому знайшло','Оригінал'])
         df.to_excel(writer, index=False, sheet_name='Замовлення')
         ws = writer.sheets['Замовлення']
         for i, fl in enumerate(flags, start=2):
@@ -1048,6 +1074,8 @@ pending_hints = {}
 last_results  = {}
 _fix_state    = {}
 _train_state  = {}
+_text_pending = {}   # chat_id → текст що чекає рішення список/підказка
+_manual_wait  = {}   # chat_id → {'mode':'fix'|'train'} чекаємо ручну назву
 BATCH_TIMEOUT = 4
 
 def safe_edit(chat_id, msg_id, text):
@@ -1084,6 +1112,8 @@ def process_batch(chat_id: int):
             safe_edit(chat_id, msg_id, f"📖 Читаю файл {idx}/{len(items)}...")
             if item['type'] == 'photo':
                 позиції = normalize_photo(item['data'], item.get('caption',''))
+            elif item['type'] == 'pdf':
+                позиції = normalize_pdf(item['data'], item.get('caption',''))
             elif item['type'] == 'text':
                 позиції = normalize_text(item['text'], item.get('caption',''))
             else:
@@ -1112,6 +1142,11 @@ def process_batch(chat_id: int):
             safe_edit(chat_id, msg_id, f"🔍 Пошук: {cur}/{total}...")
 
     результати = find_items(всі_позиції, progress_cb=progress)
+
+    # Розділ (PDF-специфікації) → у результати
+    for _r, _п in zip(результати, всі_позиції):
+        if _r is not None:
+            _r.setdefault('розділ', _п.get('section', ''))
 
     # Лог незнайдених для звіту "Діри каталогу"
     log_not_found([r for r in результати if r and not r.get('знайдено')])
@@ -1445,7 +1480,7 @@ def _tr_show_row(chat_id):
         reply_markup=mk)
     st['msg_id'] = m.message_id
 
-@bot.callback_query_handler(func=lambda c: c.data in ("trw","trb","trc","trs","trn") or c.data.startswith("trp_"))
+@bot.callback_query_handler(func=lambda c: c.data in ("trw","trb","trc","trs","trn","trm") or c.data.startswith("trp_"))
 def tr_classify(call):
     chat_id = call.message.chat.id
     st = _train_state.get(chat_id)
@@ -1467,6 +1502,14 @@ def tr_classify(call):
 
     if call.data == "trs":
         bot.answer_callback_query(call.id, "Пропущено"); advance(); return
+
+    if call.data == "trm":
+        _manual_wait[chat_id] = {'mode': 'train'}
+        bot.answer_callback_query(call.id)
+        bot.send_message(chat_id,
+            "✍️ Напиши назву товару (як у прайсі, можна частину):\n"
+            "напр: `коліно 110 45 остендорф`", parse_mode="Markdown")
+        return
 
     if call.data == "trn":
         if old_name:
@@ -1546,6 +1589,7 @@ def tr_classify(call):
     mk = InlineKeyboardMarkup(row_width=1)
     for i2, name in enumerate(cands):
         mk.add(InlineKeyboardButton(f"{i2+1}. {name[:55]}", callback_data=f"trp_{i2}"))
+    mk.add(InlineKeyboardButton("✍️ Ввести назву вручну", callback_data="trm"))
     mk.add(InlineKeyboardButton("❌ Немає правильного", callback_data="trn"))
     hdr = "❌ Забанено" if admin else "❌ Позначено як помилку"
     try:
@@ -1715,6 +1759,7 @@ def handle_fix(message):
     mk = InlineKeyboardMarkup(row_width=1)
     for i, name in enumerate(cands):
         mk.add(InlineKeyboardButton(f"{i+1}. {name[:55]}", callback_data=f"fx_{i}"))
+    mk.add(InlineKeyboardButton("✍️ Ввести назву вручну", callback_data="fx_man"))
     mk.add(InlineKeyboardButton("❌ Немає правильного (тільки бан)", callback_data="fx_ban"))
     bot.reply_to(message,
         f"🎓 Рядок {row}: `{r.get('original','')[:45]}`\n"
@@ -1724,6 +1769,16 @@ def handle_fix(message):
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith('fx_'))
 def handle_fix_pick(call):
+    if call.data == "fx_man":
+        st0 = _fix_state.get(call.message.chat.id)
+        if not st0:
+            bot.answer_callback_query(call.id, "Сесія застаріла"); return
+        _manual_wait[call.message.chat.id] = {'mode': 'fix'}
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id,
+            "✍️ Напиши назву товару (як у прайсі, можна частину):\n"
+            "напр: `коліно 110 45 остендорф`", parse_mode="Markdown")
+        return
     st = _fix_state.pop(call.message.chat.id, None)
     last = last_results.get(call.message.chat.id)
     if not st or not last:
@@ -1860,8 +1915,9 @@ def handle_document(message):
     doc = message.document
     mime = (doc.mime_type or '').lower()
     fname = (doc.file_name or '').lower()
-    if not (mime.startswith('image/') or fname.endswith(('.jpg','.jpeg','.png','.webp'))):
-        bot.reply_to(message, "📎 Це не зображення. Надішли фото (jpg/png).")
+    is_pdf = mime == 'application/pdf' or fname.endswith('.pdf')
+    if not (is_pdf or mime.startswith('image/') or fname.endswith(('.jpg','.jpeg','.png','.webp'))):
+        bot.reply_to(message, "📎 Приймаю фото (jpg/png) або PDF-специфікацію.")
         return
     fuid = doc.file_unique_id
     _b = user_batches.get(message.chat.id)
@@ -1876,7 +1932,8 @@ def handle_document(message):
             hint = pending_hints.pop(message.chat.id, "")
             full_caption = " | ".join(filter(None, [caption, hint]))
             add_to_batch(message.chat.id, {
-                'type': 'photo', 'data': image_b64, 'caption': full_caption, 'fuid': fuid,
+                'type': 'pdf' if is_pdf else 'photo',
+                'data': image_b64, 'caption': full_caption, 'fuid': fuid,
                 'username': message.from_user.username or str(message.from_user.id),
             })
             return
@@ -1911,6 +1968,44 @@ def handle_stop(message):
     bot.reply_to(message, "🛑 Зупинено.")
 
 
+@bot.message_handler(func=lambda m: m.text and m.chat.id in _manual_wait)
+def handle_manual_input(message):
+    """Отримуємо ручну назву товару для виправ/навчання."""
+    state = _manual_wait.pop(message.chat.id, None)
+    if not state:
+        return
+    mode = state.get('mode')
+    query = message.text.strip()
+    cands = [c['name'] for c in keyword_search(query, top_n=9)]
+    if not cands:
+        bot.reply_to(message, "😕 Нічого не знайдено. Спробуй іншу назву або частину.")
+        return
+    if mode == 'fix':
+        st = _fix_state.get(message.chat.id)
+        if not st:
+            bot.reply_to(message, "⚠️ Сесія виправлення завершена.")
+            return
+        st['cands'] = cands
+        mk = InlineKeyboardMarkup(row_width=1)
+        for i, name in enumerate(cands):
+            mk.add(InlineKeyboardButton(f"{i+1}. {name[:55]}", callback_data=f"fx_{i}"))
+        mk.add(InlineKeyboardButton("✍️ Ввести іншу назву", callback_data="fx_man"))
+        mk.add(InlineKeyboardButton("❌ Немає правильного (тільки бан)", callback_data="fx_ban"))
+        bot.reply_to(message, f"🔍 Знайдено за '{query}':\nТапни правильний:", reply_markup=mk)
+    elif mode == 'train':
+        st = _train_state.get(message.chat.id)
+        if not st:
+            bot.reply_to(message, "⚠️ Сесія навчання завершена.")
+            return
+        st['cands'] = cands
+        mk = InlineKeyboardMarkup(row_width=1)
+        for i, name in enumerate(cands):
+            mk.add(InlineKeyboardButton(f"{i+1}. {name[:55]}", callback_data=f"trp_{i}"))
+        mk.add(InlineKeyboardButton("✍️ Ввести іншу назву", callback_data="trm"))
+        mk.add(InlineKeyboardButton("❌ Немає правильного", callback_data="trn"))
+        bot.reply_to(message, f"🔍 Знайдено за '{query}':\nТапни правильний:", reply_markup=mk)
+
+
 @bot.message_handler(func=lambda m: m.text and not m.text.startswith('/')
                      and not m.text.lower().startswith('пошук')
                      and not m.text.lower().startswith('правило')
@@ -1920,13 +2015,60 @@ def handle_stop(message):
                      and not m.text.startswith(('📸','🛑','📋','📊','👥','👑')))
 def handle_text_hint(message):
     text = message.text.strip()
-    if text:
+    if not text:
+        return
+
+    # Детект текст-списку: ≥3 рядки АБО ≥2 рядки з "число+одиниця"
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    has_qty = sum(1 for l in lines if re.search(r'\d+\s*(шт|м\b|пог|компл|рул)', l.lower()))
+    is_list = len(lines) >= 3 or has_qty >= 2
+
+    if is_list:
+        # Пропонуємо вибір: підібрати як список або зберегти як підказку
+        _text_pending[message.chat.id] = text
+        mk = InlineKeyboardMarkup()
+        mk.add(InlineKeyboardButton("🔍 Підібрати список", callback_data="txts"),
+               InlineKeyboardButton("💬 Це підказка до фото", callback_data="txth"))
+        bot.reply_to(message,
+            f"Схоже на список ({len(lines)} рядків). Що робити?",
+            reply_markup=mk)
+    else:
+        # Коротка підказка — зберігаємо до наступного фото
         pending_hints[message.chat.id] = text
         bot.reply_to(message, f"💬 Підказка: _{text}_\nТепер кидай фото!", parse_mode="Markdown")
         def clear(cid): pending_hints.pop(cid, None)
         t = threading.Timer(120.0, clear, args=[message.chat.id])
         t.daemon = True
         t.start()
+
+
+@bot.callback_query_handler(func=lambda c: c.data in ("txts", "txth"))
+def handle_text_choice(call):
+    chat_id = call.message.chat.id
+    text = _text_pending.pop(chat_id, None)
+    if not text:
+        bot.answer_callback_query(call.id, "Сесія застаріла")
+        return
+    if call.data == "txts":
+        # Підібрати як список
+        add_to_batch(chat_id, {
+            'type': 'text', 'text': text, 'caption': '',
+            'username': call.from_user.username or str(call.from_user.id),
+        })
+        try:
+            bot.edit_message_text("✅ Прийнято! Обробляю список...",
+                chat_id, call.message.message_id)
+        except Exception:
+            pass
+    else:
+        # Зберегти як підказку до наступного фото
+        pending_hints[chat_id] = text
+        try:
+            bot.edit_message_text(f"💬 Підказка збережена.\nТепер кидай фото!",
+                chat_id, call.message.message_id)
+        except Exception:
+            pass
+    bot.answer_callback_query(call.id)
 
 
 try:
