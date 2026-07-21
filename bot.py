@@ -781,6 +781,21 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
         client_slug  = пос.get('_client_slug')
         client_prefs = пос.get('_client_prefs', {})
         manager_brand = brand_map.get(category)
+        # Якщо Gemini дав неточну категорію — пробуємо суміжні
+        if not manager_brand and brand_map:
+            # Схожі категорії (plastic_ppr ↔ adapters_reducers, push_systems ↔ plastic_ppr)
+            SIMILAR_CATS = {
+                'plastic_ppr': ['adapters_reducers','heating'],
+                'adapters_reducers': ['plastic_ppr','shutoff_valves'],
+                'heating': ['plastic_ppr'],
+                'push_systems': ['plastic_ppr','metal_plastic'],
+                'metal_plastic': ['push_systems','adapters_reducers'],
+                'sewage': ['sewage'],
+            }
+            for similar_cat in SIMILAR_CATS.get(category, []):
+                if similar_cat in brand_map:
+                    manager_brand = brand_map[similar_cat]
+                    break
 
         # РІВЕНЬ 1.5: виробник у самому рядку (шукаємо ТІЛЬКИ в original)
         line_brand = None
@@ -1052,6 +1067,7 @@ def create_excel(результати: list[dict]):
         if r.get('знайдено'):
             suspicious = conf < 70 or kw < 50 or r.get('brand_warning') or r.get('джерело','') in ('⚠️ fallback','🔍 вільний','⚠️ аналог')
             rows.append({
+                '№':            len(rows) + 1,
                 'Артикул':      r.get('артикул', ''),
                 'Наименование': r.get('назва_повна') or r.get('назва', ''),
                 'Кількість':    qty_num, 'Од.': qty_unit,
@@ -1073,6 +1089,7 @@ def create_excel(результати: list[dict]):
                     art, full, price = it.get('artikul',''), it.get('name_full', best), it.get('price','')
                     break
             rows.append({
+                '№': len(rows) + 1,
                 'Артикул': art, 'Наименование': full,
                 'Кількість': qty_num, 'Од.': qty_unit,
                 'Ціна': price, 'Збіг': '—',
@@ -1087,9 +1104,13 @@ def create_excel(результати: list[dict]):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df = pd.DataFrame(rows) if rows else pd.DataFrame(
-            columns=['Артикул','Наименование','Кількість','Од.','Ціна','Збіг','Джерело','Розділ','Чому знайшло','Оригінал'])
+            columns=['№','Артикул','Наименование','Кількість','Од.','Ціна','Збіг','Джерело','Розділ','Чому знайшло','Оригінал'])
         df.to_excel(writer, index=False, sheet_name='Замовлення')
         ws = writer.sheets['Замовлення']
+        # Ширина колонок: № вузька, Наименование широка
+        ws.column_dimensions['A'].width = 4   # №
+        ws.column_dimensions['C'].width = 55  # Наименование
+        ws.column_dimensions['J'].width = 20  # Оригінал
         for i, fl in enumerate(flags, start=2):
             fill = RED if fl == 'nf' else (YELLOW if fl == 'warn' else None)
             if fill:
@@ -1159,7 +1180,9 @@ def process_batch(chat_id: int):
         return
 
     # Прикріплюємо brand_map
-    caption = items[0].get('caption','') if items else ''
+    # Збираємо підказки з УСІХ елементів батчу (менеджер міг додати підказку до кожного фото)
+    all_captions = [it.get('caption','') for it in items if it.get('caption','')]
+    caption = ' | '.join(all_captions)  # об'єднуємо
     brand_map = parse_caption_brands(caption)
     for п in всі_позиції:
         п['_brand_map'] = brand_map
