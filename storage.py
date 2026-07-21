@@ -32,6 +32,7 @@ FLAT_FILES = [
     "not_found_log.json",
     "pending_rules.json",
     "pending_fixes.json",
+    "ocr_corrections.json",
 ]
 CLIENTS_BUNDLE = "clients_data.json"   # вся папка clients/ упакована в один JSON
 
