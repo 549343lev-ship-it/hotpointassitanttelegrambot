@@ -125,6 +125,38 @@ def get_usage_stats() -> str:
         lines.append(f"• {rec['date']} — {rec['username']}: {rec['found']}/{rec['total']}")
     return "\n".join(lines)
 
+OCR_CORRECTIONS_FILE = "ocr_corrections.json"
+
+def load_ocr_corrections() -> dict:
+    """Словник OCR-корекцій: {неправильно: правильно}"""
+    if os.path.exists(OCR_CORRECTIONS_FILE):
+        try:
+            with open(OCR_CORRECTIONS_FILE, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_ocr_correction(wrong: str, right: str):
+    """Зберігає OCR-корекцію."""
+    wrong = wrong.lower().strip()
+    right = right.lower().strip()
+    if not wrong or not right or wrong == right:
+        return
+    d = load_ocr_corrections()
+    d[wrong] = right
+    with open(OCR_CORRECTIONS_FILE, "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False, indent=2)
+
+def get_ocr_prompt_block() -> str:
+    """Блок корекцій для Gemini-промпту."""
+    d = load_ocr_corrections()
+    if not d:
+        return ""
+    lines = [f"  {w} → {r}" for w, r in d.items()]
+    return "\nКОРЕКЦІЇ ПОЧЕРКУ (застосовуй при читанні!):\n" + "\n".join(lines)
+
+
 NOT_FOUND_FILE = "not_found_log.json"
 
 def log_not_found(rows: list):
@@ -616,8 +648,9 @@ def normalize_photo(image_b64: str, caption: str = "", client_prefs: dict = None
         brand_hint = "\n\n⚠️ ВИРОБНИКИ (суворо!):\n" + "\n".join(lines)
         brand_hint += "\nПриклад: каналізація→ostendorf значить ВСЯ каналізація OSTENDORF (НЕ ASG!)"
 
+    ocr_block = get_ocr_prompt_block()
     prompt = f"""Ти — експерт сантехніки України. Рукописний список замовлення.
-ПІДКАЗКА: {caption}{brand_hint}{rules_block}
+ПІДКАЗКА: {caption}{brand_hint}{rules_block}{ocr_block}
 ЗНАННЯ: {ЗНАННЯ}
 
 ЗАВДАННЯ: прочитай кожен рядок, нормалізуй назву (КОРОТКО!), витягни кількість.
@@ -644,8 +677,9 @@ def normalize_text(text: str, caption: str = "") -> list[dict]:
     """Нормалізація текстового запиту (команда 'пошук')."""
     rules = get_rules()
     rules_block = f"\nПравила менеджера:\n{rules}" if rules else ""
+    ocr_block = get_ocr_prompt_block()
     prompt = f"""Ти — експерт сантехніки України. Текстовий запит менеджера.
-ПІДКАЗКА: {caption}{rules_block}
+ПІДКАЗКА: {caption}{rules_block}{ocr_block}
 ЗНАННЯ: {ЗНАННЯ}
 
 ЗАПИТ: {text}
@@ -1887,6 +1921,16 @@ def handle_fix_pick(call):
             f"✅ Навчено!\n{original[:40]}\n❌ {old_name[:50] or '—'}\n✅ {new_name[:60]}",
             call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id, "Збережено")
+        # Пропонуємо виправити OCR якщо original і new_name сильно різняться
+        orig_words = set(re.findall(r'[а-яёіїєґa-z]+', original.lower()))
+        new_words = set(re.findall(r'[а-яёіїєґa-z]+', new_name.lower()))
+        ocr_diff = orig_words - new_words - {'шт','м','мп','компл','рул','пог'}
+        if ocr_diff and admin:
+            bot.send_message(call.message.chat.id,
+                f"🔤 OCR-помилка? Якщо Gemini неправильно прочитав слово — виправ:\n"
+                f"Слова з запиту яких немає в результаті: `{'`, `'.join(list(ocr_diff)[:4])}`\n\n"
+                f"Виправити: `ocr <неправильне> = <правильне>`\nПриклад: `ocr кільця = гільза`",
+                parse_mode="Markdown")
     else:
         n = add_pending_fix({'original': original, 'old_name': old_name or None,
                              'new_name': new_name, 'category': cat, 'client_slug': cslug,
@@ -1898,6 +1942,46 @@ def handle_fix_pick(call):
             f"{original[:40]}\n❌ {old_name[:50] or '—'}\n✅ {new_name[:60]}",
             call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id, "📥 На розгляді")
+
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('ocr '))
+def handle_ocr_correction(message):
+    """
+    Корекція OCR: ocr кільця = гільза
+    Після цього Gemini при читанні "кільця" завжди виправить на "гільза".
+    """
+    rest = message.text[4:].strip()
+    if '=' not in rest:
+        bot.reply_to(message,
+            "Формат: `ocr <неправильно> = <правильно>`\n"
+            "Приклад: `ocr кільця = гільза`\n"
+            "Приклад: `ocr 2S = 25`\n"
+            "Дивитись збережені: `ocr список`",
+            parse_mode="Markdown")
+        return
+    parts = rest.split('=', 1)
+    wrong = parts[0].strip()
+    right = parts[1].strip()
+    if not wrong or not right:
+        bot.reply_to(message, "⚠️ Вкажи і неправильне і правильне слово.")
+        return
+    save_ocr_correction(wrong, right)
+    bot.reply_to(message,
+        f"✅ OCR корекцію збережено:\n`{wrong}` → `{right}`\n\n"
+        f"Тепер Gemini виправлятиме при читанні фото і PDF.",
+        parse_mode="Markdown")
+
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().strip() == 'ocr список')
+def handle_ocr_list(message):
+    d = load_ocr_corrections()
+    if not d:
+        bot.reply_to(message, "📋 Корекцій OCR поки немає.\nДодати: `ocr кільця = гільза`",
+                     parse_mode="Markdown")
+        return
+    lines = [f"  `{w}` → `{r}`" for w, r in d.items()]
+    bot.reply_to(message, f"📋 OCR корекції ({len(d)}):\n" + "\n".join(lines),
+                 parse_mode="Markdown")
 
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('правило'))
