@@ -165,8 +165,9 @@ def get_ocr_prompt_block() -> str:
     d = load_ocr_corrections()
     if not d:
         return ""
-    lines = [f"  {w} → {r}" for w, r in d.items()]
-    return "\nКОРЕКЦІЇ ПОЧЕРКУ (застосовуй при читанні!):\n" + "\n".join(lines)
+    lines = [f"  «{w}» часто насправді «{r}»" for w, r in d.items()]
+    return ("\nЧАСТІ ПОМИЛКИ ЧИТАННЯ ЦЬОГО ПОЧЕРКУ (якщо бачиш ліве — "
+            "придивись, дуже ймовірно це праве):\n" + "\n".join(lines))
 
 
 NOT_FOUND_FILE = "not_found_log.json"
@@ -971,7 +972,11 @@ def parse_caption_brands(caption: str) -> dict:
 КАНАЛІЗАЦІЯ: 90→пиши "87" (без кому!). ASG=HTR; OSTENDORF=HT Safe.
 ф40=умивальник, ф50=ванна/душ, ф110=стояк/унітаз. Компенсаційна муфта="Муфта вставна".
 
-⚠️ PUSH СТРОГО: push_systems ТІЛЬКИ при: пуш/push/натяжн/PEX. Голі розміри = НЕ push!
+⚠️ PUSH МАРКЕРИ: пуш/push/натяжн/PEX/пекс/ГІЛЬЗ (слово "гільзи" в списку = ВСЕ замовлення PUSH,
+бо гільзи існують тільки в натяжному монтажі!). Голі розміри без маркерів = НЕ push.
+⚠️ НЕ додавай гільзи до фітингів сам — бот порахує їх автоматично.
+⚠️ "труба 25 - 40м + ізол" — збережи "+ ізол" в original, НЕ створюй позицій утеплювача:
+бот сам додасть синій+червоний PLM по половині метражу.
 PUSH16≈PPR20. "Кутник натяжний ф25 PUSH RAFTEC", "Трійник натяжний ф25х16х25" (без редукційний!),
 "Муфта натяжна ф20х16", "Гільза натяжна ф16" (НЕ насувна!). Гільзи обов'язкові!
 
@@ -1537,6 +1542,108 @@ def safe_edit(chat_id, msg_id, text):
 # ═══════════════════════════════════════════════════════════════════════════════
 # PROCESS BATCH
 # ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+# АВТО-РОЗГОРТАННЯ: маркер PUSH, "+ізол" → утеплювач, гільзи до PUSH-фітингів
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Труба → утеплювач (від Тараса): 16→18, 20→22, 25→28, 32→35
+INSUL_DIA_MAP = {16: 18, 20: 22, 25: 28, 32: 35, 40: 42}
+
+def _qty_num(qty_str):
+    m = re.search(r'(\d+(?:[.,]\d+)?)', str(qty_str or ''))
+    return float(m.group(1).replace(',', '.')) if m else 0
+
+def expand_push_marker(позиції):
+    """Слово 'гільз' будь-де в списку = все замовлення PUSH (гільзи лише там)."""
+    has_sleeve = any('гільз' in (п.get('original','') + п.get('normalized','')).lower()
+                     for п in позиції)
+    if not has_sleeve:
+        return позиції
+    for п in позиції:
+        if п.get('category') in ('plastic_ppr', 'metal_plastic', 'other'):
+            п['category'] = 'push_systems'
+            n = п.get('normalized', '')
+            if 'push' not in n.lower() and 'натяжн' not in n.lower():
+                п['normalized'] = (n + ' натяжний PUSH').strip()
+    return позиції
+
+def expand_insulation(позиції):
+    """'труба 25 - 40м + ізол' → труба 40м + утеплювач PLM синій 20м + червоний 20м."""
+    out = []
+    for п in позиції:
+        out.append(п)
+        orig = п.get('original', '').lower()
+        qa = п.get('_qa') or build_qa(п)
+        п['_qa'] = qa
+        if qa.get('type') == 'труба' and re.search(r'ізол|изол|утепл', orig):
+            dia = (qa.get('dia') or [None])[0]
+            ins_dia = INSUL_DIA_MAP.get(dia)
+            m_total = _qty_num(п.get('qty'))
+            if ins_dia and m_total > 0:
+                half = m_total / 2
+                half_s = str(int(half)) if half == int(half) else f"{half:.1f}"
+                for color in ('синій', 'червоний'):
+                    out.append({
+                        'original': f"(авто +ізол) утеплювач ф{ins_dia} {color}",
+                        'normalized': f"Утеплювач ламін. для труб ф {ins_dia}х6 {color} PLM",
+                        'qty': f"{half_s} м", 'category': 'insulation',
+                        'type': 'утеплювач', 'dia': [ins_dia],
+                        'section': п.get('section', ''),
+                    })
+    return out
+
+# Трубні виходи фітинга (різьбовий вихід гільзи НЕ потребує)
+def _push_outlets(п):
+    qa = п.get('_qa') or build_qa(п)
+    п['_qa'] = qa
+    typ = qa.get('type')
+    text = f"{п.get('normalized','')} {п.get('original','')}"
+    # Всі числа в групі розмірів NхMхK (порядок і повтори важливі!)
+    g = re.search(r'(\d{2})\s*[хx×]\s*(\d{2})(?:\s*[хx×]\s*(\d{2}))?', text)
+    dims = [int(x) for x in g.groups() if x] if g else list(qa.get('dia') or [])
+    has_thread = bool(qa.get('thread')) or bool(re.search(r'мрз|мрв|рз|вр|різьб', text.lower()))
+    if typ == 'трійник':
+        outs = dims if len(dims) == 3 else (dims * 3)[:3] if dims else []
+    elif typ in ('коліно',):
+        outs = dims if len(dims) == 2 else (dims * 2)[:2] if dims else []
+    elif typ in ('муфта', 'перехід'):
+        if has_thread:
+            outs = dims[:1]                     # МРЗ 25х3/4 → 1 гільза ф25
+        else:
+            outs = dims if len(dims) == 2 else (dims * 2)[:2] if dims else []
+    elif typ == 'заглушка':
+        outs = dims[:1]
+    else:
+        outs = []
+    return outs
+
+def expand_push_sleeves(позиції):
+    """Кожен PUSH-фітинг → гільза на кожен трубний вихід × кількість фітингів.
+    Якщо майстер САМ написав гільзи — не дублюємо."""
+    if any('гільз' in (п.get('original','') + п.get('normalized','')).lower()
+           and (п.get('_qa') or build_qa(п)).get('type') == 'гільза'
+           for п in позиції):
+        return позиції
+    sleeves = {}
+    for п in позиції:
+        if п.get('category') != 'push_systems':
+            continue
+        outs = _push_outlets(п)
+        if not outs:
+            continue
+        n_fit = int(_qty_num(п.get('qty')) or 1)
+        for d in outs:
+            sleeves[d] = sleeves.get(d, 0) + n_fit
+    for d in sorted(sleeves):
+        позиції.append({
+            'original': f"(авто) гільзи ф{d} до PUSH-фітингів",
+            'normalized': f"Гільза натяжна ф {d} PUSH",
+            'qty': f"{sleeves[d]} шт", 'category': 'push_systems',
+            'type': 'гільза', 'dia': [d],
+        })
+    return позиції
+
+
 def process_batch(chat_id: int):
     batch = user_batches.pop(chat_id, None)
     if not batch: return
@@ -1579,6 +1686,11 @@ def process_batch(chat_id: int):
         return
 
     # Прикріплюємо brand_map
+    # Авто-розгортання: PUSH-маркер → +ізол → гільзи
+    всі_позиції = expand_push_marker(всі_позиції)
+    всі_позиції = expand_insulation(всі_позиції)
+    всі_позиції = expand_push_sleeves(всі_позиції)
+
     # Збираємо підказки з УСІХ елементів батчу (менеджер міг додати підказку до кожного фото)
     all_captions = [it.get('caption','') for it in items if it.get('caption','')]
     caption = ' | '.join(all_captions)  # об'єднуємо
@@ -1997,6 +2109,10 @@ def tr_classify(call):
                     clients.client_cache_set_status(cslug, original, old_name, 'banned')
             cache_save(save_orig, {}, r.get('normalized', save_orig), new_name, cat, 100)
             cache_set_status(save_orig, new_name, 'confirmed')
+            if save_orig != original:
+                # Поки OCR читає по-старому — кеш ловить і старе прочитання
+                cache_save(original, {}, save_orig, new_name, cat, 100)
+                cache_set_status(original, new_name, 'confirmed')
             if cslug:
                 clients.client_cache_save(cslug, save_orig, new_name, cat, 100)
                 clients.client_cache_set_status(cslug, save_orig, new_name, 'confirmed')
@@ -2555,7 +2671,7 @@ def handle_manual_input(message):
         corrected = query
 
         # 1) Авто-виявлення OCR-пар: слова що відрізняються
-        w_re = r'[а-яёіїєґa-z]+'
+        w_re = r'[а-яёіїєґa-z]+|\d+(?:[.,/]\d+)?'
         old_w = re.findall(w_re, old_original.lower())
         new_w = re.findall(w_re, corrected.lower())
         wrongs = [w for w in old_w if w not in new_w and len(w) > 1]
