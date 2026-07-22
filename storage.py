@@ -19,6 +19,7 @@ import os, json, base64, hashlib, threading, time
 import urllib.request
 import urllib.error
 
+DATA_DIR  = os.environ.get("DATA_DIR") or ("/var/data" if os.path.isdir("/var/data") else ".")
 GH_TOKEN  = os.environ.get("GITHUB_TOKEN", "")
 GH_REPO   = os.environ.get("GITHUB_DATA_REPO", "549343lev-ship-it/hotpointassitanttelegrambot")
 GH_BRANCH = os.environ.get("GITHUB_DATA_BRANCH", "botdata")
@@ -123,11 +124,12 @@ def _put_remote(path: str, text: str) -> bool:
 
 def _pack_clients() -> str:
     data = {}
-    if os.path.isdir("clients"):
-        for root, _dirs, files in os.walk("clients"):
+    _cdir = os.path.join(DATA_DIR, "clients")
+    if os.path.isdir(_cdir):
+        for root, _dirs, files in os.walk(_cdir):
             for fn in files:
                 p = os.path.join(root, fn)
-                rel = os.path.relpath(p, "clients").replace(os.sep, "/")
+                rel = os.path.relpath(p, _cdir).replace(os.sep, "/")
                 try:
                     with open(p, encoding="utf-8") as f:
                         data[rel] = f.read()
@@ -141,7 +143,7 @@ def _unpack_clients(text: str):
     except Exception:
         return
     for rel, content in data.items():
-        p = os.path.join("clients", rel)
+        p = os.path.join(DATA_DIR, "clients", rel)
         d = os.path.dirname(p)
         if d:
             os.makedirs(d, exist_ok=True)
@@ -156,9 +158,10 @@ def _local_text(path: str):
     """Поточний локальний вміст для шляху в гілці (або None)."""
     if path == CLIENTS_BUNDLE:
         return _pack_clients()
-    if os.path.exists(path):
+    lp = os.path.join(DATA_DIR, path)
+    if os.path.exists(lp):
         try:
-            with open(path, encoding="utf-8") as f:
+            with open(lp, encoding="utf-8") as f:
                 return f.read()
         except Exception:
             return None
@@ -183,7 +186,7 @@ def restore():
         text, sha = _get_remote(path)
         if text is not None:
             try:
-                with open(path, "w", encoding="utf-8") as f:
+                with open(os.path.join(DATA_DIR, path), "w", encoding="utf-8") as f:
                     f.write(text)
                 restored += 1
             except Exception:
