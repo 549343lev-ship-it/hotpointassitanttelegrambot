@@ -25,7 +25,8 @@ import re
 import json
 import time
 
-CLIENTS_DIR = "clients"
+DATA_DIR = os.environ.get("DATA_DIR") or ("/var/data" if os.path.isdir("/var/data") else ".")
+CLIENTS_DIR = os.path.join(DATA_DIR, "clients")
 INDEX_FILE = os.path.join(CLIENTS_DIR, "index.json")
 
 # Активний клієнт на чат (тримається в пам'яті процесу)
