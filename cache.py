@@ -90,8 +90,8 @@ def _fuzzy_match(original: str, brand_map: dict, threshold: float = 0.82) -> dic
         # Перевіряємо виробників
         parts = cached_key.split("::", 1)
         cached_brands = parts[1] if len(parts) > 1 else ""
-        if cached_brands != current_brands:
-            continue
+        if cached_brands not in (current_brands, ""):
+            continue   # '' = запис з навчання, діє для будь-якої підказки
 
         cached_tokens = _tokenize(parts[0])
         if not cached_tokens:
@@ -118,16 +118,19 @@ def cache_lookup(original: str, brand_map: dict) -> dict | None:
     Записи зі статусом 'banned' ігноруються.
     Повертає запис або None.
     """
-    key = _cache_key(original, brand_map)
-    if key in _CACHE:
-        entry = _CACHE[key]
-        if entry.get('status') != 'banned':
+    keys = [_cache_key(original, brand_map)]
+    base = _cache_key(original, {})
+    if base not in keys:
+        keys.append(base)   # confirmed з навчання видимий і при підказках
+    for key in keys:
+        entry = _CACHE.get(key)
+        if entry and entry.get('status') != 'banned' \
+           and not is_banned(original, entry.get('catalog_name','')):
             return entry
-        return None  # banned — не видаємо і не шукаємо нечітко
     result = _fuzzy_match(original, brand_map)
-    if result and result.get('status') == 'banned':
-        return None
-    return result
+    if result and not is_banned(original, result.get('catalog_name','')):
+        return result
+    return None
 
 
 def cache_save(original: str, brand_map: dict, normalized: str,
@@ -184,17 +187,29 @@ def cache_set_status(original: str, catalog_name: str, status: str) -> bool:
 def cache_ban_pair(original: str, catalog_name: str,
                    category: str = "other") -> None:
     """
-    Створює banned-запис навіть якщо пари ще немає в кеші —
-    щоб бот НІКОЛИ не видавав цей товар для цього оригіналу.
+    Банить пару (оригінал → товар) У ВСІХ записах, незалежно від того,
+    з якою підказкою виробників вона була закешована. Якщо живих записів
+    не було — створює бан-маркер на суфіксному ключі (base НЕ перезаписує).
     """
-    key = _cache_key(original, {})
-    _CACHE[key] = {
-        "normalized":   original,
-        "catalog_name": catalog_name,
-        "category":     category,
-        "confidence":   0,
-        "status":       "banned",
-    }
+    key_part = re.sub(r'\s+', ' ', original.lower().strip())
+    touched = False
+    for cached_key, entry in _CACHE.items():
+        if cached_key.split("::")[0] == key_part and \
+           entry.get('catalog_name') == catalog_name:
+            entry['status'] = 'banned'
+            touched = True
+    if not touched:
+        base = _cache_key(original, {})
+        i = 1
+        while f"{base}::ban{i}" in _CACHE:
+            i += 1
+        _CACHE[f"{base}::ban{i}"] = {
+            "normalized":   original,
+            "catalog_name": catalog_name,
+            "category":     category,
+            "confidence":   0,
+            "status":       "banned",
+        }
     _save_cache()
 
 
