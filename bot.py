@@ -311,6 +311,23 @@ def suggest_knowledge_rule(chat_id, original, old_name, new_name):
         print(f"⚠️ suggest_rule: {e}")
 
 
+@bot.callback_query_handler(func=lambda c: c.data.startswith("ocrs_"))
+def handle_ocr_pair_save(call):
+    st = _train_state.get(call.message.chat.id)
+    pairs = (st or {}).get('ocr_pairs') or []
+    idx = int(call.data[5:])
+    if idx >= len(pairs):
+        bot.answer_callback_query(call.id, "Застаріло"); return
+    w, rt = pairs[idx]
+    save_ocr_correction(w, rt)
+    bot.answer_callback_query(call.id, f"Збережено: {w}→{rt}")
+    try:
+        bot.edit_message_text(f"✅ Корекція почерку збережена: «{w}» → «{rt}»",
+            call.message.chat.id, call.message.message_id)
+    except Exception:
+        pass
+
+
 @bot.callback_query_handler(func=lambda c: c.data in ("knok", "knno"))
 def handle_knowledge_decision(call):
     rule = _kn_pending.pop(call.message.chat.id, None)
@@ -1161,6 +1178,15 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
         if client_slug:
             c = clients.client_cache_lookup(client_slug, original,
                                             required_brand_tokens=hard_brand)
+            # Бан адміна (бот-кеш) перекриває клієнтський кеш
+            if c and cache_is_banned(original, c.get('catalog_name','')):
+                c = None
+            # Валідація кешу: діаметр/тип мусять збігатись із запитом
+            if c:
+                _qa_c = пос.get('_qa') or build_qa(пос)
+                пос['_qa'] = _qa_c
+                if not validate_pick(_qa_c, {'name': c['catalog_name']}):
+                    c = None
             if c:
                 результати[i] = {
                     'original': original, 'normalized': normalized,
@@ -1176,6 +1202,13 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
 
         # РІВЕНЬ 3: кеш бота (banned вирізає cache_lookup; перевіряємо hard_brand)
         cached = cache_lookup(original, brand_map)
+        if cached and cache_is_banned(original, cached.get('catalog_name','')):
+            cached = None   # страховка: бан головніший за будь-який запис
+        if cached:
+            _qa_b = пос.get('_qa') or build_qa(пос)
+            пос['_qa'] = _qa_b
+            if not validate_pick(_qa_b, {'name': cached['catalog_name']}):
+                cached = None   # кеш суперечить діаметру/типу запиту — у пошук
         if cached:
             ok = True
             if hard_brand:
@@ -1890,10 +1923,9 @@ def _tr_show_row(chat_id):
     row = st['rows'][st['i']]
     r = last['результати'][row-1]
     mk = InlineKeyboardMarkup(row_width=1)
-    mk.add(InlineKeyboardButton("🔴 Взагалі не той товар", callback_data="trw"),
-           InlineKeyboardButton("🏷 Не той виробник",      callback_data="trb"),
-           InlineKeyboardButton("🟡 Трохи промахнувся",     callback_data="trc"),
-           InlineKeyboardButton("⏭ Пропустити",            callback_data="trs"))
+    mk.add(InlineKeyboardButton("📖 Бот неправильно ПРОЧИТАВ рядок", callback_data="tro"),
+           InlineKeyboardButton("🎯 Прочитав вірно, товар НЕ ТОЙ",   callback_data="trg"),
+           InlineKeyboardButton("⏭ Пропустити",                     callback_data="trs"))
     m = bot.send_message(chat_id,
         f"🎓 Рядок {row} ({st['i']+1}/{len(st['rows'])})\n"
         f"Написано: {r.get('original','')[:50]}\n"
@@ -1901,7 +1933,7 @@ def _tr_show_row(chat_id):
         reply_markup=mk)
     st['msg_id'] = m.message_id
 
-@bot.callback_query_handler(func=lambda c: c.data in ("trw","trb","trc","trs","trn","trm") or c.data.startswith("trp_"))
+@bot.callback_query_handler(func=lambda c: c.data in ("tro","trg","trw","trb","trc","trs","trn","trm") or c.data.startswith("trp_"))
 def tr_classify(call):
     chat_id = call.message.chat.id
     st = _train_state.get(chat_id)
@@ -1957,16 +1989,17 @@ def tr_classify(call):
         if idx >= len(cands):
             bot.answer_callback_query(call.id, "Застаріло"); return
         new_name = cands[idx]
+        save_orig = st.pop('ocr_new_original', None) or original
         if admin:
             if old_name:
                 cache_ban_pair(original, old_name, cat)
                 if cslug:
                     clients.client_cache_set_status(cslug, original, old_name, 'banned')
-            cache_save(original, {}, r.get('normalized', original), new_name, cat, 100)
-            cache_set_status(original, new_name, 'confirmed')
+            cache_save(save_orig, {}, r.get('normalized', save_orig), new_name, cat, 100)
+            cache_set_status(save_orig, new_name, 'confirmed')
             if cslug:
-                clients.client_cache_save(cslug, original, new_name, cat, 100)
-                clients.client_cache_set_status(cslug, original, new_name, 'confirmed')
+                clients.client_cache_save(cslug, save_orig, new_name, cat, 100)
+                clients.client_cache_set_status(cslug, save_orig, new_name, 'confirmed')
             r['назва'] = new_name
             try:
                 bot.edit_message_text(
@@ -1991,6 +2024,50 @@ def tr_classify(call):
             bot.answer_callback_query(call.id, "📥 На розгляді")
         advance(); return
 
+    # ═══ ЕТАП 1: 📖 Бот неправильно ПРОЧИТАВ (OCR-помилка) ═══
+    if call.data == "tro":
+        _manual_wait[chat_id] = {'mode': 'ocr_fix'}
+        bot.answer_callback_query(call.id)
+        bot.send_message(chat_id,
+            f"📖 Бот прочитав з фото:\n«{original[:60]}»\n\n"
+            f"✍️ Напиши як НАСПРАВДІ написано в списку\n"
+            f"(бот запам'ятає почерк і одразу перешукає):",
+            )
+        return
+
+    # ═══ ЕТАП 2: 🎯 Товар не той — кандидати з тих, що бот РОЗГЛЯДАВ ═══
+    if call.data in ("trg", "trw", "trb", "trc"):
+        if old_name and admin:
+            cache_ban_pair(original, old_name, cat)
+            if cslug:
+                clients.client_cache_set_status(cslug, original, old_name, 'banned')
+        seen = [c for c in (r.get('candidates_debug') or []) if c and c != old_name][:6]
+        if not seen:
+            # бот кандидатів не мав — одразу ручний ввід з бази
+            _manual_wait[chat_id] = {'mode': 'train'}
+            bot.answer_callback_query(call.id)
+            bot.send_message(chat_id,
+                "✍️ Бот не мав кандидатів. Напиши назву товару з бази (можна частину):")
+            return
+        st['cands'] = seen
+        mk = InlineKeyboardMarkup(row_width=1)
+        for i2, name in enumerate(seen):
+            mk.add(InlineKeyboardButton(f"{i2+1}. {name[:55]}", callback_data=f"trp_{i2}"))
+        mk.add(InlineKeyboardButton("✍️ Немає тут — ввести з бази", callback_data="trm"))
+        mk.add(InlineKeyboardButton("❌ Немає правильного (бан)",     callback_data="trn"))
+        hdr = "❌ Забанено" if admin else "❌ Позначено"
+        try:
+            bot.edit_message_text(
+                f"🎯 Рядок {row}: {original[:45]}\n{hdr}: {old_name[:55] or '—'}\n\n"
+                f"Бот розглядав ці варіанти — тапни ПРАВИЛЬНИЙ:",
+                chat_id, st.get('msg_id', call.message.message_id), reply_markup=mk)
+        except Exception:
+            m2 = bot.send_message(chat_id, "Тапни правильний:", reply_markup=mk)
+            st['msg_id'] = m2.message_id
+        bot.answer_callback_query(call.id)
+        return
+
+    # (legacy-блок нижче не досяжний для нових кнопок)
     # Причина (trw/trb/trc): адмін банить одразу, користувач — при виборі нового
     if old_name and admin:
         cache_ban_pair(original, old_name, cat)
@@ -2466,6 +2543,52 @@ def handle_manual_input(message):
         mk.add(InlineKeyboardButton("✍️ Ввести іншу назву", callback_data="fx_man"))
         mk.add(InlineKeyboardButton("❌ Немає правильного (тільки бан)", callback_data="fx_ban"))
         bot.reply_to(message, f"🔍 Знайдено за '{query}':\nТапни правильний:", reply_markup=mk)
+    elif mode == 'ocr_fix':
+        # ЕТАП 1: користувач написав як НАСПРАВДІ було в списку
+        st = _train_state.get(message.chat.id)
+        last = last_results.get(message.chat.id)
+        if not st or not last:
+            bot.reply_to(message, "⚠️ Сесія навчання завершена."); return
+        row = st['rows'][st['i']]
+        r = last['результати'][row-1]
+        old_original = r.get('original','')
+        corrected = query
+
+        # 1) Авто-виявлення OCR-пар: слова що відрізняються
+        w_re = r'[а-яёіїєґa-z]+'
+        old_w = re.findall(w_re, old_original.lower())
+        new_w = re.findall(w_re, corrected.lower())
+        wrongs = [w for w in old_w if w not in new_w and len(w) > 1]
+        rights = [w for w in new_w if w not in old_w and len(w) > 1]
+        pairs = list(zip(wrongs, rights))[:3]
+        if pairs:
+            st['ocr_pairs'] = pairs
+            mk = InlineKeyboardMarkup(row_width=1)
+            for pi, (w, rt) in enumerate(pairs):
+                mk.add(InlineKeyboardButton(f"🔤 Запам'ятати: «{w}» → «{rt}»",
+                                            callback_data=f"ocrs_{pi}"))
+            bot.send_message(message.chat.id,
+                "Схоже на помилки почерку — збережу корекції для наступних фото?",
+                reply_markup=mk)
+
+        # 2) Одразу перешукуємо по ПРАВИЛЬНОМУ тексту
+        псевдо = {'original': corrected, 'normalized': corrected,
+                  'category': r.get('category','other')}
+        cands = [c['name'] for c in smart_search(псевдо, top_n=8)]
+        cands = [c for c in cands if c != r.get('назва','')][:7]
+        if not cands:
+            bot.reply_to(message, "😕 По новому тексту нічого. Спробуй ще раз або точнішу назву.")
+            _manual_wait[message.chat.id] = {'mode': 'ocr_fix'}
+            return
+        st['cands'] = cands
+        st['ocr_new_original'] = corrected   # confirm піде на ПРАВИЛЬНИЙ ключ
+        mk = InlineKeyboardMarkup(row_width=1)
+        for i, name in enumerate(cands):
+            mk.add(InlineKeyboardButton(f"{i+1}. {name[:55]}", callback_data=f"trp_{i}"))
+        mk.add(InlineKeyboardButton("✍️ Ввести з бази точніше", callback_data="trm"))
+        mk.add(InlineKeyboardButton("❌ Немає правильного",      callback_data="trn"))
+        bot.reply_to(message,
+            f"🔍 Пошук за «{corrected[:45]}»:\nТапни ПРАВИЛЬНИЙ товар:", reply_markup=mk)
     elif mode == 'train':
         st = _train_state.get(message.chat.id)
         if not st:
