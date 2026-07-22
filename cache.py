@@ -24,7 +24,8 @@ import os
 import re
 import json
 
-CACHE_FILE = "normalization_cache.json"
+DATA_DIR = os.environ.get("DATA_DIR") or ("/var/data" if os.path.isdir("/var/data") else ".")
+CACHE_FILE = os.path.join(DATA_DIR, "normalization_cache.json")
 _CACHE: dict = {}
 
 
