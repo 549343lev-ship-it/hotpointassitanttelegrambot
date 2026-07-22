@@ -957,7 +957,7 @@ def parse_caption_brands(caption: str) -> dict:
 
 
 # ═══ ЗНАННЯ САНТЕХНІКИ (для Gemini) ════════════════════════════════════════
-ЗНАННЯ = """
+DEFAULT_KNOWLEDGE = """# ═══════════ БАЗА ЗНАНЬ БОТА (редагуй сміливо!) ═══════════
 АБРЕВІАТУРИ (PPR): МРЗ=зовн.різьба; МРВ=внутр.; КРЗ=коліно зовн.; КРВ=внутр.
 2 параметри (25х3/4)=муфта/коліно з різьбою; 3 параметри (20х16х20)=трійник. Кран ВВ→МРЗ; ВЗ→МРВ.
 
@@ -988,12 +988,61 @@ PUSH16≈PPR20. "Кутник натяжний ф25 PUSH RAFTEC", "Трійни�
 КОТЕЛ: крани кут.нак.гайкою ВВ+ВЗ (1/2 і 3/4)+фільтри BLACK+МРЗ ф20х1/2 х2+МРЗ ф25х3/4 х2.
 РАДІАТОР бокове: клапан рад.кут.х2+компл.термостат.+МРЗ ф20х1/2+Hidros тип22.
 РАДІАТОР VK: Hidros VK+вент.вставка+термоголовка WHITE+вузол нижн.підкл.1/2х3/4+муфта євроконус ф20х3/4.
+
+# ═══════════ НАБОРКИ (розгортай кожну в повний список позицій!) ═══════════
+НАБОРКА "гребінка/колектор N контурів" (варіант не вказано → В2):
+В1 (дешевий): Колектор Nx контурів 1"х3/4" витратоміри без єврокон. нерж. RAFTEC STEEL х1;
+Євроконус 3/4" х(N×2); Кінцевий елемент 1" латунь нікель RAFTEC х1; Термоголовка М30х1,5
+з виносним датчиком RAFTEC х1; Кран кутовий під термоголовку 3/4" M30х1.5 RAFTEC х1;
+Комплект підключення насоса 1" PCNR03 RAFTEC х1; Насос APE 25/40/130 PWM1 AUTO Termojet х1;
+Кран кульовий з накид. гайкою ВВ DN20 3/4" RAFTEC х2; Муфта PPR МРЗ ф25х3/4 Ekoplastik х2.
+В2 (популярний): Змішувальний вузол 1" нікель SUR03 RAFTEC х1; Колектор Nx конт. RAFTEC STEEL х1;
+Євроконус 3/4" х(N×2); Кінцевий елемент 1" нікель RAFTEC х1; Насос APE 25/40/130 Termojet х1;
+Напівзгін з накидною гайкою DN20 3/4" пара нікель RAFTEC х1; Кран кульовий ВВ DN20 3/4" RAFTEC
+BLACK х1; Кран кульовий ВЗ DN20 3/4" RAFTEC BLACK х1; Муфта PPR МРЗ ф25х3/4 Ekoplastik х2.
+В3 (преміум): Змішувальний вузол 1" латунь LSG-161H RAFTEC GOLD х1; Колектор Nx конт. 1"х3/4"
+витратоміри єврокон. латунь RAFTEC GOLD х1; Кінцевий елемент 1" латунь BRASS RAFTEC х1;
+Насос APE 25/40/130 Termojet х1; Кран кульовий з амер. ВЗ DN25 1" DRBS3 метелик RAFTEC BLACK х1;
+Муфта PPR МРЗ ф32х1 Ekoplastik х1; Муфта PPR МРЗ ф25х3/4 Ekoplastik х1.
+
+НАБОРКА "підключка котла": Кран кут. кульовий з накид. гайкою ВВ 1/2" DRBZ1 RAFTEC х2;
+Кран кут. з накид. гайкою ВЗ DN15 1/2" DRBM1 RAFTEC х2; Кран кут. з накид. гайкою ВВ 3/4"
+DRBZ2 RAFTEC х2; Кран кут. з накид. гайкою ЗВ DN20 3/4" DRBM2 RAFTEC х2; Фільтр груб. очистки
+DN15 1/2" під пломбу BLACK RAFTEC х1; Фільтр DN20 3/4" під пломбу BLACK RAFTEC х1;
+Муфта PPR МРЗ ф20х1/2 Ekoplastik х2; Муфта PPR МРЗ ф25х3/4 Ekoplastik х2.
+
+НАБОРКА "радіатор бокове": Клапан радіаторний кутовий подача 1/2"х1/2" верх латунь нікель
+RAFTEC х2; Комплект підключення радіатора кутовий 1/2" термостатичний латунь нікель RAFTEC х1;
+Муфта PPR МРЗ ф20х1/2 Ekoplastik х1; Радіатор HIDROS тип 22 (розмір з замовлення).
+НАБОРКА "радіатор нижнє/VK": Радіатор HIDROS тип 22 VK; Вентильна вставка Hidros VK х1;
+Термоголовка М30х1,5 WHITE RAFTEC х1; Вузол нижнього підключення кутовий 1/2"х3/4" нікель х1;
+Муфта PPR з євроконусом ф20х3/4 Ekoplastik х1.
+# ═══════════ ДОДАНІ ПРАВИЛА (команда: правило <текст>) ═══════════
 """
+
+def ensure_knowledge_file():
+    """Сідінг: якщо rules.txt порожній/старий — записуємо повну базу,
+    існуючі правила користувача зберігаються в кінці."""
+    existing = ""
+    if os.path.exists(RULES_FILE):
+        try:
+            with open(RULES_FILE, encoding="utf-8") as f:
+                existing = f.read()
+        except Exception:
+            pass
+    if "НАБОРКИ" in existing:
+        return  # база вже засіяна
+    merged = DEFAULT_KNOWLEDGE.rstrip() + "\n"
+    if existing.strip():
+        merged += existing.strip() + "\n"
+    with open(RULES_FILE, "w", encoding="utf-8") as f:
+        f.write(merged)
+    print(f"📖 rules.txt засіяно базою знань ({len(merged)} симв)", flush=True)
+
+ensure_knowledge_file()
 
 
 def normalize_photo(image_b64: str, caption: str = "", client_prefs: dict = None) -> list[dict]:
-    rules = get_rules()
-    rules_block = f"\nПравила менеджера:\n{rules}" if rules else ""
     brand_map = parse_caption_brands(caption)
 
     brand_hint = ""
@@ -1004,8 +1053,9 @@ def normalize_photo(image_b64: str, caption: str = "", client_prefs: dict = None
 
     ocr_block = get_ocr_prompt_block()
     prompt = f"""Ти — експерт сантехніки України. Рукописний список замовлення.
-ПІДКАЗКА: {caption}{brand_hint}{rules_block}{ocr_block}
-ЗНАННЯ: {ЗНАННЯ}
+ПІДКАЗКА: {caption}{brand_hint}{ocr_block}
+БАЗА ЗНАНЬ:
+{get_rules()}
 
 ЗАВДАННЯ: прочитай кожен рядок, нормалізуй назву (КОРОТКО!), витягни кількість.
 JSON масив ТІЛЬКИ:
@@ -1028,12 +1078,11 @@ type=тип виробу ОДНИМ словом; dia=ВСІ діаметри ч
 
 def normalize_text(text: str, caption: str = "") -> list[dict]:
     """Нормалізація текстового запиту (команда 'пошук')."""
-    rules = get_rules()
-    rules_block = f"\nПравила менеджера:\n{rules}" if rules else ""
     ocr_block = get_ocr_prompt_block()
     prompt = f"""Ти — експерт сантехніки України. Текстовий запит менеджера.
-ПІДКАЗКА: {caption}{rules_block}{ocr_block}
-ЗНАННЯ: {ЗНАННЯ}
+ПІДКАЗКА: {caption}{ocr_block}
+БАЗА ЗНАНЬ:
+{get_rules()}
 
 ЗАПИТ: {text}
 
@@ -1053,8 +1102,7 @@ JSON масив ТІЛЬКИ:
 
 def normalize_pdf(pdf_b64: str, caption: str = "") -> list[dict]:
     """Специфікація з PDF (проектна документація) — Gemini читає PDF нативно."""
-    rules = get_rules()
-    rules_block = f"\nПравила менеджера:\n{rules}" if rules else ""
+    ocr_block = get_ocr_prompt_block()
     brand_map = parse_caption_brands(caption)
     brand_hint = ""
     if brand_map:
@@ -1062,8 +1110,9 @@ def normalize_pdf(pdf_b64: str, caption: str = "") -> list[dict]:
         brand_hint = "\n⚠️ ВИРОБНИКИ (суворо!):\n" + "\n".join(lines)
 
     prompt = f"""Ти — експерт сантехніки. Це ПРОЕКТНА СПЕЦИФІКАЦІЯ (PDF, розділ ОВ).
-ПІДКАЗКА: {caption}{brand_hint}{rules_block}
-ЗНАННЯ: {ЗНАННЯ}
+ПІДКАЗКА: {caption}{brand_hint}{ocr_block}
+БАЗА ЗНАНЬ:
+{get_rules()}
 
 ЗАВДАННЯ: знайди таблиці специфікації (Найменування | Тип | Виробник | Од | Кількість).
 Витягни КОЖНУ позицію. Пам'ятай:
@@ -2512,8 +2561,61 @@ def handle_ocr_list(message):
                  parse_mode="Markdown")
 
 
+@bot.message_handler(func=lambda m: m.text and m.text.lower().strip() == 'правила')
+def handle_rules_show(message):
+    text = get_rules()
+    if not text.strip():
+        bot.reply_to(message, "📖 База порожня."); return
+    lines = text.splitlines()
+    chunk, out, total = [], [], 0
+    for i, l in enumerate(lines, 1):
+        row = f"{i}. {l}" if l.strip() and not l.startswith('#') else l
+        if total + len(row) > 3500:
+            out.append("\n".join(chunk)); chunk, total = [], 0
+        chunk.append(row); total += len(row) + 1
+    if chunk: out.append("\n".join(chunk))
+    for part in out[:5]:
+        bot.send_message(message.chat.id, part)
+    bot.send_message(message.chat.id,
+        f"📖 Всього {len(lines)} рядків.\n"
+        f"`правило <текст>` — додати | `правило видалити N` — прибрати\n"
+        f"`оновити правила` — підтягнути з GitHub (гілка botdata)",
+        parse_mode="Markdown")
+
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().strip() == 'оновити правила')
+def handle_rules_pull(message):
+    if not is_admin(message.from_user.id):
+        return
+    try:
+        import storage as _st
+        text, _sha = _st._get_remote("rules.txt")
+        if text:
+            with open(RULES_FILE, "w", encoding="utf-8") as f:
+                f.write(text)
+            bot.reply_to(message, f"✅ Підтягнуто: {len(text.splitlines())} рядків. Діє одразу.")
+        else:
+            bot.reply_to(message, "⚠️ Не вдалося (нема токена або файла в гілці).")
+    except Exception as e:
+        bot.reply_to(message, f"⚠️ {e}")
+
+
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('правило'))
 def handle_rule(message):
+    _m = re.match(r'^правило\s+видалити\s+(\d+)$', message.text.lower().strip())
+    if _m:
+        if not is_admin(message.from_user.id):
+            bot.reply_to(message, "⛔ Тільки адмін."); return
+        n = int(_m.group(1))
+        lines = get_rules().splitlines()
+        if 1 <= n <= len(lines):
+            removed = lines.pop(n-1)
+            with open(RULES_FILE, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+            bot.reply_to(message, f"🗑 Видалено рядок {n}: {removed[:60]}")
+        else:
+            bot.reply_to(message, f"⚠️ Рядка {n} немає (всього {len(lines)}).")
+        return
     rule = message.text[7:].strip()
     if not rule:
         bot.reply_to(message, "Напиши правило після слова 'правило'."); return
