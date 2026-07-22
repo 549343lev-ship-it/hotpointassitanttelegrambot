@@ -58,6 +58,18 @@ except TypeError:
 claude        = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 gemini_client = genai_new.Client(api_key=GEMINI_KEY)
 
+# temperature=0 → однаковий вхід = однаковий вихід (прибирає рандом OCR)
+try:
+    _GEMCFG = genai_types.GenerateContentConfig(temperature=0)
+except Exception:
+    _GEMCFG = None
+
+def _gemini_call(contents):
+    kwargs = {"model": "gemini-2.5-flash", "contents": contents}
+    if _GEMCFG is not None:
+        kwargs["config"] = _GEMCFG
+    return gemini_client.models.generate_content(**kwargs)
+
 CATALOG_PATH = "catalog.json"
 RULES_FILE   = "rules.txt"
 
@@ -265,6 +277,57 @@ def apply_fix(fix: dict):
             clients.client_cache_save(slug, original, new, cat, 100)
             clients.client_cache_set_status(slug, original, new, 'confirmed')
 
+_kn_pending = {}   # chat_id → згенероване правило що чекає ✅/❌
+
+def suggest_knowledge_rule(chat_id, original, old_name, new_name):
+    """
+    Після навчання бот САМ формулює правило для бази знань (rules.txt)
+    і пропонує адміну додати одним тапом. База знань росте розмовою.
+    """
+    try:
+        prompt = (f"Менеджер-сантехнік виправив підбір товару.\n"
+                  f"Написано в замовленні: «{original}»\n"
+                  f"Бот вибрав (НЕПРАВИЛЬНО): «{old_name or '(не знайшов)'}»\n"
+                  f"Правильна відповідь: «{new_name}»\n\n"
+                  f"Сформулюй ОДНЕ коротке правило (до 15 слів) українською, яке допоможе "
+                  f"боту наступного разу зрозуміти такий запит правильно. Правило має бути "
+                  f"загальним (про термін/скорочення/тип), а не про цей конкретний рядок.\n"
+                  f"Якщо корисного загального правила сформулювати не можна — напиши SKIP.\n"
+                  f"Відповідь: тільки текст правила або SKIP.")
+        resp = claude.messages.create(model="claude-sonnet-4-5", max_tokens=100,
+                                      messages=[{"role": "user", "content": prompt}])
+        rule = resp.content[0].text.strip().strip('"«»')
+        if not rule or 'SKIP' in rule.upper() or len(rule) > 200:
+            return
+        _kn_pending[chat_id] = rule
+        mk = InlineKeyboardMarkup()
+        mk.add(InlineKeyboardButton("✅ Додати в базу знань", callback_data="knok"),
+               InlineKeyboardButton("❌ Ні", callback_data="knno"))
+        bot.send_message(chat_id,
+            f"💡 Бот пропонує нове правило з цього виправлення:\n\n_{rule}_\n\n"
+            f"Додати? (потрапить у знання для всіх наступних розпізнавань)",
+            parse_mode="Markdown", reply_markup=mk)
+    except Exception as e:
+        print(f"⚠️ suggest_rule: {e}")
+
+
+@bot.callback_query_handler(func=lambda c: c.data in ("knok", "knno"))
+def handle_knowledge_decision(call):
+    rule = _kn_pending.pop(call.message.chat.id, None)
+    if call.data == "knok" and rule:
+        add_rule(rule)
+        try:
+            bot.edit_message_text(f"✅ Додано в базу знань:\n_{rule}_",
+                call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        except Exception: pass
+        bot.answer_callback_query(call.id, "Збережено")
+    else:
+        try:
+            bot.edit_message_text("❌ Пропущено.", call.message.chat.id, call.message.message_id)
+        except Exception: pass
+        bot.answer_callback_query(call.id)
+
+
 def notify_admin_fix(username, original, old_name, new_name, n):
     try:
         bot.send_message(ADMIN_ID,
@@ -389,7 +452,7 @@ def tokenize(text: str) -> set:
             if float(d2.replace(',', '.')) < 15: return d1
         except Exception: pass
         return m.group(0)
-    t = re.sub(r'(\d+)\s*[хxX×]\s*(\d+(?:[.,]\d+)?)', strip_thick, t)
+    t = re.sub(r'(\d+)\s*[хxX×]\s*(\d+(?:[.,]\d+)?)(?![\d_])', strip_thick, t)
     t = re.sub(r'(8[67])[.,]5', r'\1', t)
     t = re.sub(r'(?<![0-9_])\d+[.,]\d+(?![0-9_])', '', t)
     return set(re.findall(r'[а-яёіїєґa-z]+|[0-9]+_[0-9]+|[0-9]+', t))
@@ -400,6 +463,7 @@ def ensure_tokens():
         print("🔨 Індексую токени...", flush=True)
         for item in CATALOG:
             item['_tokens'] = tokenize(item['name'])
+            item['_attrs'] = parse_attrs(item['name'])
         print("✅ Індексація завершена", flush=True)
         _tokens_built = True
 
@@ -516,6 +580,274 @@ DEFAULT_BRAND_PRIORITY = {
     'metal_plastic':  [['raftec','RAFTEC']],
     'fasteners_sealants': [['eco','ECO']],
 }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# АТРИБУТНИЙ ПОШУК: тип + діаметри + кут + різьба (детермінований, точний)
+# Побудовано на аналізі всіх 48 879 позицій каталогу з GitHub.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Сленг/синоніми → канонічний тип (обидві сторони зводяться до одного)
+TYPE_SYNONYMS = {
+    # коліно
+    'коліно': 'коліно', 'колено': 'коліно', 'кутник': 'коліно', 'кут': 'коліно',
+    'угол': 'коліно', 'уголок': 'коліно', 'відвід': 'коліно', 'отвод': 'коліно',
+    'відведення': 'відведення',  # спец-фітинг з кількома кутами — ОКРЕМИЙ тип!
+    # трійник
+    'трійник': 'трійник', 'тройник': 'трійник', 'трійники': 'трійник',
+    # труба
+    'труба': 'труба', 'труби': 'труба',
+    # муфта / з'єднання
+    'муфта': 'муфта', "з'єднувач": 'муфта', 'зєднувач': 'муфта', 'соединитель': 'муфта',
+    "з'єднання": 'американка', 'американка': 'американка', 'американки': 'американка',
+    # кран
+    'кран': 'кран', 'крани': 'кран', 'вентиль': 'кран', 'вентель': 'кран',
+    # перехід
+    'перехід': 'перехід', 'переход': 'перехід', 'перехідник': 'перехід',
+    'редукція': 'перехід', 'редукци': 'перехід', 'футорка': 'футорка',
+    # інші фітинги
+    'заглушка': 'заглушка', 'хрестовина': 'хрестовина', 'крестовина': 'хрестовина',
+    'ревізія': 'ревізія', 'ревизия': 'ревізія',
+    'ніпель': 'ніпель', 'нипель': 'ніпель', 'штуцер': 'штуцер',
+    'подовжувач': 'подовжувач', 'бочонок': 'подовжувач', 'бочка': 'подовжувач',
+    'згін': 'згін', 'згон': 'згін', 'напівзгін': 'напівзгін',
+    'гільза': 'гільза', 'кільце': 'кільце',  # НЕ синоніми! (перевірено по каталогу)
+    'фланець': 'фланець',
+    # обладнання
+    'клапан': 'клапан', 'засувка': 'засувка', 'затвор': 'затвор',
+    'фільтр': 'фільтр', 'фильтр': 'фільтр',
+    'насос': 'насос', 'радіатор': 'радіатор', 'радиатор': 'радіатор',
+    'колектор': 'колектор', 'гребінка': 'колектор', 'гребенка': 'колектор',
+    'термоголовка': 'термоголовка', 'сифон': 'сифон', 'трап': 'трап',
+    'хомут': 'хомут', 'опора': 'опора', 'скоба': 'скоба',
+    'утеплювач': 'утеплювач', 'мірелон': 'утеплювач', 'мирелон': 'утеплювач',
+    'шланг': 'шланг', 'підводка': 'підводка', 'підведення': 'підводка',
+    'котел': 'котел', 'бойлер': 'водонагрівач', 'водонагрівач': 'водонагрівач',
+    'змішувач': 'змішувач', 'мийка': 'мийка', 'умивальник': 'умивальник',
+    'лічильник': 'лічильник', 'счетчик': 'лічильник',
+    'стрічка': 'стрічка', 'шпилька': 'шпилька', 'дюбель': 'дюбель',
+    'вузол': 'вузол', 'комплект': 'комплект', 'набір': 'комплект',
+    'шафа': 'шафа', 'бак': 'бак', 'ємність': 'бак', 'емкость': 'бак',
+    'группа': 'група', 'група': 'група',
+}
+# Сусідні категорії (Gemini міг промахнутись групою — шукаємо і там)
+SIMILAR_CATS = {
+    'plastic_ppr':      ['adapters_reducers', 'heating'],
+    'adapters_reducers':['plastic_ppr', 'shutoff_valves'],
+    'heating':          ['plastic_ppr', 'shutoff_valves'],
+    'push_systems':     ['metal_plastic', 'plastic_ppr'],
+    'metal_plastic':    ['push_systems', 'adapters_reducers'],
+    'sewage':           ['siphons_fittings'],
+    'siphons_fittings': ['sewage'],
+    'shutoff_valves':   ['adapters_reducers', 'safety_valves'],
+    'underfloor_heating':['metal_plastic', 'push_systems'],
+    'insulation':       ['fasteners_sealants'],
+    'fasteners_sealants':['insulation'],
+}
+
+# ПРАВИЛА КУТІВ ПО СИСТЕМАХ (від Тараса):
+#   каналізація: виріб 87°, майстри пишуть 90 → нормалізуємо 90→87
+#   пайка PPR:   тільки 45 і 90 (як є)
+#   PUSH:        тільки 90, у назвах кута НЕМАЄ → ігноруємо кут взагалі
+def normalize_angle_for_category(angle, category):
+    if angle is None:
+        return None
+    if category == 'sewage' and angle == 90:
+        return 87
+    if category == 'push_systems':
+        return None
+    return angle
+
+# Regex: довші ключі перші (щоб "напівзгін" не з'їдався "згін")
+_TYPE_RE = re.compile(
+    r'(?<![а-яёіїєґa-z])(' +
+    '|'.join(sorted((re.escape(k) for k in TYPE_SYNONYMS), key=len, reverse=True)) +
+    r')(?![а-яёіїєґ])', re.IGNORECASE)
+
+
+def parse_attrs(text: str) -> dict:
+    """
+    Витягує атрибути з назви/запиту:
+      type: канонічний тип ('коліно', 'трійник'...)
+      dia:  список діаметрів [110, 50]
+      angle: кут (87, 45...; 90 нормалізується окремо при матчі)
+      thread: різьба '1_2', '3_4'...
+    """
+    t = text.lower()
+    # Тип — перший знайдений
+    typ = None
+    m = _TYPE_RE.search(t)
+    if m:
+        typ = TYPE_SYNONYMS.get(m.group(1).lower())
+
+    # Кут: "х 87,5°" / "x45°" / "87 град"
+    angle = None
+    ma = re.search(r'[хx]\s*(15|30|45|67|87|90)(?:[.,]5)?\s*[°º]', t)
+    if not ma:
+        ma = re.search(r'(?<![0-9])(15|30|45|67|87|90)(?:[.,]5)?\s*(?:[°º]|град)', t)
+    if not ma:
+        # Без °: "на 90", "х45" (тільки кути ≥45 щоб не плутати з розмірами)
+        ma = re.search(r'(?:\bна\s+|[хx×]\s*)(45|67|87|90)(?:[.,]5)?(?![\d_.,])', t)
+    if ma:
+        angle = int(ma.group(1))
+
+    # Різьба: токенайзер вже дає N_M
+    toks = tokenize(text)
+    thread = next((tk for tk in toks if '_' in tk), None)
+
+    # Діаметри: числові токени 10-630 (реальний діапазон каталогу), без кута
+    dias = []
+    for tk in toks:
+        if tk.isdigit():
+            v = int(tk)
+            if 10 <= v <= 630 and v != angle:
+                dias.append(v)
+    # Кут міг потрапити і як діаметр (напр. 45 і кут 45) — якщо кут є і в dias двічі, ок
+    return {'type': typ, 'dia': sorted(set(dias)), 'angle': angle, 'thread': thread}
+
+
+def _angle_match(qa_angle, item_angle) -> bool:
+    """Строгий матч кута (нормалізація 90→87 для каналізації — у build_qa)."""
+    if qa_angle is None:
+        return True
+    return item_angle == qa_angle
+
+
+def attr_search(qa: dict, top_n: int = 10, brand_tokens: list = None, category: str = None) -> list[dict]:
+    """
+    Детермінований пошук по атрибутах. Tier-и (перший непорожній перемагає):
+      1: тип + всі діаметри точно (set==) + кут          → 100%
+      2: тип + діаметри запиту ⊆ кандидата + кут          → 95%
+      3: тип + діаметри ⊆                                 → 85%
+      4: діаметри ⊆ (без типу — коли тип не розпізнано)  → 70%
+    Порожньо → викликаючий падає на старий keyword_search.
+    """
+    ensure_tokens()
+    if not qa.get('dia') and not qa.get('type'):
+        return []
+    brand_lc = [t.lower() for t in brand_tokens] if brand_tokens else None
+    q_dia = set(qa.get('dia') or [])
+    q_type = qa.get('type')
+    q_thread = qa.get('thread')
+
+    # ІЄРАРХІЯ ПОШУКУ: 1) група товару → 2) виробник → 3) тип → 4) діаметри → 5) кут
+    # Пули: спершу своя категорія, порожньо → сусідні, порожньо → весь каталог
+    if category:
+        pools = [
+            [it for it in CATALOG if it.get('category') == category],
+            [it for it in CATALOG if it.get('category') in SIMILAR_CATS.get(category, [])],
+            CATALOG,
+        ]
+    else:
+        pools = [CATALOG]
+
+    for pool in pools:
+        tiers = {1: [], 2: [], 3: [], 4: []}
+        for item in pool:
+            if brand_lc and not any(t in item['name'].lower() for t in brand_lc):
+                continue
+            ia = item.get('_attrs')
+            if ia is None:
+                continue
+            i_dia = set(ia['dia'])
+            # Різьба: якщо в запиті є — має бути і в кандидаті
+            if q_thread and ia['thread'] != q_thread:
+                continue
+            type_ok = (q_type is not None and ia['type'] == q_type)
+            dia_sub = bool(q_dia) and q_dia.issubset(i_dia)
+            dia_eq  = dia_sub and (q_dia == i_dia)
+            ang_ok  = _angle_match(qa.get('angle'), ia['angle'])
+
+            if type_ok and dia_eq and ang_ok:
+                tiers[1].append(item)
+            elif type_ok and dia_sub and ang_ok:
+                tiers[2].append(item)
+            elif type_ok and dia_sub:
+                tiers[3].append(item)
+            elif dia_sub and q_type is None:
+                tiers[4].append(item)
+
+        _found_in_pool = False
+        for tier, pct in ((1, 100), (2, 95), (3, 85), (4, 70)):
+            cand = tiers[tier]
+            if not cand:
+                continue
+            _found_in_pool = True
+            # Ранжування: менше зайвих діаметрів; серії-слова; (п/з) вниз
+            q_series = {w for w in tokenize(qa.get('_raw','')) if not w.isdigit() and '_' not in w}
+            def score(it):
+                ia = it['_attrs']
+                extra_dia = len(set(ia['dia']) - q_dia)
+                series_hit = len(q_series & it.get('_tokens', set()))
+                pz = 5 if '(п/з)' in it['name'] else 0
+                return (-series_hit, extra_dia, pz, len(it['name']))
+            cand.sort(key=score)
+            out = []
+            for it in cand[:top_n]:
+                c = dict(it)
+                c['_match_pct'] = pct
+                c['_attr_tier'] = tier
+                out.append(c)
+            return out
+        # цей пул порожній у всіх tier → пробуємо наступний (сусідні/весь каталог)
+    return []
+
+
+def build_qa(пос: dict) -> dict:
+    """Атрибути запиту: Gemini-поля + парсинг normalized + original (merge)."""
+    qa = {'type': None, 'dia': [], 'angle': None, 'thread': None}
+    # 1) Прямо від Gemini (найточніше — він бачив фото)
+    g_dia = пос.get('dia')
+    if isinstance(g_dia, list):
+        qa['dia'] = [int(x) for x in g_dia if str(x).isdigit()]
+    if пос.get('type'):
+        qa['type'] = TYPE_SYNONYMS.get(str(пос['type']).lower().strip())
+    if пос.get('angle') not in (None, '', 0):
+        try: qa['angle'] = int(пос['angle'])
+        except Exception: pass
+    if пос.get('thread'):
+        qa['thread'] = str(пос['thread']).replace('/', '_').strip()
+    # 2) Доповнюємо парсингом текстів
+    for txt in (пос.get('normalized',''), пос.get('original','')):
+        if not txt: continue
+        pa = parse_attrs(txt)
+        if not qa['type']: qa['type'] = pa['type']
+        if not qa['dia']: qa['dia'] = pa['dia']
+        if qa['angle'] is None: qa['angle'] = pa['angle']
+        if not qa['thread']: qa['thread'] = pa['thread']
+    qa['_raw'] = f"{пос.get('normalized','')} {пос.get('original','')}"
+    # Правила кутів по системах
+    qa['angle'] = normalize_angle_for_category(qa['angle'], пос.get('category'))
+    return qa
+
+
+def smart_search(пос: dict, top_n: int = 12, brand_tokens: list = None) -> list[dict]:
+    """Атрибутний пошук → fallback на старий keyword_search."""
+    qa = пос.get('_qa')
+    if qa is None:
+        qa = build_qa(пос)
+        пос['_qa'] = qa
+    cand = attr_search(qa, top_n=top_n, brand_tokens=brand_tokens,
+                       category=пос.get('category'))
+    if cand:
+        return cand
+    return keyword_search(пос.get('normalized','') or пос.get('original',''),
+                          top_n=top_n, brand_tokens=brand_tokens)
+
+
+def validate_pick(qa: dict, item: dict) -> bool:
+    """Пост-валідація вибору: діаметри запиту мусять бути в кандидаті; тип збігається."""
+    ia = item.get('_attrs') or parse_attrs(item.get('name',''))
+    q_dia = set(qa.get('dia') or [])
+    if q_dia and not q_dia.issubset(set(ia['dia'])):
+        return False
+    if qa.get('type') and ia.get('type') and qa['type'] != ia['type']:
+        # виняток: відведення ≈ коліно (обидва — повороти)
+        if {qa['type'], ia['type']} != {'коліно', 'відведення'}:
+            return False
+    if qa.get('angle') and not _angle_match(qa['angle'], ia.get('angle')):
+        return False
+    return True
+
 
 def keyword_search(query: str, top_n: int = 12, brand_tokens: list = None) -> list[dict]:
     ensure_tokens()
@@ -655,17 +987,16 @@ def normalize_photo(image_b64: str, caption: str = "", client_prefs: dict = None
 
 ЗАВДАННЯ: прочитай кожен рядок, нормалізуй назву (КОРОТКО!), витягни кількість.
 JSON масив ТІЛЬКИ:
-[{{"original":"що написано","normalized":"коротка назва для пошуку","qty":"кількість","category":"plastic_ppr/sewage/push_systems/shutoff_valves/pumps/radiators_radiatorsvalve/filtration/insulation/other"}}]"""
+[{{"original":"що написано","normalized":"коротка назва","qty":"кількість",
+"category":"plastic_ppr/sewage/push_systems/shutoff_valves/pumps/radiators_radiatorsvalve/filtration/insulation/metal_plastic/adapters_reducers/other",
+"type":"труба/коліно/трійник/муфта/кран/гільза/перехід/...","dia":[110,50],"angle":87,"thread":"1/2 або null"}}]
+type=тип виробу ОДНИМ словом; dia=ВСІ діаметри числами; angle=кут або null; thread=різьба або null."""
 
     try:
         image_bytes = base64.b64decode(image_b64)
-        resp = gemini_client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[
-                genai_types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                genai_types.Part.from_text(text=prompt)
-            ]
-        )
+        resp = _gemini_call([
+            genai_types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+            genai_types.Part.from_text(text=prompt)])
         raw = resp.text.strip().replace('```json','').replace('```','').strip()
         if '[' in raw and ']' in raw:
             raw = raw[raw.index('['):raw.rindex(']')+1]
@@ -686,12 +1017,10 @@ def normalize_text(text: str, caption: str = "") -> list[dict]:
 
 Розбий на позиції, нормалізуй (КОРОТКО!), витягни кількість.
 JSON масив ТІЛЬКИ:
-[{{"original":"...","normalized":"...","qty":"...","category":"plastic_ppr/sewage/push_systems/shutoff_valves/pumps/radiators_radiatorsvalve/filtration/insulation/other"}}]"""
+[{{"original":"...","normalized":"...","qty":"...","category":"...",
+"type":"тип одним словом","dia":[25],"angle":null,"thread":"3/4 або null"}}]"""
     try:
-        resp = gemini_client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[genai_types.Part.from_text(text=prompt)]
-        )
+        resp = _gemini_call([genai_types.Part.from_text(text=prompt)])
         raw = resp.text.strip().replace('```json','').replace('```','').strip()
         if '[' in raw and ']' in raw:
             raw = raw[raw.index('['):raw.rindex(']')+1]
@@ -723,16 +1052,13 @@ def normalize_pdf(pdf_b64: str, caption: str = "") -> list[dict]:
 - Вентиляційне (Vents, повітроводи) включай теж — не знайдеться, це нормально
 
 JSON масив ТІЛЬКИ:
-[{{"original":"як у специфікації","normalized":"коротка назва","qty":"к-ть з од","category":"...","section":"розділ"}}]"""
+[{{"original":"як у специфікації","normalized":"коротка назва","qty":"к-ть з од","category":"...","section":"розділ",
+"type":"тип одним словом","dia":[32],"angle":null,"thread":null}}]"""
     try:
         pdf_bytes = base64.b64decode(pdf_b64)
-        resp = gemini_client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[
-                genai_types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
-                genai_types.Part.from_text(text=prompt)
-            ]
-        )
+        resp = _gemini_call([
+            genai_types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
+            genai_types.Part.from_text(text=prompt)])
         raw = resp.text.strip().replace('```json','').replace('```','').strip()
         if '[' in raw and ']' in raw:
             raw = raw[raw.index('['):raw.rindex(']')+1]
@@ -817,15 +1143,6 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
         manager_brand = brand_map.get(category)
         # Якщо Gemini дав неточну категорію — пробуємо суміжні
         if not manager_brand and brand_map:
-            # Схожі категорії (plastic_ppr ↔ adapters_reducers, push_systems ↔ plastic_ppr)
-            SIMILAR_CATS = {
-                'plastic_ppr': ['adapters_reducers','heating'],
-                'adapters_reducers': ['plastic_ppr','shutoff_valves'],
-                'heating': ['plastic_ppr'],
-                'push_systems': ['plastic_ppr','metal_plastic'],
-                'metal_plastic': ['push_systems','adapters_reducers'],
-                'sewage': ['sewage'],
-            }
             for similar_cat in SIMILAR_CATS.get(category, []):
                 if similar_cat in brand_map:
                     manager_brand = brand_map[similar_cat]
@@ -885,12 +1202,12 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
         brand_warning = ''
 
         if hard_brand:
-            кандидати = keyword_search(normalized, top_n=12, brand_tokens=hard_brand)
+            кандидати = smart_search(пос, top_n=12, brand_tokens=hard_brand)
             if кандидати:
                 required_brand = hard_brand[0]
                 джерело = '👨 менеджер' if manager_brand else '📝 з рядка'
             else:
-                кандидати = keyword_search(normalized, top_n=12)
+                кандидати = smart_search(пос, top_n=12)
                 brand_warning = f"⚠️ {hard_brand[0]} відсутній для цієї позиції"
                 джерело = '⚠️ fallback'
         else:
@@ -898,7 +1215,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
             for brand, _cnt in client_prefs.get('by_category', {}).get(category, [])[:3]:
                 bt = BRAND_TOKENS.get(brand)
                 if not bt: continue
-                кандидати = keyword_search(normalized, top_n=12, brand_tokens=bt)
+                кандидати = smart_search(пос, top_n=12, brand_tokens=bt)
                 if кандидати:
                     required_brand = bt[0]
                     джерело = '👤 профіль клієнта'
@@ -906,13 +1223,13 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
             # РІВЕНЬ 4б: дефолти
             if not кандидати:
                 for pt in DEFAULT_BRAND_PRIORITY.get(category, []):
-                    кандидати = keyword_search(normalized, top_n=12, brand_tokens=pt)
+                    кандидати = smart_search(пос, top_n=12, brand_tokens=pt)
                     if кандидати:
                         required_brand = pt[0]
                         джерело = '⚙️ дефолт'
                         break
             if not кандидати:
-                кандидати = keyword_search(normalized, top_n=12)
+                кандидати = smart_search(пос, top_n=12)
                 джерело = '🔍 вільний'
 
         if not кандидати:
@@ -944,8 +1261,11 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
             top_toks = top.get('_tokens', set())
             gap_ok = (len(кандидати) == 1 or
                       top.get('_match_pct', 0) - кандидати[1].get('_match_pct', 0) >= 25)
-            if (q_nums and q_nums.issubset(top_toks)
-                    and top.get('_match_pct', 0) >= 95 and gap_ok):
+            _qa_auto = пос.get('_qa') or build_qa(пос)
+            attr_perfect = (top.get('_attr_tier') == 1 and validate_pick(_qa_auto, top))
+            if attr_perfect or (q_nums and q_nums.issubset(top_toks)
+                    and top.get('_match_pct', 0) >= 95 and gap_ok
+                    and validate_pick(_qa_auto, top)):
                 результати[i] = {
                     'original': original, 'normalized': normalized,
                     'знайдено': True, 'назва': top['name'],
@@ -983,6 +1303,18 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
             if r.get('знайдено') and r.get('номер_кандидата'):
                 n = max(0, min(int(r['номер_кандидата'])-1, len(пос['candidates'])-1))
                 found = пос['candidates'][n]
+                # ПОСТ-ВАЛІДАЦІЯ: Claude міг впевнено помилитись — код перевіряє
+                _qa = пос.get('_qa') or build_qa(пос)
+                if not validate_pick(_qa, found):
+                    _alt = next((c for c in пос['candidates'] if validate_pick(_qa, c)), None)
+                    if _alt is not None:
+                        found = _alt
+                        r['confidence'] = min(int(r.get('confidence', 0)), 75)
+                        r['reason'] = (r.get('reason','') + ' | ⚙️ авто-заміна: валідація діаметр/тип')[:120]
+                    else:
+                        r['знайдено'] = False
+                        r['fail_reason'] = 'валідація: діаметр/тип запиту відсутній у всіх кандидатах'
+            if r.get('знайдено') and r.get('номер_кандидата'):
                 reason = r.get('reason', '')
                 if пос.get('brand_warning'):
                     reason = f"{пос['brand_warning']}. {reason}"
@@ -1022,7 +1354,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
         if retry_позиції:
             retry_batch = []
             for пос in retry_позиції:
-                nc = keyword_search(пос['normalized'], top_n=12)
+                nc = smart_search(пос, top_n=12)
                 nc = [c for c in nc if not cache_is_banned(пос['original'], c['name'])]
                 if re.search(r'муфт|перех|редукц', пос['normalized'].lower()):
                     nc = [c for c in nc if 'шрабер' not in c['name'].lower()]
@@ -1642,6 +1974,7 @@ def tr_classify(call):
                     chat_id, st.get('msg_id', call.message.message_id))
             except Exception: pass
             bot.answer_callback_query(call.id, "✅ Збережено")
+            suggest_knowledge_rule(chat_id, original, old_name, new_name)
         else:
             n = add_pending_fix({'original': original, 'old_name': old_name or None,
                                  'new_name': new_name, 'category': cat,
@@ -1921,6 +2254,8 @@ def handle_fix_pick(call):
             f"✅ Навчено!\n{original[:40]}\n❌ {old_name[:50] or '—'}\n✅ {new_name[:60]}",
             call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id, "Збережено")
+        # 💡 Бот сам формулює правило з цього виправлення
+        suggest_knowledge_rule(call.message.chat.id, original, old_name, new_name)
         # Пропонуємо виправити OCR якщо original і new_name сильно різняться
         orig_words = set(re.findall(r'[а-яёіїєґa-z]+', original.lower()))
         new_words = set(re.findall(r'[а-яёіїєґa-z]+', new_name.lower()))
