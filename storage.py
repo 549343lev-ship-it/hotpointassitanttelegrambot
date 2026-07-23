@@ -40,6 +40,14 @@ CLIENTS_BUNDLE = "clients_data.json"   # вся папка clients/ упаков
 _sha_map = {}        # path у гілці → sha останньої відомої версії
 _pushed_hash = {}    # path → md5 останнього запушеного вмісту
 _lock = threading.Lock()
+# FIX #11: окремий lock на запис кожного файлу — запобігає race condition
+# коли два менеджери навчають одночасно і один перезаписує зміни іншого
+_file_locks: dict = {}   # path → threading.Lock()
+
+def _get_file_lock(path: str) -> threading.Lock:
+    if path not in _file_locks:
+        _file_locks[path] = threading.Lock()
+    return _file_locks[path]
 
 
 # ─── HTTP до GitHub API ──────────────────────────────────────────────────────
@@ -205,10 +213,11 @@ def restore():
 
 
 def save_now():
-    """Пушить усі змінені файли зараз."""
+    """FIX #11: Пушить усі змінені файли зараз із per-file локами."""
     if not GH_TOKEN:
         return
     with _lock:
+        paths_to_push = []
         for path in FLAT_FILES + [CLIENTS_BUNDLE]:
             text = _local_text(path)
             if text is None:
@@ -216,8 +225,21 @@ def save_now():
             h = _md5(text)
             if _pushed_hash.get(path) == h:
                 continue   # не змінилось
-            if _put_remote(path, text):
-                _pushed_hash[path] = h
+            paths_to_push.append((path, text, h))
+
+    # Пушимо поза глобальним _lock (щоб не блокувати весь storage на час HTTP)
+    # але з per-file локом — щоб два потоки не пушили один файл одночасно
+    for path, text, h in paths_to_push:
+        with _get_file_lock(path):
+            # Перечитуємо локальний вміст — міг змінитись поки чекали на lock
+            fresh_text = _local_text(path)
+            if fresh_text is None:
+                continue
+            fresh_h = _md5(fresh_text)
+            if _pushed_hash.get(path) == fresh_h:
+                continue   # хтось вже запушив поки ми чекали
+            if _put_remote(path, fresh_text):
+                _pushed_hash[path] = fresh_h
                 print(f"💾 storage: збережено {path}", flush=True)
 
 
