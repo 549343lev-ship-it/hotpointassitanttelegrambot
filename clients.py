@@ -295,8 +295,9 @@ def client_cache_lookup(slug: str, original: str,
 
 
 def client_cache_save(slug: str, original: str, catalog_name: str,
-                      category: str, confidence: int):
-    """Зберігає збіг у кеш клієнта зі статусом 'auto' (confidence >= 85)."""
+                      category: str, confidence: int,
+                      artikul: str = "", price: float = 0.0):
+    """FIX #5: Зберігає збіг у кеш клієнта разом з ціною та артикулом."""
     if confidence < 85:
         return
     client_dir = os.path.join(CLIENTS_DIR, slug)
@@ -328,6 +329,8 @@ def client_cache_save(slug: str, original: str, catalog_name: str,
         "category":     category,
         "confidence":   confidence,
         "status":       "auto",
+        "artikul":      artikul,   # FIX #5
+        "price":        price,     # FIX #5
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False, indent=2)
