@@ -70,8 +70,8 @@ def _gemini_call(contents):
         kwargs["config"] = _GEMCFG
     return gemini_client.models.generate_content(**kwargs)
 
-CATALOG_PATH = "catalog.json"
 DATA_DIR = os.environ.get("DATA_DIR") or ("/var/data" if os.path.isdir("/var/data") else ".")
+CATALOG_PATH = os.path.join(DATA_DIR, "catalog.json")  # зберігається на диску
 RULES_FILE   = os.path.join(DATA_DIR, "rules.txt")
 
 # 💾 Постійне сховище (гілка GitHub botdata): відновлюємо дані ДО імпорту кешу
@@ -282,35 +282,39 @@ def apply_fix(fix: dict):
 _kn_pending = {}   # chat_id → згенероване правило що чекає ✅/❌
 
 def suggest_knowledge_rule(chat_id, original, old_name, new_name):
-    """
-    Після навчання бот САМ формулює правило для бази знань (rules.txt)
-    і пропонує адміну додати одним тапом. База знань росте розмовою.
-    """
-    try:
-        prompt = (f"Менеджер-сантехнік виправив підбір товару.\n"
-                  f"Написано в замовленні: «{original}»\n"
-                  f"Бот вибрав (НЕПРАВИЛЬНО): «{old_name or '(не знайшов)'}»\n"
-                  f"Правильна відповідь: «{new_name}»\n\n"
-                  f"Сформулюй ОДНЕ коротке правило (до 15 слів) українською, яке допоможе "
-                  f"боту наступного разу зрозуміти такий запит правильно. Правило має бути "
-                  f"загальним (про термін/скорочення/тип), а не про цей конкретний рядок.\n"
-                  f"Якщо корисного загального правила сформулювати не можна — напиши SKIP.\n"
-                  f"Відповідь: тільки текст правила або SKIP.")
-        resp = claude.messages.create(model="claude-sonnet-4-5", max_tokens=100,
-                                      messages=[{"role": "user", "content": prompt}])
-        rule = resp.content[0].text.strip().strip('"«»')
-        if not rule or 'SKIP' in rule.upper() or len(rule) > 200:
-            return
-        _kn_pending[chat_id] = rule
-        mk = InlineKeyboardMarkup()
-        mk.add(InlineKeyboardButton("✅ Додати в базу знань", callback_data="knok"),
-               InlineKeyboardButton("❌ Ні", callback_data="knno"))
-        bot.send_message(chat_id,
-            f"💡 Бот пропонує нове правило з цього виправлення:\n\n_{rule}_\n\n"
-            f"Додати? (потрапить у знання для всіх наступних розпізнавань)",
-            parse_mode="Markdown", reply_markup=mk)
-    except Exception as e:
-        print(f"⚠️ suggest_rule: {e}")
+    """FIX #10: Запускає Claude у фоновому треді — не блокує callback-хендлер."""
+    def _run():
+        try:
+            prompt = (f"Менеджер-сантехнік виправив підбір товару.\n"
+                      f"Написано в замовленні: «{original}»\n"
+                      f"Бот вибрав (НЕПРАВИЛЬНО): «{old_name or '(не знайшов)'}»\n"
+                      f"Правильна відповідь: «{new_name}»\n\n"
+                      f"Сформулюй ОДНЕ коротке правило (до 15 слів) українською, яке допоможе "
+                      f"боту наступного разу зрозуміти такий запит правильно. Правило має бути "
+                      f"загальним (про термін/скорочення/тип), а не про цей конкретний рядок.\n"
+                      f"Якщо корисного загального правила сформулювати не можна — напиши SKIP.\n"
+                      f"Відповідь: тільки текст правила або SKIP.")
+            resp = claude.messages.create(
+                model="claude-sonnet-4-6",   # оновлено на актуальну модель
+                max_tokens=100,
+                timeout=15,                   # таймаут щоб не зависало нескінченно
+                messages=[{"role": "user", "content": prompt}]
+            )
+            rule = resp.content[0].text.strip().strip('"«»')
+            if not rule or 'SKIP' in rule.upper() or len(rule) > 200:
+                return
+            _kn_pending[chat_id] = rule
+            mk = InlineKeyboardMarkup()
+            mk.add(InlineKeyboardButton("✅ Додати в базу знань", callback_data="knok"),
+                   InlineKeyboardButton("❌ Ні", callback_data="knno"))
+            bot.send_message(chat_id,
+                f"💡 Бот пропонує нове правило з цього виправлення:\n\n_{rule}_\n\n"
+                f"Додати? (потрапить у знання для всіх наступних розпізнавань)",
+                parse_mode="Markdown", reply_markup=mk)
+        except Exception as e:
+            print(f"⚠️ suggest_rule: {e}")
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("ocrs_"))
@@ -455,6 +459,28 @@ before = len(CATALOG)
 CATALOG = [c for c in CATALOG if 'виведено з асортименту' not in c.get('name','').lower()]
 if len(CATALOG) < before:
     print(f"🧹 Видалено {before - len(CATALOG)} виведених", flush=True)
+
+# FIX #3: Індекс name→item (O(1) замість O(n) при пошуку ціни/артикулу для кешованих результатів)
+CATALOG_INDEX: dict = {item['name']: item for item in CATALOG}
+
+# FIX #2: Команда /reload_catalog — оновлює каталог без перезапуску
+def reload_catalog():
+    global CATALOG, CATALOG_INDEX, _tokens_built
+    print("🔄 Перезавантаження каталогу...", flush=True)
+    new_catalog = build_catalog_from_xlsx()
+    if not new_catalog:
+        return False
+    new_catalog = [c for c in new_catalog if 'виведено з асортименту' not in c.get('name','').lower()]
+    CATALOG = new_catalog
+    CATALOG_INDEX = {item['name']: item for item in CATALOG}
+    _tokens_built = False  # скинути токени — перебудуються при наступному запиті
+    try:
+        with open(CATALOG_PATH, "w", encoding="utf-8") as f:
+            json.dump(CATALOG, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"⚠️ reload_catalog: {e}")
+    print(f"✅ Каталог перезавантажено: {len(CATALOG)} позицій", flush=True)
+    return True
 
 # Індексуємо токени (lazy)
 _tokens_built = False
@@ -854,7 +880,7 @@ def smart_search(пос: dict, top_n: int = 12, brand_tokens: list = None) -> li
 
 
 def validate_pick(qa: dict, item: dict) -> bool:
-    """Пост-валідація вибору: діаметри запиту мусять бути в кандидаті; тип збігається."""
+    """Пост-валідація вибору: діаметри, тип, кут і різьба мусять збігатись."""
     ia = item.get('_attrs') or parse_attrs(item.get('name',''))
     q_dia = set(qa.get('dia') or [])
     if q_dia and not q_dia.issubset(set(ia['dia'])):
@@ -864,6 +890,11 @@ def validate_pick(qa: dict, item: dict) -> bool:
         if {qa['type'], ia['type']} != {'коліно', 'відведення'}:
             return False
     if qa.get('angle') and not _angle_match(qa['angle'], ia.get('angle')):
+        return False
+    # FIX #6: перевірка різьби — 1/2 і 3/4 не взаємозамінні
+    q_thread = qa.get('thread')
+    i_thread = ia.get('thread')
+    if q_thread and i_thread and q_thread != i_thread:
         return False
     return True
 
@@ -957,58 +988,163 @@ def parse_caption_brands(caption: str) -> dict:
     return result
 
 
-# ═══ ЗНАННЯ САНТЕХНІКИ (для Gemini) ════════════════════════════════════════
-DEFAULT_KNOWLEDGE = """# ═══════════ БАЗА ЗНАНЬ БОТА v2 (редагуй сміливо — діє одразу) ═══════════
+# ═══ ЗНАННЯ САНТЕХНІКИ (для Gemini OCR) ════════════════════════════════════
+DEFAULT_KNOWLEDGE = """# ═══════════ БАЗА ЗНАНЬ БОТА v12 (Повний Інженерний Сантехнічний Довідник) ═══════════
 
 ## АБРЕВІАТУРИ ФІТИНГІВ (PPR з латунню)
 МРЗ/МРН = муфта різьба ЗОВНІШНЯ | МРВ = внутрішня | КРЗ/КРН = коліно зовн. | КРВ = внутр.
 2 параметри (25х3/4) = муфта/коліно з різьбою; 3 параметри (20х16х20) = ТРІЙНИК.
 Логіка різьб: Кран ВВ → потрібна МРЗ; Кран ВЗ → МРВ. Діаметр 16 → скоріш PUSH.
-ЗР = зовнішня різьба (=МРЗ) | ВР = внутрішня (=МРВ). Ду15/Dn15=1/2 | Ду20=3/4 | Ду25=1 | Ду32=1 1/4 | Ду50=2.
+ЗР = зовнішня різьба (=МРЗ) | ВР = внутрішня (=МРВ).
+Ду15/Dn15=1/2" | Ду20=3/4" | Ду25=1" | Ду32=1 1/4" | Ду40=1 1/2" | Ду50=2".
+Різьби: 1/4"=DN8 | 3/8"=DN10 | 1/2"=DN15 | 3/4"=DN20 | 1"=DN25 | 1 1/4"=DN32 | 1 1/2"=DN40 | 2"=DN50.
 
 ## НОРМАЛІЗАЦІЯ (пиши КОРОТКО, не вигадуй товщину стінки/PN!)
 "Труба PPR Fiber ф25 RAFTEC" | "Коліно канал ф110 87 OSTENDORF" | "Муфта PPR МРЗ 25х3/4 Ekoplastik"
 Виробника пиши ТІЛЬКИ якщо він у підказці менеджера або в самому рядку — інакше НЕ додавай!
 
+## ІЄРАРХІЯ ВИРОБНИКІВ (пріоритет підбору)
+Пайка PPR: Ekoplastik → ASG → Raftec → FV plast → PLM
+PUSH: Raftec → Rehau
+Крани запірні: Raftec Gold → Raftec Black → PLM Strong → PLM Base
+Бойлери: Tatra-line → Tesy → NovaTec
+Перехідники (нікель-пріоритет): Raftec (нікель) → Raftec Gold (жовта) → LEXLINE жовта → LEXLINE нікель
+Насоси: Termojet → Tatra-line → Grundfos → Raftec → Wilo → Lider
+Каналізація: ASG → Ostendorf → PLM
+Радіатори: Idmar → Biasi → Hidros → Purmo
+Металопластик: труба Raftec→Herz | зажимні фітинги Raftec | прес-фітинги Tweetop
+Кріплення (хомути): ECO → Raftec → Walraven
+Утеплювач: PLM → Теплоизол → Сірий утеплитель → K-FLEX (п/з)
+Шланги: Raftec Rhein в поліаміді → Raftec Rhein → MATEU (Spain)
+Колектори ТП: Raftec Brass Line (латунь) → Raftec SS (нерж) → PLM Brass → PLM SS
+Очистка води: Ecosoft
+Ущільнення: пакля+паста ТІЛЬКИ UNIPAK | змазка ТІЛЬКИ Glidex | прокладки PLM
+⚠️ ПОДОВЖУВАЧІ різьби: ТІЛЬКИ ХРОМОВАНІ!
+Котли газові: Biasi, Teknix | електричні: Tatra-line | твердопаливні: ДТМ
+
+## КРОС-БРЕНДИ (автозаміна чужих брендів)
+Fado/Valtec/Saci/Solomon → Raftec
+KAN/Tece/Aquapex/Purmo PEX → Raftec PUSH
+Shengde/Wavin/Pilsa/Kalde → Ekoplastik/ASG
+Ostendorf Silent/Skolan → ASG S-LINE
+Giacomini (термостатика) → Raftec
+
 ## ТРУБИ PPR (пайка)
-Опалення/гаряча → Fiber (RAFTEC) / Faser (ASG) / EVO (Ekoplastik). Холодна → PN20.
-⚠️ Ekoplastik: ВСІ труби = серія EVO (Fiber Basalt і STABI виведено; "Stabi Plus" у проектах → теж EVO).
+Діаметри: 20(розводка), 25(стояки/котел), 32(магістралі), 40, 50, 63, 75, 90, 110 мм.
+Кути пайки: тільки 45° і 90°.
+Опалення/гаряча → Fiber (RAFTEC) / Faser (ASG) / Fiber Basalt Plus (Ekoplastik). Холодна → PN20.
+⚠️ Ekoplastik: ВСІ труби опалення = Fiber Basalt Plus (EVO і Stabi виведено; "Stabi Plus" у проектах → Fiber Basalt Plus).
+Raftec: Fiber (армована) / PN20. ASG: Faser (армована) / PN20.
+Правило: "труба PPR 25" без уточнення → для опалення/ГВС підбирати армовану, ХВС → PN20.
 Редукція PPR: Ekoplastik = "Муфта перехідна PPR ВВ фAхB"; RAFTEC = "Муфта редукційна". Шрабер = інструмент, НЕ фітинг!
-Кути пайки: тільки 45 і 90 (як написано).
+ВЗ-фітинги PPR: ТІЛЬКИ Ekoplastik та ASG, ТІЛЬКИ діаметри 20/25/32 мм!
 
 ## КАНАЛІЗАЦІЯ
-Кут 90 у майстрів = виріб 87 → пиши "87" (БЕЗ ,5!). Кути існують: 15/30/45/67/87.
-ASG = серія HTR | OSTENDORF = HT Safe | безшумна = S-LINE.
-ф40 = умивальник, ф50 = ванна/душ, ф110 = унітаз/стояк.
-Компенсаційна/надвижна муфта = "Муфта вставна". "Відведення" (2-3 кути в назві) — окремий виріб.
+Внутрішня діаметри: 32(умивальник), 40(умивальник), 50(ванна/душ/пралка), 75(збірний стояк), 110(унітаз/стояк).
+Зовнішня діаметри: 110, 160, 200, 250, 300 мм.
+Кут 90 у майстрів = виріб 87 → пиши "87" (БЕЗ ,5!). Кути: 15/30/45/67/87.
+ASG = серія HTR | Ostendorf = HT Safe | безшумна: ASG=S-LINE, Ostendorf=Skolan | ПВХ помаранчева = зовнішня.
+Компенсаційна/надвижна муфта = "Муфта вставна" (обов'язкова на стояку кожні ~1.5м).
+"Відведення" (2-3 кути в назві) — окремий виріб від коліна.
+Gebo = затискна муфта Quick для сталевих труб: QA(зовн.різьба), QI(внутр.різьба), QO(труба-труба), QT(трійник), DSW(обойма).
+Аератор (вакуумний клапан): 50 та 110 мм. Зворотний клапан: 50, 110, 160 мм. Ревізія ф110.
+Редукція ексцентрик: рівна 110/110/110 або редукційна 110/110/50.
+
+## ASG INOX (нержавійка ПРЕС) та мідні труби
+Діаметри: 15, 18, 22, 28, 35, 42, 54, 76, 89, 108 мм. Кути: 45° і 90°.
+Прес нержавійка/мідь: ASG INOX / Sanha / Viega.
 
 ## PUSH (натяжна система, PEX-A)
-МАРКЕРИ: пуш/push/натяжн/PEX/пекс/ГІЛЬЗ — слово "гільзи" в списку означає ВСЕ замовлення PUSH
-(гільзи існують тільки тут!). Голі розміри БЕЗ маркерів = НЕ push.
-PUSH16≈PPR20, PUSH20≈PPR25. Кут у назвах PUSH відсутній — ігноруй градуси.
-Назви: "Кутник натяжний ф25х25 PUSH RAFTEC", "Трійник натяжний ф25х16х25" (БЕЗ слова редукційний!),
-"Муфта натяжна ф20х16", "Гільза натяжна ф16" (НЕ насувна!). Гільза ≠ кільце (прес-кільце — інший товар).
-⚠️ НЕ додавай гільзи до фітингів сам — бот порахує автоматично (трійник=3 трубні виходи,
-коліно=2, муфта=2, різьбовий вихід МРЗ/МРВ гільзи не потребує).
+МАРКЕРИ: пуш/push/натяжн/PEX/пекс/ГІЛЬЗ — слово "гільзи" в списку = ВСЕ замовлення PUSH.
+Голі розміри БЕЗ маркерів = НЕ push. "⊥110" = трійник каналізації, НЕ натяжний!
+Відповідність PUSH↔PPR: PUSH16≈PPR20 | PUSH20≈PPR25 | PUSH25≈PPR32 | PUSH32≈PPR40 | PUSH40≈PPR50.
+Кути PUSH: тільки 90° (45° у PUSH не існує!). ПЕ/ПНД затискні: 20–63 мм.
+Назви: "Кутник натяжний ф25х25 PUSH RAFTEC", "Трійник натяжний ф25х16х25", "Муфта натяжна ф20х16", "Гільза натяжна ф16".
+Гільза натяжна ≠ прес-кільце ≠ насувна гільза!
+⚠️ НЕ додавай гільзи до фітингів сам — бот порахує автоматично ПІСЛЯ підбору:
+  трійник=3 трубних виходи; коліно=2; муфта без різьби=2; МРЗ/МРВ=1 (різьбовий вихід гільзи НЕ потребує);
+  заглушка=1; євроконус PUSH=1 (зі сторони PEX-труби).
 
 ## "+ ІЗОЛ" (утеплювач до труби)
-"труба 25 - 40м + ізол" → збережи "+ ізол" в original труби, НЕ створюй позицій утеплювача:
-бот сам додасть PLM синій + червоний по половині метражу.
-Мапінг діаметрів труба→утеплювач: 16→18, 20→22, 25→28, 32→35, 40→42. Мірелон = утеплювач (Thermaflex FRZ теж ок).
+"труба 25 - 40м + ізол" → збережи "+ ізол" в original, НЕ створюй позицій утеплювача вручну:
+бот сам додасть PLM синій + червоний по 50% метражу.
+Діаметри: ф16→ф18х6 | ф20→ф22х6 | ф25→ф28х6 | ф32→ф35х6 | ф40→ф42х6 мм.
 
 ## КАРАКУЛІ МАЙСТРІВ (малюють замість слів)
 ⊥ / Т-подібна вилка (навіть під кутом) = ТРІЙНИК: "⊥110х110х90" → Трійник канал 110х110 87.
 ∠ / L / дві з'єднані лінії = КОЛІНО: "∠110х45" → Коліно канал 110 45.
--//- / —//— = повтор ТИПУ з попереднього рядка. Рядок без типу ("х45=10шт", "ф50 1м") = продовження попереднього.
+-//- / —//— / «теж» = ПОВТОР ТИПУ з попереднього рядка (новий розмір).
+Рядок без типу ("х45=10шт", "ф50х1м") = ПРОДОВЖЕННЯ попереднього типу.
 
 ## ПРОЕКТНІ СПЕЦИФІКАЦІЇ (PDF)
-Групи успадковуються: "Труба Stabi Plus: Ekoplastik" + підрядок "32х4,4  м  40" →
-"Труба PPR EVO ф32 Ekoplastik", 40 м. Виробник у колонці = виробник рядка.
+Групи успадковуються: "Труба Stabi Plus: Ekoplastik" + підрядок "32х4,4 м 40" →
+"Труба PPR Fiber Basalt Plus ф32 Ekoplastik", 40 м. Виробник у колонці = виробник рядка.
 Вентиляційне (Vents, повітроводи) включай як є — не знайдеться, це нормально.
 
+## ПРАВИЛА ЗА ЗАМОВЧУВАННЯМ
+Американка (1/2, 3/4...): якщо не вказано "кутова" → завжди підбирати ПРЯМУ (DRBS3).
+Водорозетка (20х1/2, 16х1/2): за замовчуванням → одинарна настінна (вухаста).
+Кран з американкою: за замовчуванням → прямий кран з ручкою-метеликом (DRBS3).
+
+## OCR-АВТОКОРЕКЦІЯ (читання фото та почерку)
+Неіснуючі діаметри фітингів: 28мм PPR/PUSH не існує → виправляти на 25 (28 є тільки для утеплювача або ASG INOX/міді!).
+Злиплі дроби: "20х12"→20х1/2" | "25х34"→25х3/4" | "12 кран"→1/2" кран.
+Скорочення: "Кр"=Кран кульовий | "Кол"/"Кут"=Коліно | "Тр"=Труба(якщо метри) або Трійник(якщо 3 розміри).
+Кванти: 1 бухта PEX16=100/200м | 1 пачка скоб=500шт | 1 рулон демпферки=50м.
+
+## СЛОВНИК СЛЕНГУ
+Gebo/Гебо = затискна муфта Quick (сталеві труби без зварювання).
+Елька = L-подібна трубка підключення радіатора (мідна/хромована).
+Вухань/вухастий = водорозетка з вушками (настінне коліно з планкою).
+Циркуль = циркуляційний насос.
+Бабочка = ручка-метелик кульового крана (GRB/CBB-03).
+Бінокль = кран кутовий Hidros (вузол нижнього підключення радіатора VK).
+Гребінка = розподільчий колектор теплої підлоги або водопроводу.
+П'ятиходовий = 5-ходовий штуцер (манометр+реле тиску+бак+насос).
+Грязьовик = фільтр грубої очистки Y-подібний (косий). Ставиться ПЕРЕД лічильником/котлом.
+Під пломбу = фільтр з отвором під пломбу (ДО лічильника).
+Пляшка = колбовий сифон раковини АБО гумова манжета переходу з чавуну на пластик.
+Сгонка/згін = патрубок з довгою різьбою (під муфту і контргайку).
+Бочка/бочьонок = 1) гідроакумулятор; 2) подовжена муфта ЗЗ/ніпель.
+Черепаха/павук = каналізаційна хрестовина з відводами у кількох площинах.
+Шоколадка/п'ятак = монтажна планка 150мм між водорозетками АБО заглушка.
+Байпас = обхідний трубопровід (паралельна лінія обходу насоса/лічильника).
+Такер = механічний степлер для скоб PEX-труби в пінопласт.
+KVS = коефіцієнт витрати клапана (м³/год при перепаді 1 бар).
+
+## СПЕЦІАЛЬНІ ФІТИНГИ
+Футорка З/В = перехід з більшої зовнішньої різьби на меншу внутрішню.
+Ніпель редукційний З/З = з'єднання двох різних зовнішніх різьб.
+Муфта редукційна В/В = з'єднання двох різних внутрішніх різьб.
+Штуцер = перехідник зовнішня різьба → труба.
+Контргайка (локнат) = фіксує різьбове з'єднання (НЕ фітинг системи).
+ВВ-фітинг = з обох сторін труба вставляється ВСЕРЕДИНУ. ВЗ-фітинг = один бік ВВ, інший — хвостовик назовні.
+
+## РУШНИКОСУШАРКИ
+Бренди: Arte, Adele, Deffi (водяні та електричні).
+Електричні ТЕНи: 300 Вт, 400 Вт, 600 Вт. Регулятори: ON/OFF, електронний, Wi-Fi (GBB, Deffi HP).
+
+## ЗМІШУВАЧІ І АРМАТУРА
+Гнучка підводка (голки): різьба M10 (стандарт), M8, M12; 1/2" або 3/8"; довжини 30–200 см.
+Різьби термоголовок: M30x1.5 (Raftec, Valtec) | M28x1.5 (Herz, ICMA) | Clip-Clap (Danfoss RA).
+Клапан RTL = обмежувач температури зворотного потоку (локальна ТП до 15 м² без насоса).
+Приладові крани: кутові 1/2"х3/4" (пралки), трійникові 1/2"х3/4"х1/2".
+
+## СИФОНИ І УНІТАЗИ
+Сифони: умивальник ф32/40 | мийка 1 1/2" ф40 | ванна (напівавтомат/клик-клак) | піддон ф50/60/90.
+Арматура бачка: впускний (бічне/нижнє 1/2", 3/8"), зливний (1/2 кнопочний, стоп).
+Підключення унітазу: гофра ф110 армована, патрубки (прямий, ексцентриковий, 90°).
+
+## БАКИ, ФІЛЬТРИ, ЗАХИСТ
+Баки: гідроакумулятори сині/білі EPDM ХВС; розширювальні червоні опалення — Aquasystem, Zilmet, Raftec.
+Фільтри: Slim 10", BB10, BB20, картриджі PP/CTO, Зворотний Осмос (Ecosoft, Aquafilter).
+Антипротікання: Аквасторож/Neptune/Ajax 1/2", 3/4", 1". Сололіфти: Sololift/Sanibo.
+Ущільнення різьб: льон+паста Unipak (метал, опалення/ГВС) | ФУМ-стрічка (1/4"–1/2", пластик) | Loctite/Tangit (швидкі).
+
 ## ІНШЕ / СИНОНІМИ
-Труба 0,3м → шукай 0,25м. EK/ЄК = Ekoplastik. Бінокль = кран з накидною гайкою кутовий Hidros.
-Шафа колекторна → ASG. Джикоміні (Giacomini) ↔ Raftec — взаємозамінні для термостатичних клапанів.
+Труба 0,3м → шукай 0,25м. EK/ЄК = Ekoplastik. Шрабер = зачистка PPR-труби (НЕ фітинг!).
+Шафа колекторна → ASG → Standart. Джикоміні (Giacomini) ↔ Raftec для термостатичних клапанів.
+Демпферна стрічка: 70 або 100 мм з фартухом. Скоба якірна: упаковки 500/1000/2000 шт.
 
 # ═══════════ НАБОРКИ (розгортай кожну в повний список позицій!) ═══════════
 НАБОРКА "гребінка/колектор N контурів" (варіант не вказано → В2):
@@ -1028,21 +1164,86 @@ PUSH16≈PPR20, PUSH20≈PPR25. Кут у назвах PUSH відсутній �
 
 НАБОРКА "підключка котла": Кран кут. кульовий з накид. гайкою ВВ 1/2" DRBZ1 RAFTEC х2;
 Кран кут. з накид. гайкою ВЗ DN15 1/2" DRBM1 RAFTEC х2; Кран кут. з накид. гайкою ВВ 3/4" DRBZ2 RAFTEC х2;
-Кран кут. з накид. гайкою ЗВ DN20 3/4" DRBM2 RAFTEC х2; Фільтр груб. очистки DN15 1/2" під пломбу BLACK х1;
-Фільтр DN20 3/4" під пломбу BLACK х1; Муфта PPR МРЗ ф20х1/2 Ekoplastik х2; Муфта PPR МРЗ ф25х3/4 х2.
+Кран кут. з накид. гайкою ЗВ DN20 3/4" DRBM2 RAFTEC х2; Фільтр груб. очистки DN15 1/2" під пломбу BLACK RAFTEC х1;
+Фільтр DN20 3/4" під пломбу BLACK RAFTEC х1; Муфта PPR МРЗ ф20х1/2 Ekoplastik х2; Муфта PPR МРЗ ф25х3/4 х2.
+Специфіка: конденсаційний → нейтралізатор конденсату | ТТ → клапан захисту від перегріву ХВС | електрокотел → група безпеки + бак.
 
 НАБОРКА "радіатор бокове": Клапан радіаторний кутовий подача 1/2"х1/2" верх латунь нікель RAFTEC х2;
 Комплект підключення радіатора кутовий 1/2" термостатичний латунь нікель RAFTEC х1;
 Муфта PPR МРЗ ф20х1/2 Ekoplastik х1; Радіатор HIDROS тип 22 (розмір із замовлення).
-НАБОРКА "радіатор нижнє/VK": Радіатор HIDROS тип 22 VK; Вентильна вставка Hidros VK х1;
-Термоголовка М30х1,5 WHITE RAFTEC х1; Вузол нижнього підключення кутовий 1/2"х3/4" нікель х1;
-Муфта PPR з євроконусом ф20х3/4 Ekoplastik х1.
+
+НАБОРКА "радіатор нижнє/VK": Радіатор HIDROS тип 22 VK (розмір із замовлення);
+Вентильна вставка для радіаторів Hidros VK х1; Термоголовка М30х1,5 WHITE RAFTEC х1;
+Вузол нижнього підключення радіатора кутовий 1/2"х3/4" латунь нікель (бінокль) х1;
+Муфта PPR з євроконусом ф20х3/4 PP-RCT Ekoplastik х1.
 # ═══════════ ДОДАНІ ПРАВИЛА (команда: правило <текст>) ═══════════
 """
 
+# ═══ ЗНАННЯ ДЛЯ CLAUDE (вибір товару з кандидатів) ═════════════════════════
+# Компактна версія — тільки правила вибору, без OCR і каракулів.
+# Підставляється в claude_pick_batch щоб Claude знав пріоритети й еквіваленти.
+CLAUDE_PICK_KNOWLEDGE = """## ПРАВИЛА ВИБОРУ ТОВАРУ
+
+### ЕКВІВАЛЕНТИ НАЗВ (одне й те саме)
+кутник/кут/відвід = коліно | канал 87 = 90 (один виріб, стандарт EN)
+ASG HTR = сіра ПП каналізація | ASG S-LINE = безшумна каналізація
+Ostendorf HT Safe = сіра ПП | Ostendorf Skolan = безшумна
+Ekoplastik Fiber Basalt Plus = армована PPR для опалення (EVO/Stabi — виведено)
+Raftec Fiber = армована PPR опалення | Raftec PN20 = холодна водa
+ASG Faser = армована PPR опалення
+Giacomini термостатика ↔ Raftec (взаємозамінні)
+ВВ-фітинг = з обох сторін труба всередину | ВЗ = один бік хвостовик назовні
+Бінокль = вузол нижнього підключення Hidros VK (кутовий, з накидною гайкою)
+Gebo QA=зовн.різьба | QI=внутр.різьба | QO=труба-труба | QT=трійник | DSW=обойма
+
+### ПРІОРИТЕТ ВИРОБНИКІВ (якщо виробник НЕ вказаний — бери першого)
+Пайка PPR:      Ekoplastik > ASG > Raftec > PLM
+Крани:          Raftec Gold (жовта) або Raftec (нікель) > PLM Strong > PLM Base
+Перехідники:    Raftec нікель > Raftec Gold жовта > LEXLINE
+                ⚠️ Подовжувачі різьби — ТІЛЬКИ хромовані!
+Каналізація:    ASG > Ostendorf > PLM
+Радіатори:      Idmar > Biasi > Hidros > Purmo
+Насоси:         Termojet > Tatra-line > Grundfos > Raftec > Wilo
+PUSH:           Raftec > Rehau
+Утеплювач:      PLM > Теплоизол > Сірий утеплитель
+Шланги:         Raftec Rhein в поліаміді > Raftec Rhein > MATEU
+Металопласт.:   Raftec зажимні фітинги | Tweetop прес-фітинги | Raftec→Herz труба
+Кріплення:      ECO хомути > Raftec > Walraven
+Бойлери:        Tatra-line > Tesy > NovaTec
+Очистка:        Ecosoft
+
+### КРИТИЧНІ ПРАВИЛА — ПОРУШЕННЯ = ХИБНА ВІДПОВІДЬ
+1. ДІАМЕТР: усі цифри з запиту ОБОВ'ЯЗКОВО є в назві кандидата. Якщо немає — знайдено=false.
+2. РІЗЬБА: 1/2" і 3/4" НЕ взаємозамінні. МРЗ 25х3/4 ≠ МРЗ 25х1/2. Перевіряй!
+3. ВИРОБНИК: якщо стоїть ⚠️ ТІЛЬКИ — лише він, навіть якщо confidence падає.
+4. КУТ каналізація: 87° = 90° (один виріб). Кут PPR: 45° і 90° — різні вироби.
+5. PUSH: у назві ОБОВ'ЯЗКОВО слово "натяжний". Гільза натяжна ≠ прес-кільце ≠ насувна.
+6. PPR ВЗ-фітинги: ТІЛЬКИ Ekoplastik і ASG, ТІЛЬКИ ф20/25/32. Більший діаметр = хибне.
+7. (п/з) = під замовлення — вибирати ТІЛЬКИ якщо більше нічого немає.
+8. Труба 0.3м → підбирати 0.25м (стандарт). Фітинг 28мм PPR/PUSH → виправляти на 25мм.
+9. PPR опалення/ГВС → армована (Fiber/Faser/Fiber Basalt Plus). PPR ХВС → PN20.
+10. АМЕРИКАНКА без слова "кутова" → завжди ПРЯМА (DRBS3).
+11. Бойлери: TESY і Tatra-line — різні бренди, не плутай.
+12. Колектори ТП: Raftec Brass Line (латунь) або Raftec SS (нержавійка) — різні серії.
+"""
+
+def get_pick_rules() -> str:
+    """Правила для Claude-вибору: CLAUDE_PICK_KNOWLEDGE + ручні правила менеджерів."""
+    extra = ""
+    if os.path.exists(RULES_FILE):
+        try:
+            with open(RULES_FILE, encoding="utf-8") as f:
+                content = f.read()
+            if "ДОДАНІ ПРАВИЛА" in content:
+                extra = content.split("ДОДАНІ ПРАВИЛА", 1)[1]
+                extra = extra.split("═══", 1)[-1].lstrip("═ \n").strip()
+        except Exception:
+            pass
+    if extra:
+        return CLAUDE_PICK_KNOWLEDGE.rstrip() + "\n\n### ПРАВИЛА МАГАЗИНУ (додані менеджерами)\n" + extra
+    return CLAUDE_PICK_KNOWLEDGE
+
 def ensure_knowledge_file():
-    """Сідінг: якщо rules.txt порожній/старий — записуємо повну базу,
-    існуючі правила користувача зберігаються в кінці."""
     existing = ""
     if os.path.exists(RULES_FILE):
         try:
@@ -1050,7 +1251,7 @@ def ensure_knowledge_file():
                 existing = f.read()
         except Exception:
             pass
-    if "БАЗА ЗНАНЬ БОТА v2" in existing:
+    if "БАЗА ЗНАНЬ БОТА v12" in existing:
         return  # актуальна версія вже стоїть
     # Міграція зі старої бази: зберігаємо тільки користувацькі правила
     if "ДОДАНІ ПРАВИЛА" in existing:
@@ -1181,23 +1382,25 @@ def claude_pick_batch(позиції: list[dict], _retry=True) -> list[dict]:
     запити = []
     for i, пос in enumerate(позиції):
         brand_note = f"\n   ⚠️ ТІЛЬКИ: {пос['required_brand']}" if пос.get('required_brand') else ""
+        cat_note = f" [{пос.get('category','?')}]" if пос.get('category') else ""
         кандидати = "\n".join(f"  {j+1}. [{c.get('_match_pct',0)}%] {c['name']}"
                                for j, c in enumerate(пос['candidates']))
-        запити.append(f"{i+1}. {пос['normalized']}{brand_note}\n{кандидати}")
+        запити.append(f"{i+1}. {пос['normalized']}{cat_note}{brand_note}\n{кандидати}")
 
-    prompt = f"""Сантехнік. Для кожного запиту — номер кандидата.
+    prompt = f"""Ти — експерт сантехніки. Для кожного запиту вибери номер кандидата.
 
-ДОВІДКА ЕКВІВАЛЕНТІВ (для вибору): кутник/кут/відвід = коліно; канал 87≈90 (один виріб);
-ASG=HTR; OSTENDORF=HT Safe; Ekoplastik труби=EVO; Джикоміні≈Raftec (термоклапани);
-PUSH: гільза≠кільце, "натяжний" обов'язково. Діаметри запиту МУСЯТЬ бути в назві товару.
+{get_pick_rules()}
+
+ЗАПИТИ:
 {chr(10).join(запити)}
-Правила: діаметр ОБОВ'ЯЗКОВО збігається; ВИРОБНИК якщо вказано — тільки він; (п/з) тільки як останній варіант.
-JSON рівно {len(позиції)} елементів:
-[{{"знайдено":true,"номер_кандидата":1,"confidence":95,"reason":"причина","fail_reason":""}}]"""
+
+ГОЛОВНЕ: діаметр і різьба ОБОВ'ЯЗКОВО збігаються; виробник якщо вказаний ⚠️ — тільки він; (п/з) лише останній варіант.
+JSON рівно {len(позиції)} елементів — без зайвого тексту:
+[{{"знайдено":true,"номер_кандидата":1,"confidence":95,"reason":"чому саме цей","fail_reason":""}}]"""
 
     try:
         resp = claude.messages.create(
-            model="claude-sonnet-4-5", max_tokens=4000,
+            model="claude-sonnet-4-6", max_tokens=4000,
             messages=[{"role": "user", "content": prompt}]
         )
         parsed = _parse_claude_json(resp.content[0].text)
@@ -1273,7 +1476,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                 результати[i] = {
                     'original': original, 'normalized': normalized,
                     'знайдено': True, 'назва': c['catalog_name'],
-                    'назва_повна': '', 'артикул': '', 'ціна': '',
+                    'назва_повна': '', 'артикул': c.get('artikul', ''), 'ціна': c.get('price', ''),
                     'qty': пос.get('qty',''), 'category': c.get('category', category),
                     'confidence': c.get('confidence', 0), 'keyword_pct': 100,
                     'джерело': '👤 кеш клієнта' + (' ✅' if c.get('status')=='confirmed' else ''),
@@ -1396,7 +1599,8 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                 }
                 cache_save(original, brand_map, normalized, top['name'], category, 95)
                 if client_slug:
-                    clients.client_cache_save(client_slug, original, top['name'], category, 95)
+                    clients.client_cache_save(client_slug, original, top['name'], category, 95,
+                                              artikul=top.get('artikul',''), price=top.get('price',0.0))
                 continue
 
         потребують_claude.append({
@@ -1451,7 +1655,8 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                            found['name'], пос['category'], conf)
                 if пос.get('client_slug'):
                     clients.client_cache_save(пос['client_slug'], пос['original'],
-                                              found['name'], пос['category'], conf)
+                                              found['name'], пос['category'], conf,
+                                              artikul=found.get('artikul',''), price=found.get('price',0.0))
             else:
                 результати[idx] = {
                     'original': пос['original'], 'normalized': пос['normalized'],
@@ -1504,15 +1709,14 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                         }
                         # аналоги НЕ кешуємо
 
-    # Ціна/артикул/повна назва для кешованих результатів
+    # FIX #3: O(1) пошук через CATALOG_INDEX замість O(n) лінійного сканування
     for r in результати:
         if r and r.get('_from_cache') and r.get('назва'):
-            for it in CATALOG:
-                if it['name'] == r['назва']:
-                    r['ціна'] = it.get('price','')
-                    r['артикул'] = it.get('artikul','')
-                    r['назва_повна'] = it.get('name_full', it['name'])
-                    break
+            it = CATALOG_INDEX.get(r['назва'])
+            if it:
+                r['ціна'] = it.get('price', '')
+                r['артикул'] = it.get('artikul', '')
+                r['назва_повна'] = it.get('name_full', it['name'])
             r.pop('_from_cache', None)
     return результати
 
@@ -1605,12 +1809,68 @@ def create_excel(результати: list[dict]):
 user_batches  = {}
 stop_flags    = {}
 pending_hints = {}
-last_results  = {}
+last_results  = {}   # in-memory cache; also persisted to disk (FIX #4)
 _fix_state    = {}
 _train_state  = {}
 _text_pending = {}   # chat_id → текст що чекає рішення список/підказка
 _manual_wait  = {}   # chat_id → {'mode':'fix'|'train'} чекаємо ручну назву
 BATCH_TIMEOUT = 4
+
+# FIX #9: Rate limiting — максимум позицій на одне замовлення
+MAX_POSITIONS_PER_ORDER = 200
+
+# FIX #9: Whitelist чатів — якщо порожній, всі дозволені
+ALLOWED_CHAT_IDS_STR = os.environ.get("ALLOWED_CHAT_IDS", "")
+ALLOWED_CHAT_IDS: set = set()
+if ALLOWED_CHAT_IDS_STR.strip():
+    for _cid in ALLOWED_CHAT_IDS_STR.split(","):
+        try:
+            ALLOWED_CHAT_IDS.add(int(_cid.strip()))
+        except ValueError:
+            pass
+
+def is_allowed(chat_id: int) -> bool:
+    """Перевіряє доступ. Якщо ALLOWED_CHAT_IDS порожній — всі дозволені."""
+    if not ALLOWED_CHAT_IDS:
+        return True
+    return chat_id in ALLOWED_CHAT_IDS or chat_id == ADMIN_ID
+
+# FIX #4: Збереження/відновлення last_results на диск
+LAST_RESULTS_FILE = os.path.join(DATA_DIR, "last_results.json")
+
+def _save_last_results(chat_id: int, data: dict):
+    """Зберігає last_results для chat_id на диск."""
+    try:
+        all_lr = {}
+        if os.path.exists(LAST_RESULTS_FILE):
+            with open(LAST_RESULTS_FILE, encoding="utf-8") as f:
+                all_lr = json.load(f)
+        all_lr[str(chat_id)] = data
+        # Зберігаємо тільки останні 50 чатів
+        if len(all_lr) > 50:
+            keys = sorted(all_lr.keys())
+            for k in keys[:-50]:
+                del all_lr[k]
+        with open(LAST_RESULTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(all_lr, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"⚠️ _save_last_results: {e}")
+
+def _load_last_results(chat_id: int) -> dict | None:
+    """Відновлює last_results для chat_id з диску (якщо немає в пам'яті)."""
+    if chat_id in last_results:
+        return last_results[chat_id]
+    try:
+        if os.path.exists(LAST_RESULTS_FILE):
+            with open(LAST_RESULTS_FILE, encoding="utf-8") as f:
+                all_lr = json.load(f)
+            data = all_lr.get(str(chat_id))
+            if data:
+                last_results[chat_id] = data  # відновити в пам'ять
+                return data
+    except Exception:
+        pass
+    return None
 
 def safe_edit(chat_id, msg_id, text):
     try: bot.edit_message_text(text, chat_id=chat_id, message_id=msg_id)
@@ -1695,30 +1955,104 @@ def _push_outlets(п):
     return outs
 
 def expand_push_sleeves(позиції):
-    """Кожен PUSH-фітинг → гільза на кожен трубний вихід × кількість фітингів.
-    Якщо майстер САМ написав гільзи — не дублюємо."""
-    if any('гільз' in (п.get('original','') + п.get('normalized','')).lower()
-           and (п.get('_qa') or build_qa(п)).get('type') == 'гільза'
-           for п in позиції):
-        return позиції
-    sleeves = {}
-    for п in позиції:
-        if п.get('category') != 'push_systems':
+    """DEPRECATED — залишено для сумісності. Гільзи тепер рахуються в
+    expand_push_sleeves_post() ПІСЛЯ find_items, щоб враховувати кеш."""
+    return позиції
+
+
+def expand_push_sleeves_post(позиції: list, результати: list) -> tuple[list, list]:
+    """FIX #7: Рахує гільзи ПІСЛЯ підбору товарів (find_items).
+    Враховує і нові, і кешовані PUSH-фітинги.
+    Повертає (оновлені позиції, оновлені результати) з доданими рядками гільз."""
+
+    # Якщо майстер сам написав гільзи окремим рядком — НЕ дублюємо
+    has_manual_sleeves = any(
+        'гільз' in (r.get('original','') + r.get('normalized','') + r.get('назва','')).lower()
+        for r in результати if r
+    )
+    if has_manual_sleeves:
+        return позиції, результати
+
+    sleeves: dict = {}
+
+    # Проходимо по РЕЗУЛЬТАТАХ (враховує кеш, бо кешовані вже є в результатах)
+    for r in результати:
+        if not r or not r.get('знайдено'):
             continue
+        cat = r.get('category', '')
+        # Перевіряємо чи це PUSH — за категорією АБО за назвою знайденого товару
+        назва = r.get('назва', '').lower()
+        is_push = (cat == 'push_systems') or (
+            'push' in назва or 'натяжн' in назва or 'пуш' in назва
+        )
+        if not is_push:
+            continue
+        # Не рахуємо самі гільзи двічі
+        if 'гільз' in назва or 'гільза' in r.get('original','').lower():
+            continue
+        # Беремо qa з відповідної позиції (original → позиція)
+        orig = r.get('original', '')
+        п = next((p for p in позиції if p.get('original','') == orig), None)
+        if п is None:
+            # Побудувати qa з самого результату
+            п = {'normalized': r.get('normalized',''), 'original': orig,
+                 'category': cat}
         outs = _push_outlets(п)
         if not outs:
             continue
-        n_fit = int(_qty_num(п.get('qty')) or 1)
+        n_fit = int(_qty_num(r.get('qty','')) or 1)
         for d in outs:
             sleeves[d] = sleeves.get(d, 0) + n_fit
+
+    if not sleeves:
+        return позиції, результати
+
+    # Шукаємо гільзи в каталозі і додаємо рядки
     for d in sorted(sleeves):
-        позиції.append({
-            'original': f"(авто) гільзи ф{d} до PUSH-фітингів",
-            'normalized': f"Гільза натяжна ф {d} PUSH",
-            'qty': f"{sleeves[d]} шт", 'category': 'push_systems',
+        qty = sleeves[d]
+        norm = f"Гільза натяжна ф {d} PUSH"
+        orig = f"(авто) гільзи ф{d} до PUSH-фітингів"
+        нова_поз = {
+            'original': orig, 'normalized': norm,
+            'qty': f"{qty} шт", 'category': 'push_systems',
             'type': 'гільза', 'dia': [d],
-        })
-    return позиції
+        }
+        позиції.append(нова_поз)
+        # Шукаємо товар в каталозі O(1) через CATALOG_INDEX
+        # Пробуємо точний ключ, потім пошук по токенах
+        found_item = CATALOG_INDEX.get(norm)
+        if not found_item:
+            # Fallback: keyword search по каталогу
+            candidates = keyword_search(norm, top_n=3, brand_tokens=['raftec','RAFTEC'])
+            found_item = candidates[0] if candidates else None
+        if found_item:
+            результати.append({
+                'original': orig, 'normalized': norm,
+                'знайдено': True,
+                'назва': found_item['name'],
+                'назва_повна': found_item.get('name_full', found_item['name']),
+                'артикул': found_item.get('artikul', ''),
+                'ціна': found_item.get('price', ''),
+                'qty': f"{qty} шт",
+                'category': 'push_systems',
+                'confidence': 100, 'keyword_pct': 100,
+                'джерело': '⚙️ авто-гільза',
+                'reason': f"Авто-розрахунок: {qty} PUSH-гільз ф{d}",
+                'fail_reason': '', 'candidates_debug': [],
+            })
+        else:
+            результати.append({
+                'original': orig, 'normalized': norm,
+                'знайдено': False,
+                'назва': '', 'назва_повна': '', 'артикул': '', 'ціна': '',
+                'qty': f"{qty} шт", 'category': 'push_systems',
+                'confidence': 0, 'keyword_pct': 0,
+                'джерело': '⚙️ авто-гільза (не знайдено)',
+                'reason': '', 'fail_reason': f'Гільза ф{d} відсутня в каталозі',
+                'candidates_debug': [],
+            })
+
+    return позиції, результати
 
 
 def process_batch(chat_id: int):
@@ -1754,6 +2088,8 @@ def process_batch(chat_id: int):
                 позиції = normalize_text(item['text'], item.get('caption',''))
             else:
                 позиції = []
+            # FIX #8: запам'ятовуємо скільки позицій дав цей файл
+            item['_n_positions'] = len(позиції)
             всі_позиції.extend(позиції)
         except Exception as e:
             errors.append(f"❌ Файл {idx}: {e}")
@@ -1762,18 +2098,39 @@ def process_batch(chat_id: int):
         safe_edit(chat_id, msg_id, "😕 Не розпізнано позицій.\n" + "\n".join(errors))
         return
 
-    # Прикріплюємо brand_map
-    # Авто-розгортання: PUSH-маркер → +ізол → гільзи
+    # FIX #9: Rate limit — захист від надмірно великих замовлень
+    if len(всі_позиції) > MAX_POSITIONS_PER_ORDER:
+        safe_edit(chat_id, msg_id,
+            f"⚠️ Замовлення містить {len(всі_позиції)} позицій (максимум {MAX_POSITIONS_PER_ORDER}).\n"
+            f"Розбийте на кілька менших файлів.")
+        return
+
+    # FIX #8: brand_map прив'язується до конкретного файлу/фото, а не до всього батчу.
+    # Кожен item знає свої позиції — прикріплюємо brand_map від підказки ЦЬОГО файлу.
+    # Глобальна підказка (без прив'язки до файлу) застосовується як fallback.
+    global_captions = [it.get('caption','') for it in items if it.get('caption','')]
+    global_brand_map = parse_caption_brands(' | '.join(global_captions))
+
+    # Будуємо маппінг original→brand_map з урахуванням якого файлу позиція
+    item_positions_map = {}  # original → brand_map конкретного файлу
+    pos_offset = 0
+    for item_idx, item in enumerate(items):
+        item_caption = item.get('caption', '')
+        item_brand_map = parse_caption_brands(item_caption) if item_caption else {}
+        # Скільки позицій у цьому item (порахували вже в всі_позиції)
+        n = item.get('_n_positions', 0)
+        for п in всі_позиції[pos_offset:pos_offset + n]:
+            item_positions_map[id(п)] = item_brand_map or global_brand_map
+        pos_offset += n
+
+    # Авто-розгортання: PUSH-маркер → +ізол (гільзи тепер після find_items)
     всі_позиції = expand_push_marker(всі_позиції)
     всі_позиції = expand_insulation(всі_позиції)
-    всі_позиції = expand_push_sleeves(всі_позиції)
 
-    # Збираємо підказки з УСІХ елементів батчу (менеджер міг додати підказку до кожного фото)
-    all_captions = [it.get('caption','') for it in items if it.get('caption','')]
-    caption = ' | '.join(all_captions)  # об'єднуємо
-    brand_map = parse_caption_brands(caption)
+    caption = ' | '.join(global_captions)  # для логу/збереження
+
     for п in всі_позиції:
-        п['_brand_map'] = brand_map
+        п['_brand_map'] = item_positions_map.get(id(п), global_brand_map)
         if active_slug:
             п['_client_slug'] = active_slug
             п['_client_prefs'] = client_prefs
@@ -1785,6 +2142,9 @@ def process_batch(chat_id: int):
             safe_edit(chat_id, msg_id, f"🔍 Пошук: {cur}/{total}...")
 
     результати = find_items(всі_позиції, progress_cb=progress)
+
+    # FIX #7: Гільзи PUSH рахуються ПІСЛЯ підбору — враховує і кешовані фітинги
+    всі_позиції, результати = expand_push_sleeves_post(всі_позиції, результати)
 
     # Розділ (PDF-специфікації) → у результати
     for _r, _п in zip(результати, всі_позиції):
@@ -1816,7 +2176,9 @@ def process_batch(chat_id: int):
     bot.send_message(chat_id, f"Перевір файл. Якщо є помилки — тапни Навчання:{note}",
                      reply_markup=mk)
 
-    last_results[chat_id] = {'результати': [r for r in результати if r], 'client_slug': active_slug}
+    lr_data = {'результати': [r for r in результати if r], 'client_slug': active_slug}
+    last_results[chat_id] = lr_data
+    _save_last_results(chat_id, lr_data)  # FIX #4: зберегти на диск
     if active_slug:
         try:
             clients.save_order(active_slug, результати, caption)
@@ -1830,6 +2192,10 @@ def process_batch(chat_id: int):
         print(f"⚠️ storage: {_e}")
 
 def add_to_batch(chat_id: int, item: dict):
+    # FIX #9: Whitelist check
+    if not is_allowed(chat_id):
+        bot.send_message(chat_id, "⛔ Доступ заборонено. Зверніться до адміністратора.")
+        return
     if chat_id not in user_batches:
         user_batches[chat_id] = {'items': []}
         bot.send_message(chat_id, "📥 Отримав! Чекаю ще файли (4 сек)...")
@@ -1979,6 +2345,24 @@ def kb_gaps(message):
         return
     bot.reply_to(message, get_catalog_gaps())
 
+# FIX #2: Оновлення каталогу без перезапуску бота
+@bot.message_handler(commands=['reload_catalog', 'reload'])
+def handle_reload_catalog(message):
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "⛔ Тільки адмін.")
+        return
+    msg = bot.reply_to(message, "🔄 Перезавантажую каталог з Excel-файлів...")
+    def _do_reload():
+        ok = reload_catalog()
+        try:
+            bot.edit_message_text(
+                f"✅ Каталог оновлено: {len(CATALOG)} позицій" if ok
+                else "❌ Помилка — Excel-файли не знайдено або порожні",
+                message.chat.id, msg.message_id)
+        except Exception:
+            pass
+    threading.Thread(target=_do_reload, daemon=True).start()
+
 @bot.message_handler(commands=['діри', 'gaps'])
 def handle_gaps(message):
     if not is_admin(message.from_user.id):
@@ -2092,7 +2476,7 @@ def tr_start(call):
                      and _train_state[m.chat.id].get('stage') == 'rows'
                      and re.fullmatch(r'[\d\s,]+', m.text.strip()))
 def tr_rows(message):
-    last = last_results.get(message.chat.id)
+    last = _load_last_results(message.chat.id)
     total = len(last['результати']) if last else 0
     nums = sorted({int(x) for x in re.findall(r'\d+', message.text)
                    if 1 <= int(x) <= total})
@@ -2104,7 +2488,7 @@ def tr_rows(message):
 
 def _tr_show_row(chat_id):
     st = _train_state.get(chat_id)
-    last = last_results.get(chat_id)
+    last = _load_last_results(chat_id)
     if not st or not last: return
     if st['i'] >= len(st['rows']):
         bot.send_message(chat_id, f"✅ Навчання завершено! Оброблено {len(st['rows'])} рядків.")
@@ -2126,7 +2510,7 @@ def _tr_show_row(chat_id):
 def tr_classify(call):
     chat_id = call.message.chat.id
     st = _train_state.get(chat_id)
-    last = last_results.get(chat_id)
+    last = _load_last_results(chat_id)
     if not st or not last:
         bot.answer_callback_query(call.id, "Сесія застаріла"); return
     admin = is_admin(call.from_user.id)
@@ -2297,7 +2681,7 @@ def tr_classify(call):
 @bot.message_handler(func=lambda m: m.text and re.match(r'^вірно\s+\d+', m.text.lower()))
 def handle_virno(message):
     row = int(re.search(r'\d+', message.text).group())
-    last = last_results.get(message.chat.id)
+    last = _load_last_results(message.chat.id)
     if not last:
         bot.reply_to(message, "⚠️ Немає замовлення в пам'яті."); return
     if row < 1 or row > len(last['результати']):
@@ -2327,7 +2711,7 @@ def handle_virno(message):
 @bot.message_handler(func=lambda m: m.text and re.match(r'^помилка\s+\d+', m.text.lower()))
 def handle_pomylka(message):
     row = int(re.search(r'\d+', message.text).group())
-    last = last_results.get(message.chat.id)
+    last = _load_last_results(message.chat.id)
     if not last:
         bot.reply_to(message, "⚠️ Немає замовлення в пам'яті."); return
     if row < 1 or row > len(last['результати']):
@@ -2433,7 +2817,7 @@ def handle_fix(message):
     m = re.match(r'^виправ\s+(\d+)(?:\s*=\s*(.+))?$', message.text.strip(), re.IGNORECASE)
     row = int(m.group(1))
     manual = (m.group(2) or '').strip()
-    last = last_results.get(message.chat.id)
+    last = _load_last_results(message.chat.id)
     if not last or not last['результати']:
         bot.reply_to(message, "⚠️ Немає замовлення в пам'яті.")
         return
@@ -2472,7 +2856,7 @@ def handle_fix_pick(call):
             "напр: `коліно 110 45 остендорф`", parse_mode="Markdown")
         return
     st = _fix_state.pop(call.message.chat.id, None)
-    last = last_results.get(call.message.chat.id)
+    last = _load_last_results(call.message.chat.id)
     if not st or not last:
         bot.answer_callback_query(call.id, "Сесія застаріла")
         return
@@ -2792,7 +3176,7 @@ def handle_manual_input(message):
     elif mode == 'ocr_fix':
         # ЕТАП 1: користувач написав як НАСПРАВДІ було в списку
         st = _train_state.get(message.chat.id)
-        last = last_results.get(message.chat.id)
+        last = _load_last_results(message.chat.id)
         if not st or not last:
             bot.reply_to(message, "⚠️ Сесія навчання завершена."); return
         row = st['rows'][st['i']]
