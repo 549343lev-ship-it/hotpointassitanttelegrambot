@@ -1283,13 +1283,19 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
         if cached:
             _qa_b = пос.get('_qa') or build_qa(пос)
             пос['_qa'] = _qa_b
-            if not validate_pick(_qa_b, {'name': cached['catalog_name']}):
-                cached = None   # кеш суперечить діаметру/типу запиту — у пошук
+            is_confirmed = cached.get('status') == 'confirmed'
+            # FIX #2: confirmed = адмін підтвердив → validate_pick НЕ відхиляє
+            if not is_confirmed and not validate_pick(_qa_b, {'name': cached['catalog_name']}):
+                print(f"⚠️ кеш відхилено validate_pick: '{original}' → '{cached['catalog_name']}'", flush=True)
+                cached = None   # кеш суперечить діаметру/типу — у пошук
         if cached:
             ok = True
-            if hard_brand:
+            if hard_brand and not (cached.get('status') == 'confirmed'):
+                # FIX #2: confirmed не фільтруємо по hard_brand — адмін вже вирішив
                 nl = cached.get('catalog_name','').lower()
                 ok = any(t.lower() in nl for t in hard_brand)
+                if not ok:
+                    print(f"⚠️ кеш відхилено hard_brand: '{original}' → '{cached['catalog_name']}'", flush=True)
             if ok:
                 результати[i] = {
                     'original': original, 'normalized': cached.get('normalized', normalized),
@@ -2354,43 +2360,42 @@ def tr_classify(call):
             bot.answer_callback_query(call.id, "Застаріло"); return
         new_name = cands[idx]
         save_orig = st.pop('ocr_new_original', None) or original
-        if admin:
-            if old_name:
-                cache_ban_pair(original, old_name, cat)
-                if cslug:
-                    clients.client_cache_set_status(cslug, original, old_name, 'banned')
-            cache_save(save_orig, {}, r.get('normalized', save_orig), new_name, cat, 100)
-            cache_set_status(save_orig, new_name, 'confirmed')
-            if save_orig != original:
-                # Поки OCR читає по-старому — кеш ловить і старе прочитання
-                cache_save(original, {}, save_orig, new_name, cat, 100)
-                cache_set_status(original, new_name, 'confirmed')
+
+        # FIX #4: всі менеджери навчають ОДРАЗУ (без черги).
+        # Адмін → confidence=100, status=confirmed (не перезаписується авто)
+        # Менеджер → confidence=90, status=auto (може бути оновлено пізніше)
+        conf = 100 if admin else 90
+        status = 'confirmed' if admin else 'auto'
+
+        if old_name:
+            cache_ban_pair(original, old_name, cat)
             if cslug:
-                clients.client_cache_save(cslug, save_orig, new_name, cat, 100)
-                clients.client_cache_set_status(cslug, save_orig, new_name, 'confirmed')
-            r['назва'] = new_name
-            try:
-                bot.edit_message_text(
-                    f"✅ Навчено!\n{original[:40]}\n❌ {old_name[:50] or '—'}\n✅ {new_name[:60]}",
-                    chat_id, st.get('msg_id', call.message.message_id))
-            except Exception: pass
-            bot.answer_callback_query(call.id, "✅ Збережено")
-            suggest_knowledge_rule(chat_id, original, old_name, new_name)
-        else:
-            n = add_pending_fix({'original': original, 'old_name': old_name or None,
-                                 'new_name': new_name, 'category': cat,
-                                 'client_slug': cslug,
-                                 'normalized': r.get('normalized',''),
-                                 'user_id': call.from_user.id, 'username': uname})
-            notify_admin_fix(uname, original, old_name, new_name, n)
-            try:
-                bot.edit_message_text(
-                    f"📥 Надіслано адміну на підтвердження (черга: {n})\n"
-                    f"{original[:40]}\n❌ {old_name[:50] or '—'}\n✅ {new_name[:60]}",
-                    chat_id, st.get('msg_id', call.message.message_id))
-            except Exception: pass
-            bot.answer_callback_query(call.id, "📥 На розгляді")
+                clients.client_cache_set_status(cslug, original, old_name, 'banned')
+        cache_save(save_orig, {}, r.get('normalized', save_orig), new_name, cat, conf)
+        cache_set_status(save_orig, new_name, status)
+        if save_orig != original:
+            cache_save(original, {}, save_orig, new_name, cat, conf)
+            cache_set_status(original, new_name, status)
+        if cslug:
+            clients.client_cache_save(cslug, save_orig, new_name, cat, conf)
+            clients.client_cache_set_status(cslug, save_orig, new_name, status)
+        r['назва'] = new_name
+
+        label = "✅ Навчено і збережено!" if admin else "✅ Збережено! (менеджер навчив)"
+        try:
+            bot.edit_message_text(
+                f"{label}\n{original[:40]}\n❌ {old_name[:50] or '—'}\n✅ {new_name[:60]}",
+                chat_id, st.get('msg_id', call.message.message_id))
+        except Exception: pass
+        bot.answer_callback_query(call.id, "✅ Збережено")
+
+        # Адмін отримує повідомлення якщо навчив не-адмін (для контролю)
+        if not admin:
+            notify_admin_fix(uname, original, old_name, new_name, -1)
+
+        suggest_knowledge_rule(chat_id, original, old_name, new_name)
         advance(); return
+
 
     # ═══ ЕТАП 1: 📖 Бот неправильно ПРОЧИТАВ (OCR-помилка) ═══
     if call.data == "tro":
