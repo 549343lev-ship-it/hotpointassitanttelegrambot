@@ -35,14 +35,14 @@ def _tokenize(text: str) -> set:
     return set(re.findall(r'[а-яёіїєґa-z]+|[0-9]+', text.lower()))
 
 def _cache_key(original: str, brand_map: dict) -> str:
-    """
-    Ключ = нормалізований оригінал + виробники з підказки менеджера.
-    Приклад: "мрз кут. - 2 шт::plastic_ppr:raftec"
-    """
+    """Ключ = оригінал + виробники підказки. confirmed без brand_map = завжди."""
     brands_str = "|".join(f"{k}:{v[0]}" for k, v in sorted(brand_map.items()))
     key = re.sub(r'\s+', ' ', original.lower().strip())
     return f"{key}::{brands_str}"
 
+def _base_key(original: str) -> str:
+    """Ключ БЕЗ brand_map — confirmed що спрацьовують при будь-якій підказці."""
+    return re.sub(r'\s+', ' ', original.lower().strip()) + "::"
 
 # ─── Завантаження / збереження ───────────────────────────────────────────────
 
@@ -107,7 +107,12 @@ def _fuzzy_match(original: str, brand_map: dict, threshold: float = 0.82) -> dic
             best_score = score
             best_entry = entry
 
-    return best_entry if best_score >= threshold else None
+    # FIX: confirmed entries match at lower threshold (0.72 vs 0.82 for auto)
+    if best_entry:
+        entry_threshold = 0.72 if best_entry.get('status') == 'confirmed' else threshold
+        if best_score >= entry_threshold:
+            return best_entry
+    return None
 
 
 # ─── Публічний API ───────────────────────────────────────────────────────────
@@ -119,15 +124,20 @@ def cache_lookup(original: str, brand_map: dict) -> dict | None:
     Записи зі статусом 'banned' ігноруються.
     Повертає запис або None.
     """
-    keys = [_cache_key(original, brand_map)]
-    base = _cache_key(original, {})
-    if base not in keys:
-        keys.append(base)   # confirmed з навчання видимий і при підказках
-    for key in keys:
+    # FIX #1: confirmed-записи без brand_map діють при БУДЬ-ЯКІЙ підказці
+    base = _base_key(original)  # ключ без виробника — завжди перевіряємо першим
+    keys_to_check = [base]
+    specific = _cache_key(original, brand_map)
+    if specific != base:
+        keys_to_check.append(specific)
+
+    for key in keys_to_check:
         entry = _CACHE.get(key)
         if entry and entry.get('status') != 'banned' \
            and not is_banned(original, entry.get('catalog_name','')):
             return entry
+
+    # FIX #3: нечіткий пошук — confirmed спрацьовує при Jaccard >= 0.72
     result = _fuzzy_match(original, brand_map)
     if result and not is_banned(original, result.get('catalog_name','')):
         return result
@@ -169,16 +179,24 @@ def cache_save(original: str, brand_map: dict, normalized: str,
 
 def cache_set_status(original: str, catalog_name: str, status: str) -> bool:
     """
-    Адмін позначає запис: 'confirmed' (✅ вірно) або 'banned' (❌ помилка).
-    Шукає по оригіналу + назві товару в усіх записах (незалежно від brand_map).
-    Повертає True якщо запис знайдено і оновлено.
+    Адмін позначає запис: 'confirmed' або 'banned'.
+    FIX #1: при 'confirmed' також пише base_key (без brand_map) — щоб діяло при будь-якій підказці.
     """
     key_part = re.sub(r'\s+', ' ', original.lower().strip())
     updated = False
+    confirmed_entry = None
     for cached_key, entry in _CACHE.items():
         cached_orig = cached_key.split("::")[0]
         if cached_orig == key_part and entry.get('catalog_name') == catalog_name:
             entry['status'] = status
+            updated = True
+            if status == 'confirmed':
+                confirmed_entry = dict(entry)
+    # FIX #1: confirmed → дублюємо на base_key (без brand_map) щоб завжди спрацьовував
+    if status == 'confirmed' and confirmed_entry:
+        base = _base_key(original)
+        if base not in _CACHE or _CACHE[base].get('status') != 'confirmed':
+            _CACHE[base] = confirmed_entry
             updated = True
     if updated:
         _save_cache()
