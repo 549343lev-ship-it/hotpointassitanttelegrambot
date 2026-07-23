@@ -93,6 +93,198 @@
   Для різьби: "Коліно МРЗ настінне 1/2"" (латунне)
 Категорія: plastic_ppr (для PPR), push_systems (для PUSH), adapters_reducers (для різьбових).
 
+## КАТЕГОРИЗАЦІЯ — ВИЗНАЧЕННЯ ПРАВИЛЬНОЇ КАТЕГОРІЇ
+
+⚠️ НАЙВАЖЛИВІШЕ: неправильна категорія → бот шукає не там → товар не знаходиться.
+Визначай категорію ЗА ЗМІСТОМ товару, а не за словами в рядку.
+
+### plastic_ppr — Пайка ПП (поліпропілен)
+Ознаки: слова PPR, ПП, пайка, полімер + ТРУБНІ ФІТИНГИ або труби.
+Діаметри: 20, 25, 32, 40, 50, 63, 75, 90, 110 мм.
+✅ ПРАВИЛЬНО plastic_ppr:
+  "муфта 25" (PPR-контекст) → plastic_ppr
+  "коліно 25х45" → plastic_ppr
+  "трійник 25х16х25" → plastic_ppr
+  "труба ппр 32" → plastic_ppr
+  "МРЗ 25х3/4" + слово PPR поруч → plastic_ppr
+  "фітинг Ekoplastik 20" → plastic_ppr
+❌ НЕ plastic_ppr:
+  "перехідник 3/4х1/2" БЕЗ слова PPR → adapters_reducers (латунь!)
+  "муфта різьбова 1/2х3/4" → adapters_reducers
+  "МРЗ 25х3/4" без PPR-контексту → adapters_reducers
+
+### sewage — Каналізація
+Ознаки: діаметри 32/40/50/75/110/160мм + фітинги або труби каналізаційні.
+✅ ПРАВИЛЬНО sewage:
+  "коліно 110х87" → sewage
+  "трійник 110х50" → sewage
+  "муфта 50" (каналізаційна) → sewage
+  "труба 110" (каналізаційна) → sewage
+  "сифон", "гофра 110", "патрубок 110" → sewage або siphons_fittings
+  "ревізія 110", "аератор 110" → sewage
+❌ НЕ sewage:
+  "труба 110 PPR" → plastic_ppr
+  "коліно 110 PPR" → plastic_ppr
+
+### push_systems — PUSH / PEX натяжні
+Ознаки: слова push/пуш/натяжн/PEX/пекс/гільза + фітинги або труба PEX.
+✅ ПРАВИЛЬНО push_systems:
+  "кутник натяжний 25" → push_systems
+  "трійник PUSH 20х16" → push_systems
+  "гільза натяжна 16" → push_systems
+  "труба PEX 16" → push_systems
+  "євроконус 3/4 PUSH" → push_systems
+❌ НЕ push_systems:
+  "кутник 25" БЕЗ слова push/натяжн → plastic_ppr (якщо PPR-контекст)
+  "гільза" для каналізації → sewage
+
+### shutoff_valves — Запірна арматура (крани, вентилі)
+Ознаки: кран, вентиль, кульовий, засувка, шаровий, butterfly, + різьба.
+✅ ПРАВИЛЬНО shutoff_valves:
+  "кран кульовий 1/2" → shutoff_valves
+  "кран з американкою 3/4" → shutoff_valves
+  "вентиль 1/2" → shutoff_valves
+  "кран кутовий 1/2х1/2" → shutoff_valves
+  "американка 1/2 пряма" → shutoff_valves
+  "водорозетка 1/2" → shutoff_valves
+❌ НЕ shutoff_valves:
+  "підводка гнучка 1/2" → hoses (шланги!)
+  "перехідник 1/2х3/4" → adapters_reducers
+  "фільтр 3/4" → filtration
+
+### adapters_reducers — Перехідники латунь, різьбова фасонина
+Ознаки: перехід між різьбами, латунь, без слова PPR/ПП/пайка.
+✅ ПРАВИЛЬНО adapters_reducers:
+  "перехідник 3/4х1/2" → adapters_reducers
+  "ніпель редукційний 1"х3/4"" → adapters_reducers
+  "футорка 1"х1/2"" → adapters_reducers
+  "муфта різьбова 3/4х1/2" → adapters_reducers
+  "штуцер 1/2" → adapters_reducers
+  "контргайка 3/4" → adapters_reducers
+  "подовжувач різьби 1/2" → adapters_reducers
+  "американка 1/2 пряма" (різьбовий фітинг) → adapters_reducers АБО shutoff_valves
+  "МРЗ 25х3/4" БЕЗ слова PPR → adapters_reducers
+  "муфта 1/2х3/4" БЕЗ PPR → adapters_reducers
+  "перехід з чавуну на пластик" → adapters_reducers
+❌ НЕ adapters_reducers:
+  "муфта PPR 25" → plastic_ppr
+  "американка з краном" → shutoff_valves
+
+### hoses — Шланги, гнучка підводка
+Ознаки: підводка, шланг для сантехніки (до змішувача, до унітазу, до бачка).
+✅ ПРАВИЛЬНО hoses:
+  "підводка гнучка 1/2"х40см" → hoses
+  "шланг до змішувача 50см" → hoses
+  "підводка 3/8" для унітазу" → hoses
+  "гнучка підводка M10" → hoses
+  "підводка нерж 60см" → hoses
+❌ НЕ hoses:
+  "садовий шланг" → other (не підбираємо)
+  "шланг для поливу" → other
+  "Ecoflex" → other (труба теплотраси)
+  "армований шланг для насоса" → other
+
+### filtration — Фільтри очистки води
+✅ ПРАВИЛЬНО filtration:
+  "фільтр грубої очистки 3/4" → filtration (косий/грязьовик)
+  "фільтр під пломбу 1/2" → filtration
+  "колба Slim 10" 1/2"" → filtration
+  "зворотний осмос" → filtration
+❌ НЕ filtration:
+  "фільтр для кондиціонера" → other
+
+### pumps — Насосна техніка
+✅ ПРАВИЛЬНО pumps:
+  "насос Termojet 25/40" → pumps
+  "циркуляційний насос" → pumps
+  "насосна станція" → pumps
+  "глибинний насос" → pumps
+
+### radiators_radiatorsvalve — Радіатори і комплектуючі
+✅ ПРАВИЛЬНО radiators_radiatorsvalve:
+  "радіатор сталевий тип 22" → radiators_radiatorsvalve
+  "термоголовка M30" → radiators_radiatorsvalve
+  "клапан радіаторний" → radiators_radiatorsvalve
+  "бінокль Hidros VK" → radiators_radiatorsvalve
+  "вентиль радіаторний" → radiators_radiatorsvalve
+
+### underfloor_heating — Тепла підлога
+✅ ПРАВИЛЬНО underfloor_heating:
+  "колектор 5 контурів" → underfloor_heating
+  "євроконус 3/4" (для ТП) → underfloor_heating
+  "труба PEX 16 для підлоги" → push_systems або underfloor_heating
+  "термоголовка для колектора" → underfloor_heating
+  "розподільчий колектор" → underfloor_heating
+
+### insulation — Утеплювач, ізоляція
+✅ ПРАВИЛЬНО insulation:
+  "утеплювач PLM ф28х6мм" → insulation
+  "ізоляція для труб" → insulation
+  "демпферна стрічка" → insulation
+  "Теплоизол" → insulation
+❌ НЕ insulation:
+  "Ecoflex" → other
+  "труба теплоізольована" → other
+
+### metal_plastic — Металопластик
+✅ ПРАВИЛЬНО metal_plastic:
+  "труба металопластик 16" → metal_plastic
+  "фітинг металопластик 16х1/2" → metal_plastic
+  "зажимний фітинг 20" (м/п) → metal_plastic
+
+### safety_valves — Арматура безпеки
+✅ ПРАВИЛЬНО safety_valves:
+  "запобіжний клапан 1/2" 3 бар" → safety_valves
+  "клапан захисту від перегріву" → safety_valves
+  "зворотний клапан 1/2" → safety_valves
+  "редуктор тиску" → safety_valves
+  "розширювальний бак" → safety_valves
+  "манометр" → safety_valves
+
+### water_heaters — Бойлери, водонагрівачі
+✅ ПРАВИЛЬНО water_heaters:
+  "бойлер 80л Tesy" → water_heaters
+  "водонагрівач 50л" → water_heaters
+
+### boilers — Котли опалення
+✅ ПРАВИЛЬНО boilers:
+  "котел газовий Biasi" → boilers
+  "котел електричний" → boilers
+  "твердопаливний котел" → boilers
+
+### siphons_fittings — Сифони, арматура унітазів, трапи
+✅ ПРАВИЛЬНО siphons_fittings:
+  "сифон умивальник" → siphons_fittings
+  "арматура бачка" → siphons_fittings
+  "гофра 110 для унітазу" → siphons_fittings
+  "трап душовий" → siphons_fittings
+  "інсталяція для унітазу" → siphons_fittings
+
+### fasteners_sealants — Кріплення, ущільнювачі, витратники
+✅ ПРАВИЛЬНО fasteners_sealants:
+  "хомут металевий ф32" → fasteners_sealants
+  "клипса для труби" → fasteners_sealants
+  "пакля Unipak" → fasteners_sealants
+  "паста ущільнювальна" → fasteners_sealants
+  "фум-стрічка" → fasteners_sealants
+  "Glidex" → fasteners_sealants
+  "скоба якірна 500шт" → fasteners_sealants
+  "дюбель" → fasteners_sealants
+
+### towel_warmers — Рушникосушарки
+✅ ПРАВИЛЬНО towel_warmers:
+  "рушникосушарка Arte 500х800" → towel_warmers
+  "ТЕН для рушникосушарки 300Вт" → towel_warmers
+
+### mixers — Змішувачі та комплектуючі
+✅ ПРАВИЛЬНО mixers:
+  "змішувач для ванни" → mixers
+  "змішувач кухонний" → mixers
+  "картридж для змішувача" → mixers
+
+### other — Інше (якщо жодна категорія не підходить)
+  "Ecoflex", "садовий шланг", "вентиляція Vents", невідомі товари → other
+
 ## ІЄРАРХІЯ ВИРОБНИКІВ (пріоритет підбору)
 Пайка PPR:      Ekoplastik → ASG → Raftec → FV plast → PLM
 PUSH:           Raftec → Rehau
