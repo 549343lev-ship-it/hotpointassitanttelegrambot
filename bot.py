@@ -1394,10 +1394,12 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                     'fail_reason': '',
                     'candidates_debug': [c['name'] for c in кандидати[:3]],
                 }
-                cache_save(original, brand_map, normalized, top['name'], category, 95)
-                if client_slug:
-                    clients.client_cache_save(client_slug, original, top['name'], category, 95,
-                                              artikul=top.get('artikul',''), price=top.get('price',0.0))
+                # ⚡ Авто-збіг: кешуємо ТІЛЬКИ якщо атрибутний tier=1 (найвища надійність)
+                if attr_perfect:
+                    cache_save(original, brand_map, normalized, top['name'], category, 97)
+                    if client_slug:
+                        clients.client_cache_save(client_slug, original, top['name'], category, 97,
+                                                  artikul=top.get('artikul',''), price=top.get('price',0.0))
                 continue
 
         потребують_claude.append({
@@ -1447,13 +1449,10 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:
                     'reason': reason, 'fail_reason': '',
                     'candidates_debug': пос['candidates_debug'],
                 }
-                # Кешуємо успіх (auto, confirmed/banned не перезаписуються)
-                cache_save(пос['original'], пос['brand_map'], пос['normalized'],
-                           found['name'], пос['category'], conf)
-                if пос.get('client_slug'):
-                    clients.client_cache_save(пос['client_slug'], пос['original'],
-                                              found['name'], пос['category'], conf,
-                                              artikul=found.get('artikul',''), price=found.get('price',0.0))
+                # НЕ кешуємо результати Claude автоматично — тільки через навчання.
+                # Це запобігає накопиченню помилок у кеші.
+                # (підтвердження через 🎓 Навчання → тоді пишеться confirmed)
+                _ = found  # used above
             else:
                 результати[idx] = {
                     'original': пос['original'], 'normalized': пос['normalized'],
@@ -2850,14 +2849,264 @@ def handle_cache_info(message):
     if not cache:
         bot.reply_to(message, "📋 Кеш порожній — заповниться після замовлень.")
         return
-    icons = {'confirmed':'✅','banned':'❌','auto':'🔹'}
-    lines = []
-    for k, v in list(cache.items())[-8:]:
-        orig = k.split("::")[0][:35]
-        lines.append(f"{icons.get(v.get('status','auto'),'🔹')} `{orig}` → {v.get('catalog_name','')[:45]}")
+    auto = sum(1 for v in cache.values() if v.get('status') == 'auto')
+    conf = sum(1 for v in cache.values() if v.get('status') == 'confirmed')
+    ban  = sum(1 for v in cache.values() if v.get('status') == 'banned')
+    mk = InlineKeyboardMarkup(row_width=2)
+    mk.add(
+        InlineKeyboardButton(f"🔹 Авто ({auto})", callback_data="cachemgr_list_auto_0"),
+        InlineKeyboardButton(f"✅ Підтверджені ({conf})", callback_data="cachemgr_list_confirmed_0"),
+        InlineKeyboardButton(f"❌ Забанені ({ban})", callback_data="cachemgr_list_banned_0"),
+        InlineKeyboardButton(f"🗑 Очистити всі авто", callback_data="cachemgr_del_auto_confirm"),
+    )
     bot.reply_to(message,
-        f"📋 Кеш: *{len(cache)}* записів\n✅ підтв | ❌ бан | 🔹 авто\n\n" + "\n".join(lines),
-        parse_mode="Markdown")
+        f"📋 Кеш: *{len(cache)}* записів\n"
+        f"🔹 Авто: {auto} | ✅ Підтв: {conf} | ❌ Бан: {ban}\n\n"
+        f"Вибери що переглянути або очистити:",
+        parse_mode="Markdown", reply_markup=mk)
+
+
+# ─── Стан пагінації кешу ───────────────────────────────────────────────────
+_cache_page: dict = {}   # chat_id → {'status': 'auto', 'page': 0, 'selected': set()}
+_CACHE_PAGE_SIZE = 8     # скільки записів на сторінці
+
+
+def _cache_page_msg(chat_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Будує повідомлення і кнопки для поточної сторінки кешу."""
+    st = _cache_page.get(chat_id, {})
+    status_filter = st.get('status', 'auto')
+    page = st.get('page', 0)
+    selected: set = st.get('selected', set())
+
+    cache = get_cache()
+    # Фільтруємо і сортуємо — нові зверху (ключі в словнику зазвичай в порядку вставки)
+    items = [(k, v) for k, v in cache.items() if v.get('status') == status_filter]
+    items.reverse()   # нові зверху
+
+    total = len(items)
+    total_pages = max(1, (total + _CACHE_PAGE_SIZE - 1) // _CACHE_PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    chunk = items[page * _CACHE_PAGE_SIZE : (page + 1) * _CACHE_PAGE_SIZE]
+
+    icons = {'confirmed': '✅', 'banned': '❌', 'auto': '🔹'}
+    icon = icons.get(status_filter, '🔹')
+
+    lines = [f"{icon} Кеш — {status_filter} | Стор. {page+1}/{total_pages} ({total} записів)\n"]
+    for idx, (key, val) in enumerate(chunk):
+        global_idx = page * _CACHE_PAGE_SIZE + idx
+        orig = key.split("::")[0][:32]
+        name = val.get('catalog_name', '')[:40]
+        conf = val.get('confidence', 0)
+        chk = "☑️" if global_idx in selected else "☐"
+        lines.append(f"{chk} {global_idx+1}. `{orig}`\n    → {name} ({conf}%)")
+
+    text = "\n".join(lines)
+    text += f"\n\n☑️ Обрано: {len(selected)} | Вибери або дій:"
+
+    mk = InlineKeyboardMarkup(row_width=4)
+
+    # Кнопки вибору записів на сторінці
+    row = []
+    for idx, (key, val) in enumerate(chunk):
+        global_idx = page * _CACHE_PAGE_SIZE + idx
+        chk = "☑" if global_idx in selected else str(global_idx + 1)
+        row.append(InlineKeyboardButton(chk, callback_data=f"cachemgr_sel_{global_idx}"))
+    mk.add(*row)
+
+    # Навігація
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀ Назад", callback_data=f"cachemgr_pg_{page-1}"))
+    nav.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="cachemgr_noop"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton("Вперед ▶", callback_data=f"cachemgr_pg_{page+1}"))
+    if nav:
+        mk.add(*nav)
+
+    # Дії
+    mk.add(
+        InlineKeyboardButton("☑ Вся сторінка", callback_data="cachemgr_selpage"),
+        InlineKeyboardButton("☐ Зняти все",    callback_data="cachemgr_selclear"),
+    )
+    if selected:
+        mk.add(InlineKeyboardButton(
+            f"🗑 Видалити обрані ({len(selected)})", callback_data="cachemgr_delsel"))
+    mk.add(
+        InlineKeyboardButton("🔹 Авто",  callback_data="cachemgr_list_auto_0"),
+        InlineKeyboardButton("✅ Підтв", callback_data="cachemgr_list_confirmed_0"),
+        InlineKeyboardButton("❌ Бан",   callback_data="cachemgr_list_banned_0"),
+    )
+    mk.add(InlineKeyboardButton("🗑 Очистити всі авто", callback_data="cachemgr_del_auto_confirm"))
+    mk.add(InlineKeyboardButton("✖ Закрити", callback_data="cachemgr_close"))
+
+    return text, mk
+
+
+@bot.callback_query_handler(func=lambda c: c.data and c.data.startswith("cachemgr_"))
+def handle_cache_mgr(call):
+    chat_id = call.message.chat.id
+    admin = is_admin(call.from_user.id)
+    if not admin:
+        bot.answer_callback_query(call.id, "⛔ Тільки адмін.")
+        return
+
+    data = call.data
+    st = _cache_page.setdefault(chat_id, {'status': 'auto', 'page': 0, 'selected': set()})
+
+    # ── Список по статусу ─────────────────────────────────────────────────
+    if data.startswith("cachemgr_list_"):
+        parts = data.split("_")   # cachemgr_list_auto_0
+        st['status'] = parts[2]
+        st['page'] = int(parts[3])
+        st['selected'] = set()
+        text, mk = _cache_page_msg(chat_id)
+        try:
+            bot.edit_message_text(text, chat_id, call.message.message_id,
+                                  parse_mode="Markdown", reply_markup=mk)
+        except Exception:
+            bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=mk)
+        bot.answer_callback_query(call.id)
+
+    # ── Пагінація ──────────────────────────────────────────────────────────
+    elif data.startswith("cachemgr_pg_"):
+        st['page'] = int(data.split("_")[2])
+        st['selected'] = set()
+        text, mk = _cache_page_msg(chat_id)
+        try:
+            bot.edit_message_text(text, chat_id, call.message.message_id,
+                                  parse_mode="Markdown", reply_markup=mk)
+        except Exception: pass
+        bot.answer_callback_query(call.id)
+
+    # ── Вибір одного запису ────────────────────────────────────────────────
+    elif data.startswith("cachemgr_sel_"):
+        idx = int(data.split("_")[2])
+        if idx in st['selected']:
+            st['selected'].discard(idx)
+        else:
+            st['selected'].add(idx)
+        text, mk = _cache_page_msg(chat_id)
+        try:
+            bot.edit_message_text(text, chat_id, call.message.message_id,
+                                  parse_mode="Markdown", reply_markup=mk)
+        except Exception: pass
+        bot.answer_callback_query(call.id)
+
+    # ── Вибрати всю сторінку ──────────────────────────────────────────────
+    elif data == "cachemgr_selpage":
+        cache = get_cache()
+        items = [(k, v) for k, v in cache.items() if v.get('status') == st['status']]
+        items.reverse()
+        page = st['page']
+        chunk = items[page * _CACHE_PAGE_SIZE : (page + 1) * _CACHE_PAGE_SIZE]
+        for idx in range(len(chunk)):
+            st['selected'].add(page * _CACHE_PAGE_SIZE + idx)
+        text, mk = _cache_page_msg(chat_id)
+        try:
+            bot.edit_message_text(text, chat_id, call.message.message_id,
+                                  parse_mode="Markdown", reply_markup=mk)
+        except Exception: pass
+        bot.answer_callback_query(call.id, f"☑ Вибрано {len(chunk)} записів")
+
+    # ── Зняти все ─────────────────────────────────────────────────────────
+    elif data == "cachemgr_selclear":
+        st['selected'] = set()
+        text, mk = _cache_page_msg(chat_id)
+        try:
+            bot.edit_message_text(text, chat_id, call.message.message_id,
+                                  parse_mode="Markdown", reply_markup=mk)
+        except Exception: pass
+        bot.answer_callback_query(call.id, "☐ Вибір знято")
+
+    # ── Видалити обрані ────────────────────────────────────────────────────
+    elif data == "cachemgr_delsel":
+        if not st['selected']:
+            bot.answer_callback_query(call.id, "Нічого не обрано"); return
+        cache = get_cache()
+        items = [(k, v) for k, v in cache.items() if v.get('status') == st['status']]
+        items.reverse()
+        to_delete = []
+        for global_idx in sorted(st['selected']):
+            if global_idx < len(items):
+                to_delete.append(items[global_idx][0])
+        deleted = 0
+        for key in to_delete:
+            if key in cache:
+                del cache[key]
+                deleted += 1
+        # Зберігаємо кеш напряму
+        try:
+            with open(CACHE_FILE, "w", encoding="utf-8") as f:
+                import json as _json
+                _json.dump(cache, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            bot.answer_callback_query(call.id, f"⚠️ {e}"); return
+        st['selected'] = set()
+        st['page'] = max(0, st['page'] - 1) if st['page'] > 0 and not items[st['page']*_CACHE_PAGE_SIZE:] else st['page']
+        bot.answer_callback_query(call.id, f"🗑 Видалено {deleted} записів")
+        text, mk = _cache_page_msg(chat_id)
+        try:
+            bot.edit_message_text(text, chat_id, call.message.message_id,
+                                  parse_mode="Markdown", reply_markup=mk)
+        except Exception:
+            bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=mk)
+
+    # ── Підтвердження очистки всіх авто ───────────────────────────────────
+    elif data == "cachemgr_del_auto_confirm":
+        cache = get_cache()
+        auto_count = sum(1 for v in cache.values() if v.get('status') == 'auto')
+        mk2 = InlineKeyboardMarkup()
+        mk2.add(
+            InlineKeyboardButton(f"✅ Так, видалити всі {auto_count} авто-записи",
+                                 callback_data="cachemgr_del_auto_do"),
+            InlineKeyboardButton("❌ Скасувати", callback_data="cachemgr_close"),
+        )
+        try:
+            bot.edit_message_text(
+                f"⚠️ Видалити всі *{auto_count}* авто-записи з кешу?\n"
+                f"✅ Підтверджені і ❌ Забанені НЕ чіпаємо.",
+                chat_id, call.message.message_id,
+                parse_mode="Markdown", reply_markup=mk2)
+        except Exception: pass
+        bot.answer_callback_query(call.id)
+
+    # ── Виконати очистку всіх авто ────────────────────────────────────────
+    elif data == "cachemgr_del_auto_do":
+        cache = get_cache()
+        keys_to_del = [k for k, v in cache.items() if v.get('status') == 'auto']
+        for k in keys_to_del:
+            del cache[k]
+        try:
+            with open(CACHE_FILE, "w", encoding="utf-8") as f:
+                import json as _json
+                _json.dump(cache, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            bot.answer_callback_query(call.id, f"⚠️ {e}"); return
+        bot.answer_callback_query(call.id, f"✅ Видалено {len(keys_to_del)} авто-записів")
+        st['selected'] = set()
+        st['status'] = 'confirmed'
+        st['page'] = 0
+        text, mk = _cache_page_msg(chat_id)
+        try:
+            bot.edit_message_text(
+                f"✅ Очищено *{len(keys_to_del)}* авто-записів.\n\n" + text,
+                chat_id, call.message.message_id,
+                parse_mode="Markdown", reply_markup=mk)
+        except Exception:
+            bot.send_message(chat_id, f"✅ Очищено {len(keys_to_del)} авто-записів.", reply_markup=mk)
+
+    # ── Noop / Close ──────────────────────────────────────────────────────
+    elif data == "cachemgr_noop":
+        bot.answer_callback_query(call.id)
+    elif data == "cachemgr_close":
+        try:
+            bot.delete_message(chat_id, call.message.message_id)
+        except Exception:
+            bot.edit_message_reply_markup(chat_id, call.message.message_id,
+                                          reply_markup=InlineKeyboardMarkup())
+        _cache_page.pop(chat_id, None)
+        bot.answer_callback_query(call.id)
+
 
 
 @bot.message_handler(content_types=['photo'])
