@@ -257,6 +257,37 @@ def cache_delete(original: str, brand_map: dict) -> bool:
     return False
 
 
+def cache_clear_auto() -> int:
+    """
+    Видаляє всі записи зі статусом 'auto'.
+    Підтверджені (confirmed) і забанені (banned) НЕ чіпає.
+    Повертає кількість видалених записів.
+    Використовувати замість прямого звернення до CACHE_FILE з bot.py.
+    """
+    keys_to_del = [k for k, v in _CACHE.items() if v.get('status') == 'auto']
+    for k in keys_to_del:
+        del _CACHE[k]
+    if keys_to_del:
+        _save_cache()
+    return len(keys_to_del)
+
+
+def cache_delete_keys(keys: list) -> int:
+    """
+    Видаляє конкретні ключі з кешу (для менеджера кешу — видалення вибраних).
+    Повертає кількість реально видалених.
+    Використовувати замість прямого запису в CACHE_FILE з bot.py.
+    """
+    deleted = 0
+    for key in keys:
+        if key in _CACHE:
+            del _CACHE[key]
+            deleted += 1
+    if deleted:
+        _save_cache()
+    return deleted
+
+
 def get_cache() -> dict:
     """Повертає весь кеш (для команди /кеш в Telegram)."""
     return _CACHE
