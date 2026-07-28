@@ -62,7 +62,7 @@ def _is_header_row(name, artikul, or_val) -> bool:  # визначає чи є �
 def build_catalog_from_xlsx() -> list[dict]:    # читає всі xlsx-прайси і збирає єдиний список товарів із категоріями
     catalog = []
     bot_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
-    search_dirs = ['.', 'src', bot_dir]
+    search_dirs = ['.', 'src', 'prices', bot_dir]
 
     for key, category in CATALOG_FILES:
         found = False
