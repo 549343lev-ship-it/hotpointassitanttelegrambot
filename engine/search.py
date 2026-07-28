@@ -17,6 +17,7 @@ import anthropic
 
 from clients.cache import (cache_lookup, cache_save, cache_confirm, cache_delete,
                             cache_set_status, cache_ban_pair, is_banned as cache_is_banned)
+from clients.pending_cache import pending_add  # нові збіги → на підтвердження адміну
 from clients import clients
 from catalog.catalog import CATALOG, tokenize, ensure_tokens
 
@@ -615,7 +616,8 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                     'reason': 'Всі розміри і назва збіглись — вибрано без AI',
                     'fail_reason': '', 'candidates_debug': [c['name'] for c in кандидати[:3]],
                 }
-                cache_save(original, brand_map, normalized, top['name'], category, 95)
+                # ⚡ точний збіг — відправляємо на підтвердження адміну замість автозбереження
+                pending_add(original, brand_map, normalized, top['name'], category, 95, source='auto')
                 if client_slug:
                     clients.client_cache_save(client_slug, original, top['name'], category, 95)
                 continue
@@ -668,8 +670,9 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                     'reason': reason, 'fail_reason': '',
                     'candidates_debug': пос['candidates_debug'],
                 }
-                cache_save(пос['original'], пос['brand_map'], пос['normalized'],
-                           found['name'], пос['category'], conf)
+                # Claude вибір — відправляємо на підтвердження адміну
+                pending_add(пос['original'], пос['brand_map'], пос['normalized'],
+                            found['name'], пос['category'], conf, source='claude')
                 if пос.get('client_slug'):
                     clients.client_cache_save(пос['client_slug'], пос['original'],
                                               found['name'], пос['category'], conf)
