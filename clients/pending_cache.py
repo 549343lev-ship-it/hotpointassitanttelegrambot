@@ -99,14 +99,15 @@ def pending_confirm(ids: list) -> int:      # зберігає підтверд�
 
     for r in records:
         if r["id"] in ids:
-            # зберігаємо в основний кеш
-            cache_save(
+            # адмін підтвердив → cache_confirm (confidence=100, без TTL)
+            # НЕ cache_save бо там поріг 95 — деякі pending мають нижчий confidence
+            from clients.cache import cache_confirm
+            cache_confirm(
                 r["original"],
                 r.get("brand_map", {}),
                 r["normalized"],
                 r["catalog_name"],
                 r["category"],
-                r["confidence"],
             )
             saved += 1
         else:
