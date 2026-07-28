@@ -118,12 +118,12 @@ def apply_fix(fix: dict):   # застосовує підтверджене ад
     if old:
         cache_ban_pair(original, old, cat)
         if slug:
-            clients.clients.client_cache_set_status(slug, original, old, 'banned')
+            clients.client_cache_set_status(slug, original, old, 'banned')
     if new:
         cache_confirm(original, {}, fix.get('normalized', original), new, cat)
         if slug:
-            clients.clients.client_cache_save(slug, original, new, cat, 100)
-            clients.clients.client_cache_set_status(slug, original, new, 'confirmed')
+            clients.client_cache_save(slug, original, new, cat, 100)
+            clients.client_cache_set_status(slug, original, new, 'confirmed')
 
 
 def notify_admin_fix(username, original, old_name, new_name, n):    # надсилає адміну повідомлення про нове виправлення від користувача
@@ -302,11 +302,11 @@ def process_batch(chat_id: int):    # головний оркестратор: �
     stop_flags.pop(chat_id, None)
     items = batch['items']
 
-    active_slug  = clients.clients.get_active(chat_id)
-    client_prefs = clients.clients.get_preferences(active_slug) if active_slug else {}
+    active_slug  = clients.get_active(chat_id)
+    client_prefs = clients.get_preferences(active_slug) if active_slug else {}
     client_name  = ''
     if active_slug:
-        _p = clients.clients.get_profile(active_slug)
+        _p = clients.get_profile(active_slug)
         client_name = _p['name'] if _p else active_slug
     client_line = f"\n👤 Клієнт: {client_name}" if client_name else ""
 
@@ -388,7 +388,7 @@ def process_batch(chat_id: int):    # головний оркестратор: �
     last_results[chat_id] = {'результати': [r for r in результати if r], 'client_slug': active_slug}
     if active_slug:
         try:
-            clients.clients.save_order(active_slug, результати, caption)
+            clients.save_order(active_slug, результати, caption)
         except Exception as e:
             print(f"⚠️ Історія клієнта: {e}")
     username = items[0].get('username', str(chat_id)) if items else str(chat_id)
@@ -511,14 +511,14 @@ def kb_clients(message):    # кнопка "Клієнти" — показує �
 
 @bot.message_handler(func=lambda m: m.text == "👥 Кеш клієнта")
 def kb_client_cache(message):   # показує останні 10 записів кешу активного клієнта
-    slug = clients.clients.get_active(message.chat.id)
+    slug = clients.get_active(message.chat.id)
     if not slug:
         bot.reply_to(message, "Немає активного клієнта.\nАктивуй: `клієнт <ім'я>`",
                      parse_mode="Markdown")
         return
-    p     = clients.clients.get_profile(slug)
+    p     = clients.get_profile(slug)
     name  = p['name'] if p else slug
-    cache = clients.clients.get_client_cache(slug)
+    cache = clients.get_client_cache(slug)
     if not cache:
         bot.reply_to(message, f"👥 Кеш *{name}* порожній.", parse_mode="Markdown")
         return
@@ -771,7 +771,7 @@ def tr_classify(call):  # обробляє вибір причини помил�
         if old_name:
             if admin:
                 cache_ban_pair(original, old_name, cat)
-                if cslug: clients.clients.client_cache_set_status(cslug, original, old_name, 'banned')
+                if cslug: clients.client_cache_set_status(cslug, original, old_name, 'banned')
                 bot.answer_callback_query(call.id, "❌ Забанено")
             else:
                 n = add_pending_fix({'original': original, 'old_name': old_name,
@@ -794,13 +794,13 @@ def tr_classify(call):  # обробляє вибір причини помил�
         if admin:
             if old_name:
                 cache_ban_pair(original, old_name, cat)
-                if cslug: clients.clients.client_cache_set_status(cslug, original, old_name, 'banned')
+                if cslug: clients.client_cache_set_status(cslug, original, old_name, 'banned')
             cache_confirm(save_orig, {}, r.get('normalized', save_orig), new_name, cat)
             if save_orig != original:
                 cache_confirm(original, {}, save_orig, new_name, cat)
             if cslug:
-                clients.clients.client_cache_save(cslug, save_orig, new_name, cat, 100)
-                clients.clients.client_cache_set_status(cslug, save_orig, new_name, 'confirmed')
+                clients.client_cache_save(cslug, save_orig, new_name, cat, 100)
+                clients.client_cache_set_status(cslug, save_orig, new_name, 'confirmed')
             r['назва'] = new_name
             try:
                 bot.edit_message_text(
@@ -835,7 +835,7 @@ def tr_classify(call):  # обробляє вибір причини помил�
     if call.data in ("trg", "trw", "trb", "trc"):
         if old_name and admin:
             cache_ban_pair(original, old_name, cat)
-            if cslug: clients.clients.client_cache_set_status(cslug, original, old_name, 'banned')
+            if cslug: clients.client_cache_set_status(cslug, original, old_name, 'banned')
         seen = [c for c in (r.get('candidates_debug') or []) if c and c != old_name][:6]
         if not seen:
             _manual_wait[chat_id] = {'mode': 'train'}
@@ -884,8 +884,8 @@ def handle_virno(message):  # "вірно N" — підтверджує прав
         if not cache_set_status(original, назва, 'confirmed'):
             cache_confirm(original, {}, r.get('normalized', original), назва, cat)
         if last.get('client_slug'):
-            clients.clients.client_cache_save(last['client_slug'], original, назва, cat, 100)
-            clients.clients.client_cache_set_status(last['client_slug'], original, назва, 'confirmed')
+            clients.client_cache_save(last['client_slug'], original, назва, cat, 100)
+            clients.client_cache_set_status(last['client_slug'], original, назва, 'confirmed')
         bot.reply_to(message, f"✅ Рядок {row} підтверджено:\n{назва[:60]}")
     else:
         uname = message.from_user.username or str(message.from_user.id)
@@ -914,7 +914,7 @@ def handle_pomylka(message):    # "помилка N" — банить товар
     if is_admin(message.from_user.id):
         cache_ban_pair(original, назва, cat)
         if last.get('client_slug'):
-            clients.clients.client_cache_set_status(last['client_slug'], original, назва, 'banned')
+            clients.client_cache_set_status(last['client_slug'], original, назва, 'banned')
         bot.reply_to(message, f"❌ Рядок {row} забанено:\n{назва[:60]}")
     else:
         uname = message.from_user.username or str(message.from_user.id)
@@ -986,7 +986,7 @@ def handle_fix_pick(call):  # обробляє вибір правильного
             bot.answer_callback_query(call.id, "Нема чого банити"); return
         if admin:
             cache_ban_pair(original, old_name, cat)
-            if cslug: clients.clients.client_cache_set_status(cslug, original, old_name, 'banned')
+            if cslug: clients.client_cache_set_status(cslug, original, old_name, 'banned')
             bot.edit_message_text(f"❌ Забанено: {original[:40]} → {old_name[:50]}",
                 call.message.chat.id, call.message.message_id)
             bot.answer_callback_query(call.id, "Забанено")
@@ -1009,11 +1009,11 @@ def handle_fix_pick(call):  # обробляє вибір правильного
     if admin:
         if old_name:
             cache_ban_pair(original, old_name, cat)
-            if cslug: clients.clients.client_cache_set_status(cslug, original, old_name, 'banned')
+            if cslug: clients.client_cache_set_status(cslug, original, old_name, 'banned')
         cache_confirm(original, {}, r.get('normalized', original), new_name, cat)
         if cslug:
-            clients.clients.client_cache_save(cslug, original, new_name, cat, 100)
-            clients.clients.client_cache_set_status(cslug, original, new_name, 'confirmed')
+            clients.client_cache_save(cslug, original, new_name, cat, 100)
+            clients.client_cache_set_status(cslug, original, new_name, 'confirmed')
         r['назва'] = new_name
         bot.edit_message_text(
             f"✅ Навчено!\n{original[:40]}\n❌ {old_name[:50] or '—'}\n✅ {new_name[:60]}",
@@ -1054,9 +1054,9 @@ def handle_new_client(message):     # "новий клієнт Ім'я" — ст
     parts = rest.split(',', 1)
     name  = parts[0].strip()
     notes = parts[1].strip() if len(parts) > 1 else ""
-    ok, result = clients.clients.create_client(name, notes)
+    ok, result = clients.create_client(name, notes)
     if ok:
-        clients.clients.set_active(message.chat.id, result)
+        clients.set_active(message.chat.id, result)
         bot.reply_to(message, f"✅ Створено *{name}* і активовано. Кидай фото!",
                      parse_mode="Markdown")
     else:
@@ -1065,13 +1065,13 @@ def handle_new_client(message):     # "новий клієнт Ім'я" — ст
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() == 'клієнти')
 def handle_clients_list(message):   # показує список всіх клієнтів з кількістю замовлень кожного
-    index = clients.clients.list_clients()
+    index = clients.list_clients()
     if not index:
         bot.reply_to(message, "📁 Клієнтів немає.\n`новий клієнт <ім'я>`",
                      parse_mode="Markdown"); return
     lines = []
     for slug, name in sorted(index.items(), key=lambda x: x[1]):
-        p = clients.clients.get_profile(slug)
+        p = clients.get_profile(slug)
         lines.append(f"• {name} ({p.get('orders_count', 0) if p else 0} зам.)")
     bot.reply_to(message, f"📁 Клієнти ({len(index)}):\n" + "\n".join(lines))
 
@@ -1080,9 +1080,9 @@ def handle_clients_list(message):   # показує список всіх кл�
 def handle_client(message):     # "клієнт Ім'я" — активує клієнта; "клієнт стоп" — скидає; "клієнт Ім'я: нотатка" — додає примітку
     rest = message.text[6:].strip()
     if not rest:
-        slug = clients.clients.get_active(message.chat.id)
+        slug = clients.get_active(message.chat.id)
         if slug:
-            p = clients.clients.get_profile(slug)
+            p = clients.get_profile(slug)
             bot.reply_to(message, f"👤 Активний: *{p['name'] if p else slug}*\n`клієнт стоп` — скинути",
                          parse_mode="Markdown")
         else:
@@ -1090,24 +1090,24 @@ def handle_client(message):     # "клієнт Ім'я" — активує кл
                          parse_mode="Markdown")
         return
     if rest.lower() in ('стоп', 'скинути', 'off'):
-        clients.clients.clear_active(message.chat.id)
+        clients.clear_active(message.chat.id)
         bot.reply_to(message, "✅ Клієнта скинуто.")
         return
     if ':' in rest:
         name_part, note = rest.split(':', 1)
-        slug = clients.clients.find_client(name_part.strip())
+        slug = clients.find_client(name_part.strip())
         if not slug:
             bot.reply_to(message, f"⚠️ '{name_part.strip()}' не знайдено."); return
-        clients.clients.add_note(slug, note.strip())
+        clients.add_note(slug, note.strip())
         bot.reply_to(message, "✅ Примітку додано.")
         return
-    slug = clients.clients.find_client(rest)
+    slug = clients.find_client(rest)
     if not slug:
         bot.reply_to(message, f"⚠️ '{rest}' не знайдено.\n`новий клієнт {rest}`",
                      parse_mode="Markdown"); return
-    clients.clients.set_active(message.chat.id, slug)
-    p     = clients.clients.get_profile(slug)
-    prefs = clients.clients.get_preferences(slug)
+    clients.set_active(message.chat.id, slug)
+    p     = clients.get_profile(slug)
+    prefs = clients.get_preferences(slug)
     top   = ", ".join(b for b, _ in prefs.get('top_brands', [])[:3]) or "ще немає даних"
     notes = p.get('notes', []) if p else []
     notes_s = "\n".join(f"  • {n}" for n in notes[-3:] if n) or "  —"
