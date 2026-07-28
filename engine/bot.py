@@ -36,6 +36,10 @@ from clients.cache import (cache_lookup, cache_save, cache_confirm, cache_delete
                           cache_ban_pair, cache_cleanup_expired,
                           is_banned as cache_is_banned)
 from clients import clients
+from clients.pending_cache import (pending_add, pending_count, pending_get_batch,
+                                   pending_confirm, pending_reject,
+                                   pending_confirm_all_batch, pending_reject_all_batch,
+                                   pending_clear_all)
 from knowledge import rules as rules_module
 from knowledge.rules import (get_rules, add_rule, delete_rule,
                              load_pending_rules, save_pending_rules, add_pending_rule)
@@ -418,6 +422,7 @@ def main_keyboard(uid: int) -> ReplyKeyboardMarkup:     # будує голов�
     if is_admin(uid):
         kb.add(KeyboardButton("👑 Статистика"), KeyboardButton("👑 Правила на розгляд"))
         kb.add(KeyboardButton("👑 Логи"),       KeyboardButton("👑 Діри каталогу"))
+        kb.add(KeyboardButton("👑 Перевір кеш"))
     return kb
 
 
@@ -1275,6 +1280,176 @@ def handle_cache_cleanup(message):  # текстова команда очище
         bot.reply_to(message, "⛔ Тільки адмін."); return
     deleted = cache_cleanup_expired()
     bot.reply_to(message, f"🧹 Видалено {deleted} прострочених записів з кешу.")
+
+
+# ─── Перевірка кешу (підтвердження нових збігів) ────────────────────────────
+
+def _send_pending_batch(chat_id: int, batch: list):     # надсилає пачку pending збігів адміну з кнопками підтвердження
+    if not batch:
+        bot.send_message(chat_id, "✅ Немає нових збігів для підтвердження.")
+        return
+
+    # формуємо текст пачки
+    lines = []
+    for i, r in enumerate(batch, 1):
+        src   = "⚡" if r.get('source') == 'auto' else "🤖"
+        conf  = r.get('confidence', 0)
+        brand = ""
+        bm    = r.get('brand_map', {})
+        if bm:
+            brands = list(set(v[0] if isinstance(v, list) else v for v in bm.values()))
+            brand  = f" [{', '.join(brands[:2])}]"
+        lines.append(
+            f"{i}. {src} «{r.get('original', '')[:35]}»\n"
+            f"   → {r.get('catalog_name', '')[:50]}\n"
+            f"   {conf}%{brand}"
+        )
+
+    total = pending_count()
+    text  = (
+        f"📋 *Нові збіги на підтвердження* ({total} всього)\n\n" +
+        "\n\n".join(lines)
+    )
+
+    # кнопки: підтвердити всю пачку / є помилки / пропустити
+    ids_str = ",".join(r["id"] for r in batch)
+    mk = InlineKeyboardMarkup(row_width=1)
+    mk.add(
+        InlineKeyboardButton("✅ Всі вірно — зберегти", callback_data=f"pc_all:{ids_str}"),
+        InlineKeyboardButton("❌ Є помилки — вибрати", callback_data=f"pc_pick:{ids_str}"),
+        InlineKeyboardButton("🗑 Відхилити всі",        callback_data=f"pc_rej:{ids_str}"),
+    )
+    if total > len(batch):
+        mk.add(InlineKeyboardButton(f"➡️ Наступні ({total - len(batch)} залишилось)",
+                                    callback_data="pc_next"))
+    bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=mk)
+
+
+@bot.message_handler(func=lambda m: m.text and m.text in ("👑 Перевір кеш",))
+def kb_check_cache(message):    # кнопка клавіатури "Перевір кеш" — відкриває підтвердження збігів
+    handle_check_cache(message)
+
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('перевір кеш', 'перевир кеш'))
+def handle_check_cache(message):    # команда "перевір кеш" — показує адміну нові збіги на підтвердження
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "⛔ Тільки адмін."); return
+    count = pending_count()
+    if count == 0:
+        bot.reply_to(message, "✅ Немає нових збігів для перевірки."); return
+    batch = pending_get_batch(5)
+    _send_pending_batch(message.chat.id, batch)
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("pc_all:"))
+def handle_pc_all(call):    # підтверджує всю пачку збігів — зберігає всі в кеш
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "⛔ Тільки адмін"); return
+    ids   = call.data[7:].split(",")
+    saved = pending_confirm(ids)
+    bot.answer_callback_query(call.id, f"✅ Збережено {saved}")
+    try:
+        remaining = pending_count()
+        extra     = f"\n\nЗалишилось: {remaining}" if remaining > 0 else "\n\n✅ Черга порожня!"
+        bot.edit_message_text(
+            f"✅ Збережено в кеш: *{saved}* збігів{extra}",
+            call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    except Exception:
+        pass
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("pc_rej:"))
+def handle_pc_rej(call):    # відхиляє всю пачку збігів — видаляє з черги
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "⛔ Тільки адмін"); return
+    ids      = call.data[7:].split(",")
+    rejected = pending_reject(ids)
+    bot.answer_callback_query(call.id, f"🗑 Відхилено {rejected}")
+    try:
+        remaining = pending_count()
+        extra     = f"\n\nЗалишилось: {remaining}" if remaining > 0 else "\n\n✅ Черга порожня!"
+        bot.edit_message_text(
+            f"🗑 Відхилено: *{rejected}* збігів{extra}",
+            call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    except Exception:
+        pass
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("pc_pick:"))
+def handle_pc_pick(call):   # показує кожен збіг окремо щоб адмін вибрав які зберегти
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "⛔ Тільки адмін"); return
+    ids   = call.data[8:].split(",")
+    batch = pending_get_batch(5)
+    # залишаємо тільки ті що в поточній пачці
+    batch = [r for r in batch if r["id"] in ids]
+    if not batch:
+        bot.answer_callback_query(call.id, "Застаріло"); return
+    bot.answer_callback_query(call.id)
+    # показуємо кожен збіг окремо
+    for r in batch:
+        src  = "⚡ точний збіг" if r.get('source') == 'auto' else "🤖 Claude"
+        bm   = r.get('brand_map', {})
+        brand = ""
+        if bm:
+            brands = list(set(v[0] if isinstance(v, list) else v for v in bm.values()))
+            brand  = f"\nПідказка: {', '.join(brands[:2])}"
+        text = (
+            f"📌 {src} [{r.get('confidence', 0)}%]\n"
+            f"Написано: `{r.get('original', '')}`\n"
+            f"Нормалізовано: `{r.get('normalized', '')}`\n"
+            f"Товар: *{r.get('catalog_name', '')}*{brand}"
+        )
+        mk = InlineKeyboardMarkup()
+        mk.add(
+            InlineKeyboardButton("✅ Зберегти", callback_data=f"pc_one_yes:{r['id']}"),
+            InlineKeyboardButton("❌ Відхилити", callback_data=f"pc_one_no:{r['id']}"),
+        )
+        bot.send_message(call.message.chat.id, text, parse_mode="Markdown", reply_markup=mk)
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("pc_one_yes:"))
+def handle_pc_one_yes(call):    # зберігає один конкретний збіг в кеш
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "⛔ Тільки адмін"); return
+    rid   = call.data[11:]
+    saved = pending_confirm([rid])
+    bot.answer_callback_query(call.id, "✅ Збережено")
+    try:
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id,
+                                      reply_markup=None)
+        bot.edit_message_text(
+            call.message.text + "\n\n✅ *Збережено в кеш*",
+            call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    except Exception:
+        pass
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith("pc_one_no:"))
+def handle_pc_one_no(call):     # відхиляє один конкретний збіг
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "⛔ Тільки адмін"); return
+    rid      = call.data[10:]
+    rejected = pending_reject([rid])
+    bot.answer_callback_query(call.id, "❌ Відхилено")
+    try:
+        bot.edit_message_text(
+            call.message.text + "\n\n❌ *Відхилено*",
+            call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    except Exception:
+        pass
+
+
+@bot.callback_query_handler(func=lambda c: c.data == "pc_next")
+def handle_pc_next(call):   # показує наступну пачку збігів
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "⛔ Тільки адмін"); return
+    bot.answer_callback_query(call.id)
+    batch = pending_get_batch(5)
+    if not batch:
+        bot.send_message(call.message.chat.id, "✅ Черга порожня!")
+        return
+    _send_pending_batch(call.message.chat.id, batch)
 
 
 # ─── Фото / документи / текст ────────────────────────────────────────────────
