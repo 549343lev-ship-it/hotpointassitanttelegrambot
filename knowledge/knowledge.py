@@ -53,16 +53,21 @@ PUSH16≈PPR20, PUSH20≈PPR25. Кут у назвах PUSH відсутній �
 ⚠️ НЕ додавай гільзи до фітингів сам — бот порахує автоматично.
 
 ⚠️ УВАГА — НЕ PUSH навіть якщо замовлення від REHAU/PEX-монтажника:
+КОТЕЛ, РАДІАТОР → category=boilers/heating, КАТЕГОРИЧНО БЕЗ "натяжний PUSH"
 МАНОМЕТРИ (манометр фронтальний, радіальний) → category=shutoff_valves, БЕЗ "натяжний PUSH"
 СКОТЧ, ПЛІВКА, НИТКА, СТРІЧКА → category=fasteners_sealants або other, БЕЗ "натяжний PUSH"
-ТАКЕР для скоб → category=underfloor_heating або other, БЕЗ "натяжний PUSH"
+ТАКЕР для скоб → category=underfloor_heating, БЕЗ "натяжний PUSH"
 СИФОН для кондиціонера → category=siphons_fittings, БЕЗ "натяжний PUSH"
-МОНТАЖНА ШИНА/ПЛАНКА → це кріплення, НЕ PUSH
-ТРУБА МІДНА → це інший матеріал, НЕ PUSH
+МОНТАЖНА ШИНА/ПЛАНКА → category=fasteners_sealants, НЕ PUSH
+ТРУБА МІДНА / СТАЛЕВА / ПРЕС-СТАЛЬ → окремі системи, НЕ PUSH
 ДЕМПФЕРНА СТРІЧКА → category=underfloor_heating, БЕЗ "натяжний PUSH"
 БАЙПАС для хімочистки → category=shutoff_valves, БЕЗ "натяжний PUSH"
 ГІДРОАКУМУЛЯТОР → category=pumps або automation, НЕ PUSH
-Правило: "натяжний PUSH" додавай ТІЛЬКИ до фітингів (трійник/коліно/муфта/гільза/перехідник) для PEX труб.
+ХОМУТ для труб → category=fasteners_sealants, БЕЗ "натяжний PUSH"
+ІНСТАЛЯЦІЯ для унітазу → category=sanitary_ware, БЕЗ "натяжний PUSH"
+ЯКІР подвійний / скоба якірна → category=underfloor_heating, БЕЗ "натяжний PUSH"
+ЄВРОКОНУС → category=push_systems, БЕЗ "натяжний PUSH" (це не фітинг PEX!)
+Правило: "натяжний PUSH" додавай ТІЛЬКИ до фітингів PEX (трійник/коліно/муфта/гільза/перехідник).
 
 ## "+ ІЗОЛ" (утеплювач до труби)
 "труба 25 - 40м + ізол" → збережи "+ ізол" в original труби, НЕ створюй позицій утеплювача:
