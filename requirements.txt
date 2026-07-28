@@ -1,8 +1,0 @@
-pytelegrambotapi
-anthropic
-google-genai
-openpyxl
-pandas
-flask
-xlrd
-gunicorn
