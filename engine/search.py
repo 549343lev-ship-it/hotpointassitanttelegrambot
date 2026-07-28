@@ -201,7 +201,7 @@ def normalize_angle_for_category(angle, category):  # нормалізує ку�
     return angle
 
 
-def parse_attrs(text: str) -> dict:     # витягує атрибути з назви/запиту: тип, діаметри, кут, різьба
+def parse_attrs(text: str) -> dict:     # витягує атрибути з назви/запиту: тип, діаметри, кут, різьба, довжина
     t   = text.lower()
     typ = None
     m   = _TYPE_RE.search(t)
@@ -221,6 +221,17 @@ def parse_attrs(text: str) -> dict:     # витягує атрибути з н�
     toks   = tokenize(text)
     thread = next((tk for tk in toks if '_' in tk), None)   # різьба у форматі 1_2, 3_4 тощо
 
+    # довжина труби: витягуємо окремим regex до tokenize (уникаємо конфлікту з діаметрами)
+    length = None
+    _lt = text.lower()
+    _lm = re.search(r'l\s*[=:]?\s*(\d+[.,]\d+)\s*м', _lt)   # L=0,5м L=3,0м L=1.5м
+    if _lm:
+        length = int(round(float(_lm.group(1).replace(',', '.')) * 1000))
+    else:
+        _lm = re.search(r'l\s*[=:]?\s*(\d+)\s*м', _lt)        # L=3м L=1м
+        if _lm:
+            length = int(_lm.group(1)) * 1000
+
     # діаметри: числа від 10 до 630 (реальний діапазон каталогу), без кута
     dias = []
     for tk in toks:
@@ -228,11 +239,12 @@ def parse_attrs(text: str) -> dict:     # витягує атрибути з н�
             v = int(tk)
             if 10 <= v <= 630 and v != angle:
                 dias.append(v)
-    return {'type': typ, 'dia': sorted(set(dias)), 'angle': angle, 'thread': thread}
+    return {'type': typ, 'dia': sorted(set(dias)), 'angle': angle,
+            'thread': thread, 'length': length}
 
 
 def build_qa(пос: dict) -> dict:    # будує атрибути запиту з полів Gemini + парсингу тексту (merge, Gemini пріоритетніший)
-    qa = {'type': None, 'dia': [], 'angle': None, 'thread': None}
+    qa = {'type': None, 'dia': [], 'angle': None, 'thread': None, 'length': None}
     # 1) прямо від Gemini (найточніше — він бачив фото)
     g_dia = пос.get('dia')
     if isinstance(g_dia, list):
@@ -252,6 +264,7 @@ def build_qa(пос: dict) -> dict:    # будує атрибути запит�
         if not qa['dia']:       qa['dia']    = pa['dia']
         if qa['angle'] is None: qa['angle']  = pa['angle']
         if not qa['thread']:    qa['thread'] = pa['thread']
+        if qa['length'] is None:    qa['length'] = pa.get('length')
     qa['_raw'] = f"{пос.get('normalized', '')} {пос.get('original', '')}"
     qa['angle'] = normalize_angle_for_category(qa['angle'], пос.get('category'))
     return qa
@@ -315,11 +328,16 @@ def attr_search(qa: dict, top_n: int = 10,
             dia_eq   = dia_sub and (q_dia == i_dia)
             ang_ok   = _angle_match(qa.get('angle'), ia['angle'])
 
-            # tier 1: тип+діаметри точно+кут; tier 2: тип+діаметри⊆+кут; tier 3: тип+діаметри; tier 4: тільки діаметри
-            if type_ok and dia_eq and ang_ok:    tiers[1].append(item)
-            elif type_ok and dia_sub and ang_ok: tiers[2].append(item)
-            elif type_ok and dia_sub:            tiers[3].append(item)
-            elif dia_sub and q_type is None:     tiers[4].append(item)
+            # перевірка довжини труби (якщо є в запиті)
+            q_len  = qa.get('length')
+            i_len  = ia.get('length')
+            len_ok = (q_len is None or i_len is None or q_len == i_len)
+
+            # tier 1: тип+діаметри точно+кут+довжина; tier 2: тип+діаметри⊆+кут; tier 3: тип+діаметри; tier 4: тільки діаметри
+            if type_ok and dia_eq and ang_ok and len_ok:    tiers[1].append(item)
+            elif type_ok and dia_sub and ang_ok and len_ok: tiers[2].append(item)
+            elif type_ok and dia_sub:                        tiers[3].append(item)
+            elif dia_sub and q_type is None:                 tiers[4].append(item)
 
         for tier, pct in ((1, 100), (2, 95), (3, 85), (4, 70)):
             cand = tiers[tier]
