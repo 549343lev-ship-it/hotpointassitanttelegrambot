@@ -1173,7 +1173,7 @@ def handle_rules_show(message):     # показує вміст rules.txt пос
 def handle_rules_pull(message):     # адмін: підтягує актуальний rules.txt з гілки botdata GitHub
     if not is_admin(message.from_user.id): return
     try:
-        import storage as _st
+        from catalog import storage as _st
         text, _sha = _st._get_remote("rules.txt")
         if text:
             import os as _os
