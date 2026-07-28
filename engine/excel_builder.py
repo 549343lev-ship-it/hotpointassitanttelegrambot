@@ -65,6 +65,7 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list, list]
                 'Розділ':       r.get('розділ', ''),
                 'Чому знайшло': r.get('reason', ''),
                 'Оригінал':     r.get('original', ''),
+                'Нормалізовано': r.get('normalized', ''),
             })
             flags.append('warn' if suspicious else '')
             if suspicious:
@@ -92,13 +93,14 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list, list]
                 'Розділ':       r.get('розділ', ''),
                 'Чому знайшло': (r.get('fail_reason', '') or '')[:100],
                 'Оригінал':     r.get('original', ''),
+                'Нормалізовано': r.get('normalized', ''),
             })
             flags.append('nf')
             not_found.append(r.get('original', ''))
 
     output = BytesIO()
     cols   = ['№', 'Артикул', 'Наименование', 'Кількість', 'Од.',
-              'Ціна', 'Збіг', 'Джерело', 'Розділ', 'Чому знайшло', 'Оригінал']
+              'Ціна', 'Збіг', 'Джерело', 'Розділ', 'Чому знайшло', 'Оригінал', 'Нормалізовано']
 
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=cols)
@@ -107,6 +109,7 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list, list]
         ws.column_dimensions['A'].width = 4    # стовпець №
         ws.column_dimensions['C'].width = 55   # стовпець Найменування — широкий
         ws.column_dimensions['J'].width = 20   # стовпець Оригінал
+        ws.column_dimensions['K'].width = 35   # стовпець Нормалізовано
         for i, fl in enumerate(flags, start=2):
             fill = RED if fl == 'nf' else (YELLOW if fl == 'warn' else None)
             if fill:
