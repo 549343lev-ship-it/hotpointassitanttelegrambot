@@ -14,7 +14,7 @@ from io import BytesIO
 import pandas as pd
 from openpyxl.styles import PatternFill
 
-from data.catalog import CATALOG
+from catalog.catalog import CATALOG
 
 RED    = PatternFill('solid', fgColor='FFC7CE')   # заливка для незнайдених рядків
 YELLOW = PatternFill('solid', fgColor='FFF3B0')   # заливка для сумнівних рядків
