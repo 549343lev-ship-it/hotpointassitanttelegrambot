@@ -219,16 +219,29 @@ def parse_attrs(text: str) -> dict:     # витягує атрибути з н�
         angle = int(ma.group(1))
 
     toks   = tokenize(text)
-    thread = next((tk for tk in toks if '_' in tk), None)   # різьба у форматі 1_2, 3_4 тощо
+    # різьба: числовий токен у форматі 1_2, 3_4; виключаємо tdim_ токени трійників
+    thread = next((tk for tk in toks if '_' in tk and not tk.startswith('tdim')), None)
 
-    # довжина труби: витягуємо окремим regex до tokenize (уникаємо конфлікту з діаметрами)
+    # тип різьби: МРЗ/МРВ/РЗ/РВ → окремий атрибут (зовнішня vs внутрішня)
+    thread_type = None
+    _tl = t  # вже lower
+    if any(x in _tl for x in ('mrz', 'рз', ' рз')):   thread_type = 'mrz'  # зовнішня
+    elif any(x in _tl for x in ('mrv', 'рв', ' рв')): thread_type = 'mrv'  # внутрішня
+    elif 'rn' in _tl or ' рн' in _tl:                  thread_type = 'rn'   # накидна
+
+    # впорядкований рядок діаметрів трійника: ф25х16х25 → "25_16_25"
+    dim_ordered = None
+    _dm = re.search(r'(\d{2,3})[хx×](\d{2,3})[хx×](\d{2,3})', t)
+    if _dm:
+        dim_ordered = f"{_dm.group(1)}_{_dm.group(2)}_{_dm.group(3)}"
+
+    # довжина труби: витягуємо окремим regex (уникаємо конфлікту з діаметрами)
     length = None
-    _lt = text.lower()
-    _lm = re.search(r'l\s*[=:]?\s*(\d+[.,]\d+)\s*м', _lt)   # L=0,5м L=3,0м L=1.5м
+    _lm = re.search(r'l\s*[=:]?\s*(\d+[.,]\d+)\s*м', t)   # L=0,5м L=3,0м L=1.5м
     if _lm:
         length = int(round(float(_lm.group(1).replace(',', '.')) * 1000))
     else:
-        _lm = re.search(r'l\s*[=:]?\s*(\d+)\s*м', _lt)        # L=3м L=1м
+        _lm = re.search(r'l\s*[=:]?\s*(\d+)\s*м', t)        # L=3м L=1м
         if _lm:
             length = int(_lm.group(1)) * 1000
 
@@ -240,11 +253,12 @@ def parse_attrs(text: str) -> dict:     # витягує атрибути з н�
             if 10 <= v <= 630 and v != angle:
                 dias.append(v)
     return {'type': typ, 'dia': sorted(set(dias)), 'angle': angle,
-            'thread': thread, 'length': length}
+            'thread': thread, 'thread_type': thread_type,
+            'dim_ordered': dim_ordered, 'length': length}
 
 
 def build_qa(пос: dict) -> dict:    # будує атрибути запиту з полів Gemini + парсингу тексту (merge, Gemini пріоритетніший)
-    qa = {'type': None, 'dia': [], 'angle': None, 'thread': None, 'length': None}
+    qa = {'type': None, 'dia': [], 'angle': None, 'thread': None, 'thread_type': None, 'dim_ordered': None, 'length': None}
     # 1) прямо від Gemini (найточніше — він бачив фото)
     g_dia = пос.get('dia')
     if isinstance(g_dia, list):
@@ -264,7 +278,9 @@ def build_qa(пос: dict) -> dict:    # будує атрибути запит�
         if not qa['dia']:       qa['dia']    = pa['dia']
         if qa['angle'] is None: qa['angle']  = pa['angle']
         if not qa['thread']:    qa['thread'] = pa['thread']
-        if qa['length'] is None:    qa['length'] = pa.get('length')
+        if qa['length'] is None:      qa['length']      = pa.get('length')
+        if qa['thread_type'] is None:  qa['thread_type'] = pa.get('thread_type')
+        if qa['dim_ordered'] is None:  qa['dim_ordered'] = pa.get('dim_ordered')
     qa['_raw'] = f"{пос.get('normalized', '')} {пос.get('original', '')}"
     qa['angle'] = normalize_angle_for_category(qa['angle'], пос.get('category'))
     return qa
@@ -276,16 +292,24 @@ def _angle_match(qa_angle, item_angle) -> bool:     # перевіряє чи з
     return item_angle == qa_angle
 
 
-def validate_pick(qa: dict, item: dict) -> bool:    # пост-валідація вибору: діаметри запиту мають бути в товарі, тип і кут мають збігатись
+def validate_pick(qa: dict, item: dict) -> bool:    # пост-валідація вибору: діаметри, тип, кут, різьба, трійник dim
     ia    = item.get('_attrs') or parse_attrs(item.get('name', ''))
     q_dia = set(qa.get('dia') or [])
     if q_dia and not q_dia.issubset(set(ia['dia'])):
         return False
     if qa.get('type') and ia.get('type') and qa['type'] != ia['type']:
-        if {qa['type'], ia['type']} != {'коліно', 'відведення'}:   # виняток: відведення ≈ коліно
+        if {qa['type'], ia['type']} != {'коліно', 'відведення'}:
             return False
     if qa.get('angle') and not _angle_match(qa['angle'], ia.get('angle')):
         return False
+    # перевірка типу різьби МРЗ/МРВ (зовнішня vs внутрішня — різні товари!)
+    if qa.get('thread_type') and ia.get('thread_type'):
+        if qa['thread_type'] != ia['thread_type']:
+            return False
+    # перевірка впорядкованих діаметрів трійника (ф25х16х25 ≠ ф25х16х16)
+    if qa.get('dim_ordered') and ia.get('dim_ordered'):
+        if qa['dim_ordered'] != ia['dim_ordered']:
+            return False
     return True
 
 
@@ -328,16 +352,26 @@ def attr_search(qa: dict, top_n: int = 10,
             dia_eq   = dia_sub and (q_dia == i_dia)
             ang_ok   = _angle_match(qa.get('angle'), ia['angle'])
 
-            # перевірка довжини труби (якщо є в запиті)
+            # перевірка довжини труби
             q_len  = qa.get('length')
             i_len  = ia.get('length')
             len_ok = (q_len is None or i_len is None or q_len == i_len)
 
-            # tier 1: тип+діаметри точно+кут+довжина; tier 2: тип+діаметри⊆+кут; tier 3: тип+діаметри; tier 4: тільки діаметри
-            if type_ok and dia_eq and ang_ok and len_ok:    tiers[1].append(item)
-            elif type_ok and dia_sub and ang_ok and len_ok: tiers[2].append(item)
-            elif type_ok and dia_sub:                        tiers[3].append(item)
-            elif dia_sub and q_type is None:                 tiers[4].append(item)
+            # перевірка типу різьби МРЗ/МРВ
+            q_tt   = qa.get('thread_type')
+            i_tt   = ia.get('thread_type')
+            tt_ok  = (q_tt is None or i_tt is None or q_tt == i_tt)
+
+            # перевірка впорядкованих діаметрів трійника (ф25х16х25 ≠ ф25х16х16)
+            q_do   = qa.get('dim_ordered')
+            i_do   = ia.get('dim_ordered')
+            do_ok  = (q_do is None or i_do is None or q_do == i_do)
+
+            # tier 1: все точно; tier 2: тип+діаметри⊆+кут; tier 3: тип+діаметри; tier 4: тільки діаметри
+            if type_ok and dia_eq and ang_ok and len_ok and tt_ok and do_ok:    tiers[1].append(item)
+            elif type_ok and dia_sub and ang_ok and len_ok and tt_ok and do_ok: tiers[2].append(item)
+            elif type_ok and dia_sub:                                             tiers[3].append(item)
+            elif dia_sub and q_type is None:                                      tiers[4].append(item)
 
         for tier, pct in ((1, 100), (2, 95), (3, 85), (4, 70)):
             cand = tiers[tier]
