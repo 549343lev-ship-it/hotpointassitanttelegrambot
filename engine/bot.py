@@ -1210,7 +1210,7 @@ def handle_rule(message):   # "правило текст" — додає пра�
 
 
 @bot.message_handler(commands=['кеш', 'cache'])
-def handle_cache_info(message):     # /кеш або /cache — показує статистику кешу і останні 8 записів
+def handle_cache_info(message):     # /кеш або /cache — показує статистику кешу і останні 8 записів з кнопками керування
     stats = get_cache_stats()
     cache = get_cache()
     if not cache:
@@ -1220,18 +1220,57 @@ def handle_cache_info(message):     # /кеш або /cache — показує �
     for k, v in list(cache.items())[-8:]:
         orig = k.split("::")[0][:35]
         lines.append(f"{icons.get(v.get('status', 'auto'), '🔹')} `{orig}` → {v.get('catalog_name', '')[:45]}")
-    bot.reply_to(message,
+    text = (
         f"📋 *Кеш нормалізацій*\n\n"
         f"Всього: {stats['total']} | ✅ {stats['confirmed']} | 🔹 {stats['auto']} | ❌ {stats['banned']}\n"
         f"⏰ Прострочених (>{stats['ttl_days']}д): {stats['expired']}\n"
         f"Мін. confidence: {stats['min_conf']}%\n\n"
-        f"Останні записи:\n" + "\n".join(lines) +
-        "\n\n_Очистити старі: напиши_ `кеш очистити`",
-        parse_mode="Markdown")
+        f"Останні записи:\n" + "\n".join(lines)
+    )
+    mk = InlineKeyboardMarkup()
+    mk.add(InlineKeyboardButton("🧹 Очистити прострочені", callback_data="cache_clean_expired"))
+    if is_admin(message.from_user.id):
+        mk.add(InlineKeyboardButton("🗑 Очистити всі auto", callback_data="cache_clean_auto"))
+    bot.reply_to(message, text, parse_mode="Markdown", reply_markup=mk)
+
+
+@bot.callback_query_handler(func=lambda c: c.data in ("cache_clean_expired", "cache_clean_auto"))
+def handle_cache_clean_btn(call):   # обробляє натискання кнопок очищення кешу
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "⛔ Тільки адмін"); return
+
+    if call.data == "cache_clean_expired":
+        deleted = cache_cleanup_expired()
+        bot.answer_callback_query(call.id, f"🧹 Видалено {deleted} прострочених")
+        try:
+            bot.edit_message_text(
+                f"🧹 Видалено *{deleted}* прострочених записів з кешу.",
+                call.message.chat.id, call.message.message_id,
+                parse_mode="Markdown")
+        except Exception:
+            pass
+
+    elif call.data == "cache_clean_auto":
+        cache = get_cache()
+        # видаляємо всі auto записи (не confirmed і не banned)
+        from clients.cache import _CACHE, _save_cache
+        to_del = [k for k, v in list(_CACHE.items()) if v.get('status', 'auto') == 'auto']
+        for k in to_del:
+            del _CACHE[k]
+        _save_cache()
+        bot.answer_callback_query(call.id, f"🗑 Видалено {len(to_del)} auto-записів")
+        try:
+            bot.edit_message_text(
+                f"🗑 Видалено *{len(to_del)}* auto-записів з кешу.\n"
+                f"✅ confirmed і ❌ banned — збережено.",
+                call.message.chat.id, call.message.message_id,
+                parse_mode="Markdown")
+        except Exception:
+            pass
 
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() == 'кеш очистити')
-def handle_cache_cleanup(message):  # адмін: видаляє всі прострочені auto-записи з кешу (старіші 60 днів)
+def handle_cache_cleanup(message):  # текстова команда очищення (залишаємо для сумісності)
     if not is_admin(message.from_user.id):
         bot.reply_to(message, "⛔ Тільки адмін."); return
     deleted = cache_cleanup_expired()
