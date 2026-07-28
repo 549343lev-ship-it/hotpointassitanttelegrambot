@@ -18,7 +18,7 @@ import anthropic
 from cache import (cache_lookup, cache_save, cache_confirm, cache_delete,
                    cache_set_status, cache_ban_pair, is_banned as cache_is_banned)
 from clients import clients
-from data.catalog import CATALOG, tokenize, ensure_tokens
+from catalog.catalog import CATALOG, tokenize, ensure_tokens
 
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_KEY", "")
 claude        = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
