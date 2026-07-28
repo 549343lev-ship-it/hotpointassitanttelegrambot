@@ -28,7 +28,7 @@ from telebot.types import (InlineKeyboardMarkup, InlineKeyboardButton,
 import anthropic
 
 # ─── Модулі проекту ──────────────────────────────────────────────────────────
-from data import storage
+from catalog import storage
 storage.restore()
 
 from clients.cache import (cache_lookup, cache_save, cache_confirm, cache_delete,
