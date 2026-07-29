@@ -92,7 +92,6 @@ def pending_get_batch(n: int = 5) -> list:  # повертає наступні 
 
 
 def pending_confirm(ids: list) -> int:      # зберігає підтверджені записи в основний кеш; повертає к-ть збережених
-    from clients.cache import cache_save
     records = _load()
     saved   = 0
     to_keep = []
