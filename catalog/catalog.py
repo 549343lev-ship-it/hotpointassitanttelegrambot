@@ -178,10 +178,13 @@ def tokenize(text: str) -> set:     # перетворює назву на на�
     t = re.sub(r'\bзовн\b', ' zovn ', t)  # зовн → zovn
 
     # Безшумна vs звичайна каналізація — КРИТИЧНО різні товари!
+    # ТІЛЬКИ для труб! Фітинги (трійники, коліна, заглушки) не маркуємо —
+    # бо запит від Gemini зазвичай не містить htr/sline для фітингів
+    _is_pipe = re.search(r'\bтруба\b|\bpipe\b', t)
     if re.search(r'безшум|s.line|silent|sline', t):
-        t = t + ' sline '   # безшумна труба/фітинг (S-LINE, біла)
-    elif re.search(r'\bhtr\b|\bhtsafe\b|ht.safe|сіра.*канал|канал.*сіра', t):
-        t = t + ' htr '     # звичайна каналізація HTR/HT Safe (сіра)
+        t = t + ' sline '   # безшумна (S-LINE, біла)
+    elif _is_pipe and re.search(r'\bhtr\b|\bhtsafe\b|ht.safe|сіра|htr', t):
+        t = t + ' htr '     # звичайна труба HTR/HT Safe
 
     # МРЗ/МРВ/РН/РЗ/РВ → окремі токени (зовнішня vs внутрішня різьба — різні товари!)
     t = re.sub(r'\bмрз\b', ' mrz ', t)    # МРЗ = муфта різьба зовнішня
