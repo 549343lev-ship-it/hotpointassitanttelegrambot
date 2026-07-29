@@ -541,7 +541,7 @@ def kb_client_cache(message):   # показує останні 10 записі�
     name  = p['name'] if p else slug
     cache = clients.get_client_cache(slug)
     if not cache:
-        bot.reply_to(message, f"👥 Кеш *{name}* порожній.", parse_mode="Markdown")
+        bot.reply_to(message, f"👥 Кеш клієнта {name!r} порожній.")
         return
     icons = {'confirmed': '✅', 'banned': '❌', 'auto': '🔹'}
     lines = []
@@ -1305,12 +1305,18 @@ def handle_cache_cleanup(message):  # текстова команда очище
 
 # ─── Перевірка кешу (підтвердження нових збігів) ────────────────────────────
 
+def _md_safe(text: str) -> str:     # екранує Markdown спецсимволи щоб не ламати parse_mode=Markdown
+    for ch in ('*', '_', '`', '[', ']'):
+        text = text.replace(ch, '\\' + ch)
+    return text
+
+
 def _send_pending_batch(chat_id: int, batch: list):     # надсилає пачку pending збігів адміну з кнопками підтвердження
     if not batch:
         bot.send_message(chat_id, "✅ Немає нових збігів для підтвердження.")
         return
 
-    # формуємо текст пачки
+    # формуємо текст пачки — екрануємо назви щоб не ламати Markdown
     lines = []
     for i, r in enumerate(batch, 1):
         src   = "⚡" if r.get('source') == 'auto' else "🤖"
@@ -1319,10 +1325,12 @@ def _send_pending_batch(chat_id: int, batch: list):     # надсилає па�
         bm    = r.get('brand_map', {})
         if bm:
             brands = list(set(v[0] if isinstance(v, list) else v for v in bm.values()))
-            brand  = f" [{', '.join(brands[:2])}]"
+            brand  = f" [{_md_safe(', '.join(brands[:2]))}]"
+        orig = _md_safe(r.get('original', '')[:35])
+        name = _md_safe(r.get('catalog_name', '')[:50])
         lines.append(
-            f"{i}. {src} «{r.get('original', '')[:35]}»\n"
-            f"   → {r.get('catalog_name', '')[:50]}\n"
+            f"{i}. {src} «{orig}»\n"
+            f"   → {name}\n"
             f"   {conf}%{brand}"
         )
 
@@ -1414,18 +1422,21 @@ def handle_pc_pick(call):   # показує кожен збіг окремо щ
         if bm:
             brands = list(set(v[0] if isinstance(v, list) else v for v in bm.values()))
             brand  = f"\nПідказка: {', '.join(brands[:2])}"
+        orig  = r.get('original', '').replace('`', "'")
+        norm  = r.get('normalized', '').replace('`', "'")
+        cname = r.get('catalog_name', '').replace('*', '').replace('_', ' ')
         text = (
             f"📌 {src} [{r.get('confidence', 0)}%]\n"
-            f"Написано: `{r.get('original', '')}`\n"
-            f"Нормалізовано: `{r.get('normalized', '')}`\n"
-            f"Товар: *{r.get('catalog_name', '')}*{brand}"
+            f"Написано: {orig}\n"
+            f"Нормалізовано: {norm}\n"
+            f"Товар: {cname}{brand}"
         )
         mk = InlineKeyboardMarkup()
         mk.add(
             InlineKeyboardButton("✅ Зберегти", callback_data=f"pc_one_yes:{r['id']}"),
             InlineKeyboardButton("❌ Відхилити", callback_data=f"pc_one_no:{r['id']}"),
         )
-        bot.send_message(call.message.chat.id, text, parse_mode="Markdown", reply_markup=mk)
+        bot.send_message(call.message.chat.id, text, reply_markup=mk)
 
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("pc_one_yes:"))
