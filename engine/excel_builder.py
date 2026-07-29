@@ -46,6 +46,34 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list, list]
         kw       = r.get('keyword_pct', 0)
         qty_num, qty_unit = parse_qty(r.get('qty', ''))
 
+        # Товари що продаються по метражу
+        import re as _re
+        _norm = (r.get('normalized') or '').lower()
+        _name = (r.get('назва', '') or '').lower()
+        _orig = (r.get('original') or '').lower()
+
+        # Плівка і демпферна — метраж з original ("плівка 50м")
+        _is_film = any(x in _norm or x in _orig for x in ['плівк', 'фольг', 'розміт'])
+        _is_damp = any(x in _norm or x in _orig for x in ['демпф', 'демпер'])
+        if (_is_film or _is_damp) and qty_unit in ('шт', '', None):
+            _lm2 = _re.search(r'(\d+(?:[.,]\d+)?)\s*м', _orig)
+            if _lm2:
+                _v2 = float(_lm2.group(1).replace(',', '.'))
+                if _v2 >= 1:
+                    qty_num  = int(_v2) if _v2 == int(_v2) else _v2
+                    qty_unit = 'м'
+
+        # PEX/PPR труба з L=Xм в назві: qty=1 рулон → qty=X метрів
+        if qty_num == 1 and qty_unit in ('шт', '', None):
+            _lm = _re.search(r'l=(\d+(?:[.,]\d+)?)\s*м', _norm)
+            if not _lm:
+                _lm = _re.search(r',\s*l\s*=\s*(\d+(?:[.,]\d+)?)\s*м', _name)
+            if _lm:
+                _v = float(_lm.group(1).replace(',', '.'))
+                if _v > 1:
+                    qty_num  = int(_v) if _v == int(_v) else _v
+                    qty_unit = 'м'
+
         if r.get('знайдено'):
             # вважаємо сумнівним якщо впевненість низька або джерело ненадійне
             suspicious = (
