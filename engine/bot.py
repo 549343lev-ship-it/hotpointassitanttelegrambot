@@ -1343,6 +1343,7 @@ def _send_pending_batch(chat_id: int, batch: list):     # надсилає па�
     if total > len(batch):
         mk.add(InlineKeyboardButton(f"➡️ Наступні ({total - len(batch)} залишилось)",
                                     callback_data="pc_next"))
+    mk.add(InlineKeyboardButton("🧨 Очистити весь pending кеш", callback_data="pc_clear_all"))
     bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=mk)
 
 
@@ -1456,6 +1457,21 @@ def handle_pc_one_no(call):     # відхиляє один конкретний
     try:
         bot.edit_message_text(
             call.message.text + "\n\n❌ *Відхилено*",
+            call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    except Exception:
+        pass
+
+
+@bot.callback_query_handler(func=lambda c: c.data == "pc_clear_all")
+def handle_pc_clear_all(call):  # очищає весь pending кеш (використовувати коли впевнені що є помилкові збіги)
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "⛔ Тільки адмін"); return
+    count = pending_clear_all()
+    bot.answer_callback_query(call.id, f"🧨 Очищено {count} записів")
+    try:
+        bot.edit_message_text(
+            f"🧨 Весь pending кеш очищено: *{count}* записів видалено.\n"
+            f"Нові замовлення знову накопичуватимуть збіги.",
             call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     except Exception:
         pass
