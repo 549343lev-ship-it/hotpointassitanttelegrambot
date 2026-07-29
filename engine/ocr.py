@@ -106,18 +106,27 @@ def parse_caption_brands(caption: str) -> dict:
         elif brands and not cats:
             global_brands.update(brands)
 
+    # Якщо бренд БЕЗ категорії — НЕ розкидаємо на всі категорії!
+    # Це підказка для Gemini але НЕ жорстке обмеження пошуку.
+    # Зберігаємо як '_global' — search.py знатиме що це "м'яка" підказка.
     if not result and global_brands:
         first = global_brands[min(global_brands)]
-        for cat in set(CATEGORY_ALIASES.values()):
-            result[cat] = first
+        result['_global'] = first   # м'яка підказка без прив'язки до категорії
     return result
 
 def normalize_photo(image_b64: str, caption: str = "", client_prefs: dict = None) -> list[dict]:
     brand_map  = parse_caption_brands(caption)
     brand_hint = ""
     if brand_map:
-        lines      = [f"  {cat} → {toks[0]}" for cat, toks in brand_map.items()]
-        brand_hint = "\n\n⚠️ ВИРОБНИКИ (суворо!):\n" + "\n".join(lines)
+        # '_global' = м'яка підказка без категорії — показуємо Gemini як пріоритет
+        global_b = brand_map.get('_global')
+        cat_brands = {k: v for k, v in brand_map.items() if k != '_global'}
+        lines = []
+        if global_b:
+            lines.append(f"  загальний пріоритет → {global_b[0]}")
+        lines.extend(f"  {cat} → {toks[0]}" for cat, toks in cat_brands.items())
+        if lines:
+            brand_hint = "\n\n⚠️ ВИРОБНИКИ (пріоритет!):\n" + "\n".join(lines)
     ocr_block = _get_ocr_prompt_block()
     prompt = f"""Ти — досвідчений менеджер з продажу сантехніки. Рукописний список замовлення.
 ПІДКАЗКА: {caption}{brand_hint}{ocr_block}
@@ -164,8 +173,14 @@ def normalize_pdf(pdf_b64: str, caption: str = "") -> list[dict]:
     brand_map  = parse_caption_brands(caption)
     brand_hint = ""
     if brand_map:
-        lines      = [f"  {cat} → {toks[0]}" for cat, toks in brand_map.items()]
-        brand_hint = "\n⚠️ ВИРОБНИКИ (суворо!):\n" + "\n".join(lines)
+        global_b = brand_map.get('_global')
+        cat_brands = {k: v for k, v in brand_map.items() if k != '_global'}
+        lines = []
+        if global_b:
+            lines.append(f"  загальний пріоритет → {global_b[0]}")
+        lines.extend(f"  {cat} → {toks[0]}" for cat, toks in cat_brands.items())
+        if lines:
+            brand_hint = "\n⚠️ ВИРОБНИКИ (пріоритет!):\n" + "\n".join(lines)
     prompt = f"""Ти — досвідчений менеджер з продажу сантехніки. ПРОЕКТНА СПЕЦИФІКАЦІЯ (PDF).
 ПІДКАЗКА: {caption}{brand_hint}{ocr_block}
 БАЗА ЗНАНЬ:
