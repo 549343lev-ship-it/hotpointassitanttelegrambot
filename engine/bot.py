@@ -17,6 +17,7 @@ bot.py — Telegram бот підбору сантехніки (Hotpoint).
 """
 
 import os
+import math
 import re
 import base64
 import threading
@@ -247,7 +248,9 @@ def expand_insulation(позиції):     # розгортає "+ ізол" в 
                 m_total = _qty_num(п.get('qty'))
 
             if ins_dia and m_total > 0:
-                half   = m_total / 2
+                half_raw = m_total / 2
+                # PLM продається рулонами по 2м — заокруглюємо вгору до кратного 2
+                half   = math.ceil(half_raw / 2) * 2 if half_raw > 0 else 0
                 half_s = str(int(half)) if half == int(half) else f"{half:.1f}"
                 for color in ('синій', 'червоний'):
                     out.append({
