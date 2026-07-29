@@ -631,12 +631,16 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
         client_slug  = пос.get('_client_slug')
         client_prefs = пос.get('_client_prefs', {})
         manager_brand = brand_map.get(category)
-        # якщо Gemini дав неточну категорію — пробуємо суміжні
+        # якщо Gemini дав неточну категорію — пробуємо суміжні (але НЕ _global)
         if not manager_brand and brand_map:
             for similar_cat in SIMILAR_CATS.get(category, []):
-                if similar_cat in brand_map:
+                if similar_cat in brand_map and similar_cat != '_global':
                     manager_brand = brand_map[similar_cat]
                     break
+        # '_global' = м'яка підказка (бренд без категорії від менеджера)
+        # використовуємо ТІЛЬКИ якщо виробник прямо в рядку майстра не знайдено
+        # і тільки як підказку для normalized — НЕ як жорстке обмеження
+        _global_brand = brand_map.get('_global')  # може бути None
 
         # РІВЕНЬ 1.5: виробник у самому рядку майстра (Wilo, Bonomi, Herz...)
         line_brand = None
@@ -645,7 +649,10 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
             if re.search(r'(?<![a-zа-яёіїєґ0-9])' + re.escape(bk) + r'(?![a-zа-яёіїєґ0-9])', _orig_lc):
                 line_brand = bt
                 break
-        hard_brand = manager_brand or line_brand   # жорсткий виробник: підказка менеджера > рядок майстра
+        # hard_brand = жорстке обмеження пошуку (тільки цей виробник)
+        # manager_brand — ТІЛЬКИ якщо категорія явно вказана менеджером
+        # _global_brand — м'яка підказка, НЕ hard constraint
+        hard_brand = manager_brand or line_brand
 
         # РІВЕНЬ 2: кеш клієнта
         if client_slug:
