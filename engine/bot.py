@@ -1347,13 +1347,11 @@ def _send_pending_batch(chat_id: int, batch: list):     # надсилає па�
     bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=mk)
 
 
-@bot.message_handler(func=lambda m: m.text and m.text in ("👑 Перевір кеш",))
-def kb_check_cache(message):    # кнопка клавіатури "Перевір кеш" — відкриває підтвердження збігів
-    handle_check_cache(message)
-
-
-@bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('перевір кеш', 'перевир кеш'))
-def handle_check_cache(message):    # команда "перевір кеш" — показує адміну нові збіги на підтвердження
+@bot.message_handler(func=lambda m: m.text and (
+    m.text in ("👑 Перевір кеш",) or
+    m.text.lower().strip() in ('перевір кеш', 'перевир кеш')
+))
+def handle_check_cache(message):    # кнопка / команда "Перевір кеш" — показує адміну нові збіги на підтвердження
     if not is_admin(message.from_user.id):
         bot.reply_to(message, "⛔ Тільки адмін."); return
     count = pending_count()
