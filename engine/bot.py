@@ -222,12 +222,30 @@ def expand_insulation(позиції):     # розгортає "+ ізол" в 
     for п in позиції:
         out.append(п)
         orig = п.get('original', '').lower()
+        norm = п.get('normalized', '').lower()
         qa   = п.get('_qa') or build_qa(п)
         п['_qa'] = qa
         if qa.get('type') == 'труба' and re.search(r'ізол|изол|утепл', orig):
             dia     = (qa.get('dia') or [None])[0]
             ins_dia = INSUL_DIA_MAP.get(dia)
-            m_total = _qty_num(п.get('qty'))
+
+            # Метраж: спершу з нормалізованої назви L=Xм, потім з original, потім qty
+            m_total = 0.0
+            # Шукаємо L=Xм в normalized
+            _lm = re.search(r'l=(\d+(?:[.,]\d+)?)м', norm)
+            if _lm:
+                m_total = float(_lm.group(1).replace(',', '.'))
+            # Якщо не знайшли — шукаємо число + м в original
+            if not m_total:
+                _lm = re.search(r'(\d+(?:[.,]\d+)?)\s*м', orig)
+                if _lm:
+                    v = float(_lm.group(1).replace(',', '.'))
+                    if v > 1:  # метраж > 1 (виключаємо 0.5м, 0.25м короткі шматки)
+                        m_total = v
+            # Fallback: qty як кількість × метраж з назви
+            if not m_total:
+                m_total = _qty_num(п.get('qty'))
+
             if ins_dia and m_total > 0:
                 half   = m_total / 2
                 half_s = str(int(half)) if half == int(half) else f"{half:.1f}"
