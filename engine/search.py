@@ -168,6 +168,8 @@ TYPE_SYNONYMS = {   # нормалізує синоніми типів до єд
     'ніпель': 'ніпель', 'футорка': 'футорка', 'штуцер': 'штуцер',
     'подовжувач': 'подовжувач', 'бочонок': 'подовжувач',
     'зворотний': 'зворотний клапан', 'зворотній': 'зворотний клапан',
+    'гідроакумулятор': 'гідроакумулятор', 'гідроак': 'гідроакумулятор',
+    'мембрана': 'мембрана', 'баку': 'гідроакумулятор',
     'фільтр': 'фільтр', 'фильтр': 'фільтр',
     'насос': 'насос', 'радіатор': 'радіатор', 'радиатор': 'радіатор',
     'колектор': 'колектор', 'гребінка': 'колектор', 'гребенка': 'колектор',
@@ -235,6 +237,20 @@ def parse_attrs(text: str) -> dict:     # витягує атрибути з н�
     if _dm:
         dim_ordered = f"{_dm.group(1)}_{_dm.group(2)}_{_dm.group(3)}"
 
+    # безшумна vs звичайна каналізація
+    silent = None
+    if any(x in t for x in ('безшум', 's-line', 'sline', 'silent', 'біла')):
+        silent = True
+    elif any(x in t for x in ('htr', 'ht safe', 'htsafe', 'сіра')):
+        silent = False
+
+    # vv/vz — тип з'єднання (внутр-внутр vs внутр-зовн)
+    conn_type = None
+    if ' vv ' in t or '\bвв\b' in t or 'вв' in t.split():
+        conn_type = 'vv'
+    elif ' vz ' in t or 'вз' in t.split() or ' vz' in t:
+        conn_type = 'vz'
+
     # довжина труби: витягуємо окремим regex (уникаємо конфлікту з діаметрами)
     length = None
     _lm = re.search(r'l\s*[=:]?\s*(\d+[.,]\d+)\s*м', t)   # L=0,5м L=3,0м L=1.5м
@@ -254,11 +270,12 @@ def parse_attrs(text: str) -> dict:     # витягує атрибути з н�
                 dias.append(v)
     return {'type': typ, 'dia': sorted(set(dias)), 'angle': angle,
             'thread': thread, 'thread_type': thread_type,
-            'dim_ordered': dim_ordered, 'length': length}
+            'dim_ordered': dim_ordered, 'length': length,
+            'silent': silent, 'conn_type': conn_type}
 
 
 def build_qa(пос: dict) -> dict:    # будує атрибути запиту з полів Gemini + парсингу тексту (merge, Gemini пріоритетніший)
-    qa = {'type': None, 'dia': [], 'angle': None, 'thread': None, 'thread_type': None, 'dim_ordered': None, 'length': None}
+    qa = {'type': None, 'dia': [], 'angle': None, 'thread': None, 'thread_type': None, 'dim_ordered': None, 'length': None, 'silent': None, 'conn_type': None}
     # 1) прямо від Gemini (найточніше — він бачив фото)
     g_dia = пос.get('dia')
     if isinstance(g_dia, list):
@@ -281,6 +298,8 @@ def build_qa(пос: dict) -> dict:    # будує атрибути запит�
         if qa['length'] is None:      qa['length']      = pa.get('length')
         if qa['thread_type'] is None:  qa['thread_type'] = pa.get('thread_type')
         if qa['dim_ordered'] is None:  qa['dim_ordered'] = pa.get('dim_ordered')
+        if qa['silent'] is None:       qa['silent']      = pa.get('silent')
+        if qa['conn_type'] is None:    qa['conn_type']   = pa.get('conn_type')
     qa['_raw'] = f"{пос.get('normalized', '')} {пос.get('original', '')}"
     qa['angle'] = normalize_angle_for_category(qa['angle'], пос.get('category'))
     return qa
@@ -309,6 +328,18 @@ def validate_pick(qa: dict, item: dict) -> bool:    # пост-валідаці�
     # перевірка впорядкованих діаметрів трійника (ф25х16х25 ≠ ф25х16х16)
     if qa.get('dim_ordered') and ia.get('dim_ordered'):
         if qa['dim_ordered'] != ia['dim_ordered']:
+            return False
+    # перевірка безшумна vs звичайна (sline ≠ htr)
+    # Безшумна підходить ТІЛЬКИ якщо явно запитали
+    q_sl = qa.get('silent')
+    i_sl = ia.get('silent')
+    if i_sl is True and q_sl is not True:
+        return False   # товар безшумний але не запитували
+    if q_sl is True and i_sl is False:
+        return False   # запитали безшумну але товар звичайний
+    # перевірка ВВ vs ВЗ (conn_type)
+    if qa.get('conn_type') and ia.get('conn_type'):
+        if qa['conn_type'] != ia['conn_type']:
             return False
     return True
 
@@ -367,11 +398,28 @@ def attr_search(qa: dict, top_n: int = 10,
             i_do   = ia.get('dim_ordered')
             do_ok  = (q_do is None or i_do is None or q_do == i_do)
 
+            # перевірка безшумна vs звичайна каналізація (sline ≠ htr)
+            # Безшумна підходить ТІЛЬКИ якщо явно запитали (q_sl=True)
+            # Якщо запит без маркера (q_sl=None) → безшумну НЕ давати (за замовчуванням звичайна)
+            q_sl   = qa.get('silent')
+            i_sl   = ia.get('silent')
+            if i_sl is True and q_sl is not True:
+                sl_ok = False   # товар безшумний але не запитували — не підходить
+            elif q_sl is True and i_sl is False:
+                sl_ok = False   # запитали безшумну але товар звичайний — не підходить
+            else:
+                sl_ok = True
+
+            # перевірка ВВ vs ВЗ з'єднання
+            q_ct   = qa.get('conn_type')
+            i_ct   = ia.get('conn_type')
+            ct_ok  = (q_ct is None or i_ct is None or q_ct == i_ct)
+
             # tier 1: все точно; tier 2: тип+діаметри⊆+кут; tier 3: тип+діаметри; tier 4: тільки діаметри
-            if type_ok and dia_eq and ang_ok and len_ok and tt_ok and do_ok:    tiers[1].append(item)
-            elif type_ok and dia_sub and ang_ok and len_ok and tt_ok and do_ok: tiers[2].append(item)
-            elif type_ok and dia_sub:                                             tiers[3].append(item)
-            elif dia_sub and q_type is None:                                      tiers[4].append(item)
+            if type_ok and dia_eq and ang_ok and len_ok and tt_ok and do_ok and sl_ok and ct_ok:    tiers[1].append(item)
+            elif type_ok and dia_sub and ang_ok and len_ok and tt_ok and do_ok and sl_ok and ct_ok: tiers[2].append(item)
+            elif type_ok and dia_sub:                                                                 tiers[3].append(item)
+            elif dia_sub and q_type is None:                                                          tiers[4].append(item)
 
         for tier, pct in ((1, 100), (2, 95), (3, 85), (4, 70)):
             cand = tiers[tier]
