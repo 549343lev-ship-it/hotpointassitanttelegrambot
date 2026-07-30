@@ -237,11 +237,16 @@ def ensure_tokens():    # лінива індексація токенів і а
 print("📦 Завантажую каталог...", flush=True)
 load_catalog()
 
-# Voyage AI embeddings — завантажуємо або будуємо після каталогу
+# Voyage AI embeddings — тільки ЗАВАНТАЖУЄМО якщо файл є (НЕ будуємо!)
 try:
-    from engine.voyage_search import rebuild_if_needed as _voyage_rebuild
-    _voyage_rebuild(CATALOG)
+    from engine.voyage_search import load_embeddings as _voyage_load
+    import os as _os
+    _emb_file = _os.path.join(DATA_DIR, "catalog_embeddings.npz")
+    if _os.path.exists(_emb_file):
+        _voyage_load()
+    else:
+        print("ℹ️ Voyage: embeddings не знайдено — пошук працює без Voyage", flush=True)
 except ImportError:
-    pass    # voyage_search ще не встановлено — ігноруємо
+    pass
 except Exception as _e:
     print(f"⚠️ Voyage init: {_e}", flush=True)
