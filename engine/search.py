@@ -603,8 +603,15 @@ def smart_search(пос: dict, top_n: int = 12,
     is_other   = (routed_cat in (None, 'other'))
     query_text = пос.get('normalized', '') or пос.get('original', '')
 
-    # ── КРОК 0: VOYAGE AI — вимкнено (потребує >512MB RAM на Render)
-    # if voyage_ready() and query_text: ...
+    # ── КРОК 0: VOYAGE AI (семантичний пошук) ────────────────────────────────
+    if voyage_ready() and query_text:
+        voyage_cands = voyage_search(
+            query_text, top_n=top_n,
+            category=routed_cat if not is_other else None,
+            catalog=CATALOG
+        )
+        if voyage_cands:
+            return voyage_cands
 
     # ── КРОК 0.5: ПІДГРУПА — шукаємо в точній підгрупі каталогу ────────────
     # group/subgroup береться з xlsx (наприклад "ASG труба", "REHAU", "тип 22")
@@ -896,7 +903,35 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                               'candidates_debug': []}
             continue
 
-        # ⚡ VOYAGE АВТО-ПРИЙОМ — вимкнено
+        # ⚡ VOYAGE АВТО-ПРИЙОМ: якщо Voyage впевнений (score >= 0.82) → одразу
+        if кандидати and кандидати[0].get('_voyage') and not brand_warning:
+            top = кандидати[0]
+            if top.get('score', 0) >= THRESHOLD_AUTO:
+                _qa_v = пос.get('_qa') or build_qa(пос)
+                пос['_qa'] = _qa_v
+                if validate_pick(_qa_v, top):
+                    результати[i] = {
+                        'original': original, 'normalized': normalized,
+                        'знайдено': True, 'назва': top['name'],
+                        'назва_повна': top.get('name_full', top['name']),
+                        'артикул': top.get('artikul', ''), 'ціна': top.get('price', ''),
+                        'qty': пос.get('qty', ''), 'category': category,
+                        'confidence': top.get('_match_pct', 0),
+                        'keyword_pct': top.get('_match_pct', 0),
+                        'джерело': f"🚀 Voyage {top.get('_match_pct', 0)}%",
+                        'brand_warning': '',
+                        'reason': f"Voyage AI: score={top.get('score', 0):.3f}",
+                        'fail_reason': '',
+                        'candidates_debug': [c['name'] for c in кандидати[:3]],
+                        '_prefix': пос.get('_prefix', 'XX'),
+                        '_routed_cat': пос.get('_routed_cat', 'other'),
+                    }
+                    cache_save(original, brand_map, normalized, top['name'], category,
+                               top.get('_match_pct', 0))
+                    if client_slug:
+                        clients.client_cache_save(client_slug, original, top['name'],
+                                                  category, top.get('_match_pct', 0))
+                    continue
 
         # ⚡ АВТО-ПРИЙОМ: очевидний збіг без Claude (швидше і дешевше)
         # умови: tier-1 атрибутний або всі числа збіглись + pct≥95 + відрив від №2 ≥25%
