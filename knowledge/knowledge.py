@@ -411,3 +411,6 @@ HIDROS, Idmar, Biasi, Purmo — всі продаємо.
   "Фіксатор повороту труби, 90°, ф25мм, REHAU" — є в базі.
 
 """
+
+def get_knowledge() -> str:     # повертає базу знань для вставки в промпт Gemini
+    return KNOWLEDGE.strip()
