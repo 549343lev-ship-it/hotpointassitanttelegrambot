@@ -81,6 +81,10 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list, list]
                 or r.get('brand_warning')
                 or r.get('джерело', '') in ('⚠️ fallback', '🔍 вільний', '⚠️ аналог')
             )
+            # Розділ = [PP] + розділ PDF специфікації (якщо є)
+            _pref = r.get('_prefix', '')
+            _sect = r.get('розділ', '')
+            _rozd = f"[{_pref}] {_sect}".strip() if _pref else _sect
             rows.append({
                 '№':            len(rows) + 1,
                 'Артикул':      r.get('артикул', ''),
@@ -90,7 +94,7 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list, list]
                 'Ціна':         r.get('ціна', ''),
                 'Збіг':         f"🔍{kw}%/🤖{conf}%",
                 'Джерело':      r.get('джерело', ''),
-                'Розділ':       r.get('розділ', ''),
+                'Розділ':       _rozd,
                 'Чому знайшло': r.get('reason', ''),
                 'Оригінал':     r.get('original', ''),
                 'Нормалізовано': r.get('normalized', ''),
@@ -109,6 +113,9 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list, list]
                     full  = it.get('name_full', best)
                     price = it.get('price', '')
                     break
+            _pref2 = r.get('_prefix', '')
+            _sect2 = r.get('розділ', '')
+            _rozd2 = f"[{_pref2}] {_sect2}".strip() if _pref2 else _sect2
             rows.append({
                 '№':            len(rows) + 1,
                 'Артикул':      art,
@@ -118,7 +125,7 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list, list]
                 'Ціна':         price,
                 'Збіг':         '—',
                 'Джерело':      '❓ НЕ ЗНАЙДЕНО',
-                'Розділ':       r.get('розділ', ''),
+                'Розділ':       _rozd2,
                 'Чому знайшло': (r.get('fail_reason', '') or '')[:100],
                 'Оригінал':     r.get('original', ''),
                 'Нормалізовано': r.get('normalized', ''),
