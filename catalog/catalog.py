@@ -236,3 +236,12 @@ def ensure_tokens():    # лінива індексація токенів і а
 # ─── Ініціалізація ───────────────────────────────────────────────────────────
 print("📦 Завантажую каталог...", flush=True)
 load_catalog()
+
+# Voyage AI embeddings — завантажуємо або будуємо після каталогу
+try:
+    from engine.voyage_search import rebuild_if_needed as _voyage_rebuild
+    _voyage_rebuild(CATALOG)
+except ImportError:
+    pass    # voyage_search ще не встановлено — ігноруємо
+except Exception as _e:
+    print(f"⚠️ Voyage init: {_e}", flush=True)
