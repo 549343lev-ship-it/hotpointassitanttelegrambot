@@ -116,10 +116,27 @@ def pending_confirm(ids: list) -> int:      # зберігає підтверд�
     return saved
 
 
-def pending_reject(ids: list) -> int:   # видаляє відхилені записи з черги; повертає к-ть видалених
+def pending_reject(ids: list) -> int:   # видаляє відхилені записи з черги і банить пару щоб не повторювалась
     records  = _load()
-    to_keep  = [r for r in records if r["id"] not in ids]
-    rejected = len(records) - len(to_keep)
+    to_keep  = []
+    rejected = 0
+
+    for r in records:
+        if r["id"] in ids:
+            # адмін відхилив → баним пару original→catalog_name щоб більше не пропонувалась
+            try:
+                from clients.cache import cache_ban_pair
+                cache_ban_pair(
+                    r["original"],
+                    r["catalog_name"],
+                    r.get("category", "other"),
+                )
+            except Exception as e:
+                print(f"⚠️ pending_reject ban: {e}")
+            rejected += 1
+        else:
+            to_keep.append(r)
+
     _save(to_keep)
     return rejected
 
