@@ -255,6 +255,16 @@ TEXT_RULES = [          # список (паттерн, категорія) — 
 
 # ─── Основні функції ─────────────────────────────────────────────────────────
 
+
+def route_sub(пос: dict, cat: str) -> list[str] | None:    # повертає ключові слова підкатегорії або None якщо фільтр не потрібен
+    import re as _re
+    combined = ((пос.get('normalized') or '') + ' ' + (пос.get('original') or '')).lower()
+    for pattern, keywords in SUBCAT_RULES:
+        if _re.search(pattern, combined, _re.IGNORECASE):
+            return keywords
+    return None
+
+
 def route(пос: dict) -> str:    # визначає category_code для позиції; повертає код або 'other'
     """
     Головна функція маршрутизації.
