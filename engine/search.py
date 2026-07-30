@@ -722,6 +722,8 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                     'джерело': '👤 кеш клієнта' + (' ✅' if c.get('status') == 'confirmed' else ''),
                     'reason': f"З кешу клієнта ({c.get('confidence', 0)}%)",
                     'fail_reason': '', 'candidates_debug': [], '_from_cache': True,
+                    '_prefix': пос.get('_prefix', 'XX'),
+                    '_routed_cat': пос.get('_routed_cat', 'other'),
                 }
                 continue
 
@@ -749,6 +751,8 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                     'джерело': '🤖 кеш бота' + (' ✅' if cached.get('status') == 'confirmed' else ''),
                     'reason': f"З кешу ({cached.get('confidence', 0)}%)",
                     'fail_reason': '', 'candidates_debug': [], '_from_cache': True,
+                    '_prefix': пос.get('_prefix', 'XX'),
+                    '_routed_cat': пос.get('_routed_cat', 'other'),
                 }
                 continue
             # кеш суперечить підказці виробника — ігноруємо, шукаємо заново
@@ -833,6 +837,8 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                     'джерело': '⚡ точний збіг', 'brand_warning': '',
                     'reason': 'Всі розміри і назва збіглись — вибрано без AI',
                     'fail_reason': '', 'candidates_debug': [c['name'] for c in кандидати[:3]],
+                    '_prefix': пос.get('_prefix', 'XX'),
+                    '_routed_cat': пос.get('_routed_cat', 'other'),
                 }
                 # ⚡ точний збіг — відправляємо на підтвердження адміну замість автозбереження
                 pending_add(original, brand_map, normalized, top['name'], category, 95, source='auto')
@@ -848,6 +854,8 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
             'category': category, 'brand_map': brand_map,
             'client_slug': client_slug, 'джерело': джерело,
             'brand_warning': brand_warning,
+            '_prefix': пос.get('_prefix', 'XX'),
+            '_routed_cat': пос.get('_routed_cat', 'other'),
         })
 
     # ─── Claude batch: відправляємо всі неочевидні позиції одним запитом ─────
@@ -887,6 +895,8 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                     'джерело': пос['джерело'], 'brand_warning': пос.get('brand_warning', ''),
                     'reason': reason, 'fail_reason': '',
                     'candidates_debug': пос['candidates_debug'],
+                    '_prefix': пос.get('_prefix', 'XX'),
+                    '_routed_cat': пос.get('_routed_cat', 'other'),
                 }
                 # Claude вибір — відправляємо на підтвердження адміну
                 pending_add(пос['original'], пос['brand_map'], пос['normalized'],
@@ -902,6 +912,8 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                     'confidence': conf, 'джерело': '',
                     'reason': '', 'fail_reason': r.get('fail_reason', 'не знайдено'),
                     'candidates_debug': пос['candidates_debug'],
+                    '_prefix': пос.get('_prefix', 'XX'),
+                    '_routed_cat': пос.get('_routed_cat', 'other'),
                 }
                 if пос.get('required_brand'):
                     retry_позиції.append(пос)   # кандидат на другий шанс з іншим виробником
@@ -940,6 +952,8 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                             'джерело': '⚠️ аналог', 'brand_warning': warn,
                             'reason': f"{warn}. {r.get('reason', '')}",
                             'fail_reason': '', 'candidates_debug': пос['candidates_debug'],
+                            '_prefix': пос.get('_prefix', 'XX'),
+                            '_routed_cat': пос.get('_routed_cat', 'other'),
                         }
                         # аналоги НЕ кешуємо щоб не закріпити заміну назавжди
 
