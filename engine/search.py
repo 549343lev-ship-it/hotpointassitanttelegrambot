@@ -20,7 +20,8 @@ from clients.cache import (cache_lookup, cache_save, cache_confirm, cache_delete
 from clients.pending_cache import pending_add  # нові збіги → на підтвердження адміну
 from clients import clients
 from catalog.catalog import CATALOG, tokenize, ensure_tokens
-from engine.router import route_batch, get_prefix, CAT_PREFIX  # жорстка маршрутизація по категоріях
+from engine.router import (route_batch, get_prefix, CAT_PREFIX,
+                            route_sub)  # жорстка маршрутизація + підкатегорії
 from engine.voyage_search import (voyage_find_one, voyage_search,
                                    rebuild_if_needed, is_ready as voyage_ready,
                                    THRESHOLD_AUTO, THRESHOLD_MIN)  # векторний пошук Voyage AI
@@ -604,6 +605,33 @@ def smart_search(пос: dict, top_n: int = 12,
 
     # ── КРОК 0: VOYAGE AI — вимкнено (потребує >512MB RAM на Render)
     # if voyage_ready() and query_text: ...
+
+    # ── КРОК 0.5: ПІДГРУПА — шукаємо в точній підгрупі каталогу ────────────
+    # group/subgroup береться з xlsx (наприклад "ASG труба", "REHAU", "тип 22")
+    if not is_other:
+        sub_keywords = route_sub(пос, routed_cat)
+        if sub_keywords:
+            sub_cand = [
+                it for it in CATALOG
+                if it.get('category') == routed_cat
+                and any(kw.lower() in (it.get('group','') + ' ' + it.get('subgroup','')).lower()
+                        for kw in sub_keywords)
+            ]
+            if sub_cand:
+                # Шукаємо attr/keyword тільки серед товарів підгрупи
+                sub_tokens_built = all('_tokens' in it for it in sub_cand[:5])
+                if sub_tokens_built:
+                    q_toks = tokenize(query_text)
+                    scored = []
+                    for it in sub_cand:
+                        hits = len(q_toks & it.get('_tokens', set()))
+                        if hits > 0:
+                            c = dict(it)
+                            c['_match_pct'] = min(int(hits / max(len(q_toks),1) * 100), 100)
+                            scored.append(c)
+                    scored.sort(key=lambda x: -x['_match_pct'])
+                    if scored:
+                        return scored[:top_n]
 
     # ── КРОК 1: СТРОГО у своїй категорії (attr_search strict) ──────────────
     if not is_other:
