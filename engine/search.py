@@ -20,6 +20,7 @@ from clients.cache import (cache_lookup, cache_save, cache_confirm, cache_delete
 from clients.pending_cache import pending_add  # нові збіги → на підтвердження адміну
 from clients import clients
 from catalog.catalog import CATALOG, tokenize, ensure_tokens
+from engine.router import route_batch, get_prefix, CAT_PREFIX  # жорстка маршрутизація по категоріях
 
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_KEY", "")
 claude        = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
@@ -389,7 +390,8 @@ def validate_pick(qa: dict, item: dict) -> bool:    # пост-валідаці�
 # ─── Атрибутний пошук ────────────────────────────────────────────────────────
 
 def attr_search(qa: dict, top_n: int = 10,
-                brand_tokens: list = None, category: str = None) -> list[dict]:  # детермінований пошук по тип+діаметри+кут; tier-и від точного до приблизного; повертає топ-N
+                brand_tokens: list = None, category: str = None,
+                strict_cat: bool = False) -> list[dict]:  # детермінований пошук; strict_cat=True → тільки ця категорія, без розширення на суміжні
     ensure_tokens()
     if not qa.get('dia') and not qa.get('type'):
         return []   # без атрибутів пошук не має сенсу
@@ -399,8 +401,12 @@ def attr_search(qa: dict, top_n: int = 10,
     q_type   = qa.get('type')
     q_thread = qa.get('thread')
 
-    # пули: спершу своя категорія, потім суміжні, потім весь каталог
-    if category:
+    # ЖОРСТКА МАРШРУТИЗАЦІЯ: strict_cat=True → тільки ця категорія, без розширення
+    if category and strict_cat:
+        pools = [
+            [it for it in CATALOG if it.get('category') == category],
+        ]
+    elif category:
         pools = [
             [it for it in CATALOG if it.get('category') == category],
             [it for it in CATALOG if it.get('category') in SIMILAR_CATS.get(category, [])],
@@ -489,7 +495,8 @@ def attr_search(qa: dict, top_n: int = 10,
 
 
 def keyword_search(query: str, top_n: int = 12,
-                   brand_tokens: list = None) -> list[dict]:    # пошук за токенами: рахує збіг слів і чисел; повертає відсортований список кандидатів
+                   brand_tokens: list = None,
+                   category: str = None, strict_cat: bool = False) -> list[dict]:  # пошук за токенами; strict_cat=True → тільки задана категорія
     ensure_tokens()
     q_tokens  = tokenize(query)
     q_numbers = set(re.findall(r'\d+', query.lower()))
@@ -497,8 +504,15 @@ def keyword_search(query: str, top_n: int = 12,
     if not q_tokens:
         return []
     brand_lc = [t.lower() for t in brand_tokens] if brand_tokens else None
+
+    # ЖОРСТКА МАРШРУТИЗАЦІЯ: strict_cat → шукаємо тільки в одній категорії
+    if category and strict_cat:
+        pool = [it for it in CATALOG if it.get('category') == category]
+    else:
+        pool = CATALOG
+
     scores   = []
-    for item in CATALOG:
+    for item in pool:
         if brand_lc and not any(t in item['name'].lower() for t in brand_lc):
             continue
         it        = item.get('_tokens', set())
@@ -522,13 +536,42 @@ def keyword_search(query: str, top_n: int = 12,
 
 
 def smart_search(пос: dict, top_n: int = 12,
-                 brand_tokens: list = None) -> list[dict]:  # спершу атрибутний пошук; якщо порожньо — fallback на keyword_search
+                 brand_tokens: list = None) -> list[dict]:  # жорсткий пошук: спершу у своїй категорії (strict), потім суміжні, потім весь каталог
     qa = пос.get('_qa')
     if qa is None:
         qa = build_qa(пос)
         пос['_qa'] = qa
-    cand = attr_search(qa, top_n=top_n, brand_tokens=brand_tokens,
-                       category=пос.get('category'))
+
+    # Використовуємо _routed_cat (від router.py) — він точніший ніж category від Gemini
+    routed_cat = пос.get('_routed_cat') or пос.get('category')
+    is_other   = (routed_cat in (None, 'other'))
+
+    # ── КРОК 1: СТРОГО у своїй категорії (attr_search strict) ──────────────
+    if not is_other:
+        cand = attr_search(qa, top_n=top_n, brand_tokens=brand_tokens,
+                           category=routed_cat, strict_cat=True)
+        if cand:
+            return cand
+
+        # ── КРОК 2: keyword у своїй категорії ──────────────────────────────
+        cand = keyword_search(
+            пос.get('normalized', '') or пос.get('original', ''),
+            top_n=top_n, brand_tokens=brand_tokens,
+            category=routed_cat, strict_cat=True
+        )
+        if cand:
+            return cand
+
+        # ── КРОК 3: суміжні категорії (SIMILAR_CATS) ───────────────────────
+        similar = SIMILAR_CATS.get(routed_cat, [])
+        if similar:
+            cand = attr_search(qa, top_n=top_n, brand_tokens=brand_tokens,
+                               category=routed_cat, strict_cat=False)
+            if cand:
+                return cand
+
+    # ── КРОК 4: весь каталог (тільки якщо routed_cat=other або нічого не знайшли) ──
+    cand = attr_search(qa, top_n=top_n, brand_tokens=brand_tokens)
     if cand:
         return cand
     return keyword_search(
@@ -616,7 +659,11 @@ JSON рівно {len(позиції)} елементів:
 
 # ─── Головна функція пошуку ──────────────────────────────────────────────────
 
-def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    # основна функція: проходить 4 рівні пошуку для кожної позиції; повертає список результатів
+def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    # основна функція: маршрутизація + 4 рівні пошуку для кожної позиції; повертає список результатів
+    # ── ЖОРСТКА МАРШРУТИЗАЦІЯ: визначаємо категорію ПЕРЕД пошуком ──────────
+    # Кожна позиція отримує _routed_cat і _prefix на основі тексту нормалізації
+    route_batch(позиції)   # мутує позиції: додає _routed_cat і _prefix in-place
+
     результати        = [None] * len(позиції)
     потребують_claude = []
     retry_позиції     = []
