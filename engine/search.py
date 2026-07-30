@@ -21,6 +21,9 @@ from clients.pending_cache import pending_add  # нові збіги → на п
 from clients import clients
 from catalog.catalog import CATALOG, tokenize, ensure_tokens
 from engine.router import route_batch, get_prefix, CAT_PREFIX  # жорстка маршрутизація по категоріях
+from engine.voyage_search import (voyage_find_one, voyage_search,
+                                   rebuild_if_needed, is_ready as voyage_ready,
+                                   THRESHOLD_AUTO, THRESHOLD_MIN)  # векторний пошук Voyage AI
 
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_KEY", "")
 claude        = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
@@ -557,15 +560,28 @@ def keyword_search(query: str, top_n: int = 12,
 
 
 def smart_search(пос: dict, top_n: int = 12,
-                 brand_tokens: list = None) -> list[dict]:  # жорсткий пошук: спершу у своїй категорії (strict), потім суміжні, потім весь каталог
+                 brand_tokens: list = None) -> list[dict]:  # жорсткий пошук: Voyage AI → attr → keyword; повертає топ кандидатів
     qa = пос.get('_qa')
     if qa is None:
         qa = build_qa(пос)
         пос['_qa'] = qa
 
-    # Використовуємо _routed_cat (від router.py) — він точніший ніж category від Gemini
     routed_cat = пос.get('_routed_cat') or пос.get('category')
     is_other   = (routed_cat in (None, 'other'))
+    query_text = пос.get('normalized', '') or пос.get('original', '')
+
+    # ── КРОК 0: VOYAGE AI (семантичний пошук) ────────────────────────────────
+    # Якщо є embeddings → шукаємо через Voyage, отримуємо топ-N семантично схожих
+    if voyage_ready() and query_text:
+        voyage_cands = voyage_search(
+            query_text, top_n=top_n,
+            category=routed_cat if not is_other else None,
+            catalog=CATALOG
+        )
+        if voyage_cands:
+            # Voyage знайшов кандидатів — повертаємо їх (з _voyage=True маркером)
+            # find_items далі вирішить: одразу брати чи питати Claude
+            return voyage_cands
 
     # ── КРОК 1: СТРОГО у своїй категорії (attr_search strict) ──────────────
     if not is_other:
@@ -576,8 +592,7 @@ def smart_search(пос: dict, top_n: int = 12,
 
         # ── КРОК 2: keyword у своїй категорії ──────────────────────────────
         cand = keyword_search(
-            пос.get('normalized', '') or пос.get('original', ''),
-            top_n=top_n, brand_tokens=brand_tokens,
+            query_text, top_n=top_n, brand_tokens=brand_tokens,
             category=routed_cat, strict_cat=True
         )
         if cand:
@@ -591,14 +606,11 @@ def smart_search(пос: dict, top_n: int = 12,
             if cand:
                 return cand
 
-    # ── КРОК 4: весь каталог (тільки якщо routed_cat=other або нічого не знайшли) ──
+    # ── КРОК 4: весь каталог ─────────────────────────────────────────────────
     cand = attr_search(qa, top_n=top_n, brand_tokens=brand_tokens)
     if cand:
         return cand
-    return keyword_search(
-        пос.get('normalized', '') or пос.get('original', ''),
-        top_n=top_n, brand_tokens=brand_tokens
-    )
+    return keyword_search(query_text, top_n=top_n, brand_tokens=brand_tokens)
 
 
 # ─── Claude вибір ────────────────────────────────────────────────────────────
@@ -833,6 +845,34 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                               'reason': '', 'fail_reason': 'всі кандидати забанені',
                               'candidates_debug': []}
             continue
+
+        # ⚡ VOYAGE АВТО-ПРИЙОМ: якщо Voyage впевнений (score >= 0.82) → одразу
+        if кандидати and кандидати[0].get('_voyage') and not brand_warning:
+            top = кандидати[0]
+            if top.get('score', 0) >= THRESHOLD_AUTO:
+                _qa_v = пос.get('_qa') or build_qa(пос)
+                if validate_pick(_qa_v, top):
+                    результати[i] = {
+                        'original': original, 'normalized': normalized,
+                        'знайдено': True, 'назва': top['name'],
+                        'назва_повна': top.get('name_full', top['name']),
+                        'артикул': top.get('artikul', ''), 'ціна': top.get('price', ''),
+                        'qty': пос.get('qty', ''), 'category': category,
+                        'confidence': top.get('_match_pct', 0),
+                        'keyword_pct': top.get('_match_pct', 0),
+                        'джерело': f"🚀 Voyage {top.get('_match_pct', 0)}%",
+                        'brand_warning': '',
+                        'reason': f"Voyage AI: score={top.get('score', 0):.3f}",
+                        'fail_reason': '', 'candidates_debug': [c['name'] for c in кандидати[:3]],
+                        '_prefix': пос.get('_prefix', 'XX'),
+                        '_routed_cat': пос.get('_routed_cat', 'other'),
+                    }
+                    pending_add(original, brand_map, normalized, top['name'], category,
+                                top.get('_match_pct', 0), source='voyage')
+                    if client_slug:
+                        clients.client_cache_save(client_slug, original, top['name'],
+                                                  category, top.get('_match_pct', 0))
+                    continue
 
         # ⚡ АВТО-ПРИЙОМ: очевидний збіг без Claude (швидше і дешевше)
         # умови: tier-1 атрибутний або всі числа збіглись + pct≥95 + відрив від №2 ≥25%
