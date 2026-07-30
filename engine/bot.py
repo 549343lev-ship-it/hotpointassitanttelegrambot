@@ -661,12 +661,23 @@ def handle_fixq_decision(call):     # адмін підтверджує або �
                 f"«{fix.get('original', '')[:40]}» → {(fix.get('new_name') or 'заборонено')[:55]}")
         except Exception: pass
     else:
+        # адмін відхилив виправлення менеджера → баним цей збіг щоб не повторювався
+        old_name = fix.get('old_name')
+        original = fix.get('original', '')
+        cat      = fix.get('category', 'other')
+        if old_name and original:
+            try:
+                cache_ban_pair(original, old_name, cat)
+                if fix.get('client_slug'):
+                    clients.client_cache_set_status(fix['client_slug'], original, old_name, 'banned')
+            except Exception as e:
+                print(f"⚠️ fixno ban: {e}")
         bot.edit_message_text(
-            f"❌ ВІДХИЛЕНО (від @{who}):\n«{fix.get('original', '')[:40]}»",
+            f"❌ ВІДХИЛЕНО + ЗАБАНЕНО (від @{who}):\n«{original[:40]}»\n→ {(old_name or '—')[:50]}",
             call.message.chat.id, call.message.message_id)
         try:
             bot.send_message(fix['user_id'],
-                f"❌ Твоє виправлення відхилено адміном:\n«{fix.get('original', '')[:40]}»")
+                f"❌ Твоє виправлення відхилено адміном:\n«{original[:40]}»")
         except Exception: pass
     bot.answer_callback_query(call.id, "Готово")
 
