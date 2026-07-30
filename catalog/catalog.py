@@ -260,5 +260,11 @@ def ensure_tokens():    # лінива індексація токенів і а
 print("📦 Завантажую каталог...", flush=True)
 load_catalog()
 
-# Voyage AI вимкнено (потребує >512MB RAM)
-# Для увімкнення: апгрейд Render до 1GB+ і розкоментувати
+# Voyage AI embeddings — завантажуємо при старті (потребує 1GB RAM)
+try:
+    from engine.voyage_search import rebuild_if_needed as _voyage_rebuild
+    _voyage_rebuild(CATALOG)
+except ImportError:
+    print("⚠️ voyageai не встановлено", flush=True)
+except Exception as _e:
+    print(f"⚠️ Voyage init: {_e}", flush=True)
