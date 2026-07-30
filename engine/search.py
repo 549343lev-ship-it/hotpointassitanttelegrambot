@@ -24,6 +24,7 @@ from engine.router import (route_batch, get_prefix, CAT_PREFIX,
                             route_sub)  # жорстка маршрутизація + підкатегорії
 from engine.voyage_search import (voyage_find_one, voyage_search,
                                    rebuild_if_needed, is_ready as voyage_ready,
+                                   make_routing_path,
                                    THRESHOLD_AUTO, THRESHOLD_MIN)  # векторний пошук Voyage AI
 
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_KEY", "")
@@ -603,15 +604,36 @@ def smart_search(пос: dict, top_n: int = 12,
     is_other   = (routed_cat in (None, 'other'))
     query_text = пос.get('normalized', '') or пос.get('original', '')
 
-    # ── КРОК 0: VOYAGE AI (семантичний пошук) ────────────────────────────────
+    # ── КРОК 0: VOYAGE AI (семантичний пошук з ієрархічною маршрутизацією) ──
+    # routing_path будується з category + group + subgroup товару (з xlsx-структури)
+    # Пошук іде від вузького вузла до широкого: cat|grp|sub → cat|grp → cat → всі
     if voyage_ready() and query_text:
+        # Будуємо routing_path якщо є підказка бренду (group у Voyage = виробник)
+        # brand_tokens[0] як підказка для group — звужує до підгрупи виробника
+        v_path = None
+        if not is_other and routed_cat:
+            # Якщо є brand_tokens — пробуємо вузький шлях cat|brand
+            # інакше — просто категорія
+            if brand_tokens:
+                v_path = make_routing_path(routed_cat, brand_tokens[0], '')
+            else:
+                v_path = routed_cat  # пошук по всій категорії
+
         voyage_cands = voyage_search(
             query_text, top_n=top_n,
             category=routed_cat if not is_other else None,
+            routing_path=v_path,
+            brand_tokens=brand_tokens,
             catalog=CATALOG
         )
-        if voyage_cands:
+        # Повертаємо одразу тільки якщо топ-результат достатньо впевнений
+        # Інакше — Voyage кандидати йдуть далі в Claude для вибору
+        if voyage_cands and voyage_cands[0].get('score', 0) >= THRESHOLD_AUTO:
             return voyage_cands
+        # Зберігаємо Voyage кандидати як fallback якщо attr/keyword нічого не дадуть
+        _voyage_fallback = voyage_cands or []
+    else:
+        _voyage_fallback = []
 
     # ── КРОК 0.5: ПІДГРУПА — шукаємо в точній підгрупі каталогу ────────────
     # group/subgroup береться з xlsx (наприклад "ASG труба", "REHAU", "тип 22")
@@ -667,7 +689,12 @@ def smart_search(пос: dict, top_n: int = 12,
     cand = attr_search(qa, top_n=top_n, brand_tokens=brand_tokens)
     if cand:
         return cand
-    return keyword_search(query_text, top_n=top_n, brand_tokens=brand_tokens)
+    cand = keyword_search(query_text, top_n=top_n, brand_tokens=brand_tokens)
+    if cand:
+        return cand
+    # ── КРОК 5: Voyage fallback (якщо score < THRESHOLD_AUTO але щось є) ─────
+    # Йдуть до Claude для фінального вибору
+    return _voyage_fallback
 
 
 # ─── Claude вибір ────────────────────────────────────────────────────────────
