@@ -260,11 +260,14 @@ def ensure_tokens():    # лінива індексація токенів і а
 print("📦 Завантажую каталог...", flush=True)
 load_catalog()
 
-# Voyage AI embeddings — завантажуємо при старті (потребує 1GB RAM)
+# Voyage AI — тільки завантажуємо готовий файл (НЕ будуємо на сервері)
 try:
-    from engine.voyage_search import rebuild_if_needed as _voyage_rebuild
-    _voyage_rebuild(CATALOG)
-except ImportError:
-    print("⚠️ voyageai не встановлено", flush=True)
+    from engine.voyage_search import load_embeddings as _voyage_load
+    import os as _os
+    _emb = _os.path.join(DATA_DIR, "catalog_embeddings.npz")
+    if _os.path.exists(_emb):
+        _voyage_load()
+    else:
+        print("ℹ️ Voyage: embeddings не знайдено — пошук без Voyage", flush=True)
 except Exception as _e:
-    print(f"⚠️ Voyage init: {_e}", flush=True)
+    print(f"⚠️ Voyage: {_e}", flush=True)
