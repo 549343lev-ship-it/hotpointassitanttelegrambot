@@ -408,6 +408,38 @@ def validate_pick(qa: dict, item: dict) -> bool:    # пост-валідаці�
         if _q_rad_type.group(1) != _i_rad_type.group(1):
             return False  # запитали тип 10 але знайшло тип 22 — відхиляємо
 
+    # перевірка категорії: якщо запит в [AR] а товар plastic_ppr → відхиляємо
+    # (подовжувач/Gebo ≠ PPR муфта)
+    _qa_cat   = qa.get('_routed_cat', '')
+    _item_cat = item.get('category', '')
+    _incompatible_cats = {
+        # якщо запитали адаптери — PPR не підходить і навпаки
+        ('adapters_reducers', 'plastic_ppr'),
+        ('plastic_ppr', 'adapters_reducers'),
+        # запірна арматура ≠ PPR
+        ('shutoff_valves', 'plastic_ppr'),
+        ('plastic_ppr', 'shutoff_valves'),
+        # каналізація ≠ PPR  
+        ('sewage', 'plastic_ppr'),
+        ('plastic_ppr', 'sewage'),
+        # тепла підлога ≠ PPR
+        ('underfloor_heating', 'plastic_ppr'),
+        # котли ≠ радіатори
+        ('boilers', 'radiators_radiatorsvalve'),
+        ('radiators_radiatorsvalve', 'boilers'),
+    }
+    if _qa_cat and _item_cat and (_qa_cat, _item_cat) in _incompatible_cats:
+        return False  # несумісні категорії
+
+    # перевірка різьби: 1/2" ≠ 1 1/2" (різні розміри!)
+    _q_thread = qa.get('thread', '')
+    _i_thread = (item.get('_attrs') or {}).get('thread', '')
+    if _q_thread and _i_thread and _q_thread != _i_thread:
+        # Строга перевірка тільки якщо обидва мають різьбу
+        # 1_1_2 (1 1/2") ≠ 1_2 (1/2") — це різні товари!
+        if len(_q_thread) != len(_i_thread):
+            return False  # різна кількість символів = різний розмір різьби
+
     return True
 
 
@@ -570,18 +602,8 @@ def smart_search(пос: dict, top_n: int = 12,
     is_other   = (routed_cat in (None, 'other'))
     query_text = пос.get('normalized', '') or пос.get('original', '')
 
-    # ── КРОК 0: VOYAGE AI (семантичний пошук) ────────────────────────────────
-    # Якщо є embeddings → шукаємо через Voyage, отримуємо топ-N семантично схожих
-    if voyage_ready() and query_text:
-        voyage_cands = voyage_search(
-            query_text, top_n=top_n,
-            category=routed_cat if not is_other else None,
-            catalog=CATALOG
-        )
-        if voyage_cands:
-            # Voyage знайшов кандидатів — повертаємо їх (з _voyage=True маркером)
-            # find_items далі вирішить: одразу брати чи питати Claude
-            return voyage_cands
+    # ── КРОК 0: VOYAGE AI — вимкнено (потребує >512MB RAM на Render)
+    # if voyage_ready() and query_text: ...
 
     # ── КРОК 1: СТРОГО у своїй категорії (attr_search strict) ──────────────
     if not is_other:
@@ -846,33 +868,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                               'candidates_debug': []}
             continue
 
-        # ⚡ VOYAGE АВТО-ПРИЙОМ: якщо Voyage впевнений (score >= 0.82) → одразу
-        if кандидати and кандидати[0].get('_voyage') and not brand_warning:
-            top = кандидати[0]
-            if top.get('score', 0) >= THRESHOLD_AUTO:
-                _qa_v = пос.get('_qa') or build_qa(пос)
-                if validate_pick(_qa_v, top):
-                    результати[i] = {
-                        'original': original, 'normalized': normalized,
-                        'знайдено': True, 'назва': top['name'],
-                        'назва_повна': top.get('name_full', top['name']),
-                        'артикул': top.get('artikul', ''), 'ціна': top.get('price', ''),
-                        'qty': пос.get('qty', ''), 'category': category,
-                        'confidence': top.get('_match_pct', 0),
-                        'keyword_pct': top.get('_match_pct', 0),
-                        'джерело': f"🚀 Voyage {top.get('_match_pct', 0)}%",
-                        'brand_warning': '',
-                        'reason': f"Voyage AI: score={top.get('score', 0):.3f}",
-                        'fail_reason': '', 'candidates_debug': [c['name'] for c in кандидати[:3]],
-                        '_prefix': пос.get('_prefix', 'XX'),
-                        '_routed_cat': пос.get('_routed_cat', 'other'),
-                    }
-                    pending_add(original, brand_map, normalized, top['name'], category,
-                                top.get('_match_pct', 0), source='voyage')
-                    if client_slug:
-                        clients.client_cache_save(client_slug, original, top['name'],
-                                                  category, top.get('_match_pct', 0))
-                    continue
+        # ⚡ VOYAGE АВТО-ПРИЙОМ — вимкнено
 
         # ⚡ АВТО-ПРИЙОМ: очевидний збіг без Claude (швидше і дешевше)
         # умови: tier-1 атрибутний або всі числа збіглись + pct≥95 + відрив від №2 ≥25%
