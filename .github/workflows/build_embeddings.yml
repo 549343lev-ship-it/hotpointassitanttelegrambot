@@ -1,0 +1,39 @@
+name: Build Voyage Embeddings
+
+# Запускати вручну через GitHub → Actions → Run workflow
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Написати "build" щоб підтвердити (коштує ~$0.05)'
+        required: true
+        default: 'build'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install voyageai numpy pandas openpyxl
+
+      - name: Build embeddings
+        env:
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+        run: python build_embeddings.py
+
+      - name: Upload embeddings as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: catalog-embeddings
+          path: catalog_embeddings.npz
+          retention-days: 30
