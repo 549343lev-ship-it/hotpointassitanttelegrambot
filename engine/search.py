@@ -357,7 +357,15 @@ def validate_pick(qa: dict, item: dict) -> bool:    # пост-валідаці�
             return False
 
     q_dia = set(qa.get('dia') or [])
-    if q_dia and not q_dia.issubset(set(ia['dia'])):
+    # Плівка, стрічка, демпфер — товари без діаметра, валідація по діаметру не застосовується
+    _skip_dia_types = {'плівка', 'стрічка', 'утеплювач', 'мірелон'}
+    _qa_type = (qa.get('type') or '').lower()
+    _item_name_lc = item.get('name', '').lower()
+    _skip_dia = (
+        _qa_type in _skip_dia_types or
+        any(w in _item_name_lc for w in ('плівк', 'стрічк', 'демпфер', 'мірелон', 'утеплюв'))
+    )
+    if q_dia and not _skip_dia and not q_dia.issubset(set(ia['dia'])):
         return False
     if qa.get('type') and ia.get('type') and qa['type'] != ia['type']:
         if {qa['type'], ia['type']} != {'коліно', 'відведення'}:
