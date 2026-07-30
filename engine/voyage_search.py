@@ -245,27 +245,21 @@ def voyage_find_one(query: str, category: str = None, catalog: list = None) -> d
 
 # ─── Утиліти ──────────────────────────────────────────────────────────────────
 
-def rebuild_if_needed(catalog: list[dict]) -> None:     # перебудовує embeddings якщо файлу немає або каталог сильно змінився
-    """Викликати при старті після load_catalog()."""
+def rebuild_if_needed(catalog: list[dict]) -> None:     # завантажує embeddings при старті; НЕ будує на сервері (будуй локально через build_embeddings.py)
+    """
+    Викликати при старті після load_catalog().
+    
+    ⚠️ НЕ будує embeddings на сервері — тільки завантажує готовий файл.
+    Щоб побудувати: запусти build_embeddings.py ЛОКАЛЬНО і завантаж
+    catalog_embeddings.npz на Render Disk.
+    """
     if not VOYAGE_KEY:
+        print("ℹ️ VOYAGE_API_KEY не заданий — векторний пошук вимкнено", flush=True)
         return
 
     if not os.path.exists(EMBEDDINGS_FILE):
-        print("⚡ Voyage: embeddings не знайдено, будую...", flush=True)
-        build_embeddings(catalog)
-        return
-
-    # Перевіряємо чи кількість товарів не змінилась суттєво
-    try:
-        data = np.load(EMBEDDINGS_FILE, allow_pickle=True)
-        saved_count = len(data['names'])
-        current_count = len(catalog)
-        diff = abs(current_count - saved_count)
-        if diff > 500:  # більше 500 нових товарів → перебудовуємо
-            print(f"⚡ Voyage: каталог змінився ({saved_count}→{current_count}), перебудовую...", flush=True)
-            build_embeddings(catalog, force=True)
-            return
-    except Exception:
-        pass
+        print(f"ℹ️ Voyage: embeddings не знайдено ({EMBEDDINGS_FILE})", flush=True)
+        print("   → Запусти build_embeddings.py локально і завантаж файл на Render Disk", flush=True)
+        return   # НЕ будуємо на сервері — занадто важко для RAM
 
     load_embeddings()
