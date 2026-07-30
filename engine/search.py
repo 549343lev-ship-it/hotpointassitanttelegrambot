@@ -37,6 +37,9 @@ BRAND_TOKENS = {    # словник: що пише менеджер → офі�
     'рафтек':      ['raftec', 'RAFTEC'],
     'ekoplastik':  ['ekoplastik', 'Ekoplastik'],
     'екопластик':  ['ekoplastik', 'Ekoplastik'],
+    'еко':         ['ECO', 'eco', 'Ekoplastik', 'ekoplastik'],  # ЕКО = ECO лінійка Ekoplastik
+    'eko':         ['ECO', 'eco', 'Ekoplastik', 'ekoplastik'],
+    'eco':         ['ECO', 'eco', 'Ekoplastik', 'ekoplastik'],
     'wavin':       ['wavin', 'Wavin'],  # PPR виробник
     'екопласт':    ['ekoplastik', 'Ekoplastik'],
     'asg':         ['asg', 'ASG'],
