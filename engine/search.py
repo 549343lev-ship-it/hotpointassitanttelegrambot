@@ -358,12 +358,14 @@ def validate_pick(qa: dict, item: dict) -> bool:    # пост-валідаці�
 
     q_dia = set(qa.get('dia') or [])
     # Плівка, стрічка, демпфер — товари без діаметра, валідація по діаметру не застосовується
-    _skip_dia_types = {'плівка', 'стрічка', 'утеплювач', 'мірелон'}
+    _skip_dia_types = {'плівка', 'стрічка', 'утеплювач', 'мірелон', 'лічильник'}
     _qa_type = (qa.get('type') or '').lower()
     _item_name_lc = item.get('name', '').lower()
+    _qa_raw = (qa.get('_raw') or '').lower()
     _skip_dia = (
         _qa_type in _skip_dia_types or
-        any(w in _item_name_lc for w in ('плівк', 'стрічк', 'демпфер', 'мірелон', 'утеплюв'))
+        any(w in _item_name_lc for w in ('плівк', 'стрічк', 'демпфер', 'мірелон', 'утеплюв', 'лічильн', 'водомір')) or
+        any(w in _qa_raw for w in ('лічильн', 'водомір', 'gidrotek'))
     )
     if q_dia and not _skip_dia and not q_dia.issubset(set(ia['dia'])):
         return False
@@ -392,6 +394,17 @@ def validate_pick(qa: dict, item: dict) -> bool:    # пост-валідаці�
     if qa.get('conn_type') and ia.get('conn_type'):
         if qa['conn_type'] != ia['conn_type']:
             return False
+
+    # перевірка типу радіатора (тип 10 ≠ тип 22 — різні товари!)
+    _raw_lc = (qa.get('_raw') or '').lower()
+    _item_lc = item.get('name', '').lower()
+    import re as _re_v
+    _q_rad_type = _re_v.search(r'тип\s*(\d+)', _raw_lc)
+    _i_rad_type = _re_v.search(r'тип\s*(\d+)', _item_lc)
+    if _q_rad_type and _i_rad_type:
+        if _q_rad_type.group(1) != _i_rad_type.group(1):
+            return False  # запитали тип 10 але знайшло тип 22 — відхиляємо
+
     return True
 
 
