@@ -86,12 +86,33 @@ def build_catalog_from_xlsx() -> list[dict]:    # читає всі xlsx з pric
                 if len(cols) >= 3: rename[cols[2]] = 'price'
                 df    = df.rename(columns=rename)
                 count = 0
+                current_group = ''    # поточна підгрупа (рядок без артикулу)
+                current_subgroup = '' # підпідгрупа (другий рівень)
+                prev_was_group = False
+
                 for _, row in df.iterrows():
                     name    = str(row.get('name', '')).strip()
                     artikul = row.get('artikul', '')
                     price   = row.get('price', 0)
+
+                    # Рядок-підгрупа (немає артикулу і ціни)
                     if _is_header_row(name, artikul, price):
+                        if name and name != 'nan' and name.upper() != name:
+                            # Малі літери = підгрупа (виробник або тип)
+                            if prev_was_group:
+                                current_subgroup = name  # другий рівень
+                            else:
+                                current_group = name
+                                current_subgroup = ''
+                            prev_was_group = True
+                        elif name and name != 'nan':
+                            # Великі літери = головна група
+                            current_group = name
+                            current_subgroup = ''
+                            prev_was_group = True
                         continue
+
+                    prev_was_group = False
                     try:
                         p = float(price)
                     except Exception:
@@ -105,6 +126,8 @@ def build_catalog_from_xlsx() -> list[dict]:    # читає всі xlsx з pric
                         'artikul':   art if art != 'nan' else '',
                         'category':  category,
                         'price':     p,
+                        'group':     current_group,      # підгрупа з xlsx
+                        'subgroup':  current_subgroup,   # підпідгрупа з xlsx
                     })
                     count += 1
                 print(f"  ✅ {key}: {count} товарів")
@@ -237,16 +260,5 @@ def ensure_tokens():    # лінива індексація токенів і а
 print("📦 Завантажую каталог...", flush=True)
 load_catalog()
 
-# Voyage AI embeddings — тільки ЗАВАНТАЖУЄМО якщо файл є (НЕ будуємо!)
-try:
-    from engine.voyage_search import load_embeddings as _voyage_load
-    import os as _os
-    _emb_file = _os.path.join(DATA_DIR, "catalog_embeddings.npz")
-    if _os.path.exists(_emb_file):
-        _voyage_load()
-    else:
-        print("ℹ️ Voyage: embeddings не знайдено — пошук працює без Voyage", flush=True)
-except ImportError:
-    pass
-except Exception as _e:
-    print(f"⚠️ Voyage init: {_e}", flush=True)
+# Voyage AI вимкнено (потребує >512MB RAM)
+# Для увімкнення: апгрейд Render до 1GB+ і розкоментувати
