@@ -245,21 +245,44 @@ def voyage_find_one(query: str, category: str = None, catalog: list = None) -> d
 
 # ─── Утиліти ──────────────────────────────────────────────────────────────────
 
-def rebuild_if_needed(catalog: list[dict]) -> None:     # завантажує embeddings при старті; НЕ будує на сервері (будуй локально через build_embeddings.py)
-    """
-    Викликати при старті після load_catalog().
-    
-    ⚠️ НЕ будує embeddings на сервері — тільки завантажує готовий файл.
-    Щоб побудувати: запусти build_embeddings.py ЛОКАЛЬНО і завантаж
-    catalog_embeddings.npz на Render Disk.
-    """
+def rebuild_if_needed(catalog: list[dict]) -> None:     # завантажує embeddings або будує якщо файлу немає (потребує 1GB+ RAM)
+    """Викликати при старті після load_catalog()."""
     if not VOYAGE_KEY:
         print("ℹ️ VOYAGE_API_KEY не заданий — векторний пошук вимкнено", flush=True)
         return
 
     if not os.path.exists(EMBEDDINGS_FILE):
-        print(f"ℹ️ Voyage: embeddings не знайдено ({EMBEDDINGS_FILE})", flush=True)
-        print("   → Запусти build_embeddings.py локально і завантаж файл на Render Disk", flush=True)
-        return   # НЕ будуємо на сервері — занадто важко для RAM
+        print(f"⚡ Voyage: embeddings не знайдено — будую для {len(catalog)} товарів...", flush=True)
+        print("   (це займе ~10 хвилин при першому запуску)", flush=True)
+        import threading
+        # Будуємо у фоновому потоці щоб бот стартував і відповідав на запити
+        def _build():
+            try:
+                build_embeddings(catalog)
+                print("✅ Voyage embeddings збудовано у фоні!", flush=True)
+            except Exception as e:
+                print(f"❌ Voyage build error: {e}", flush=True)
+        t = threading.Thread(target=_build, daemon=True)
+        t.start()
+        return
+
+    # Файл є — перевіряємо чи актуальний
+    try:
+        data = np.load(EMBEDDINGS_FILE, allow_pickle=True)
+        saved_count = len(data['names'])
+        current_count = len(catalog)
+        diff = abs(current_count - saved_count)
+        if diff > 500:
+            print(f"⚡ Voyage: каталог змінився ({saved_count}→{current_count}), перебудовую...", flush=True)
+            import threading
+            def _rebuild():
+                try:
+                    build_embeddings(catalog, force=True)
+                except Exception as e:
+                    print(f"❌ Voyage rebuild: {e}", flush=True)
+            threading.Thread(target=_rebuild, daemon=True).start()
+            return
+    except Exception:
+        pass
 
     load_embeddings()
