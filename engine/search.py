@@ -33,74 +33,89 @@ claude        = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 # ─── Таблиці виробників та категорій ─────────────────────────────────────────
 
 BRAND_TOKENS = {    # словник: що пише менеджер → офіційні токени виробника для пошуку в назвах
+    # ── PPR пайка ────────────────────────────────────────────────────────────
     'raftec':      ['raftec', 'RAFTEC'],
     'рафтек':      ['raftec', 'RAFTEC'],
     'ekoplastik':  ['ekoplastik', 'Ekoplastik', 'PP-RCT'],
     'екопластик':  ['ekoplastik', 'Ekoplastik', 'PP-RCT'],
+    'єко':         ['ekoplastik', 'Ekoplastik', 'PP-RCT'],
     'еко':         ['ekoplastik', 'Ekoplastik', 'PP-RCT'],  # ЕКО в підказці = Ekoplastik PP-RCT
     'eko':         ['ekoplastik', 'Ekoplastik', 'PP-RCT'],
-    'eco':         ['ECO'],          # ECO = окремий виробник PPR, НЕ Ekoplastik!
-    'wavin':       ['wavin', 'Wavin'],
     'екопласт':    ['ekoplastik', 'Ekoplastik', 'PP-RCT'],
+    'eco':         ['ECO'],      # ECO = окремий PPR виробник, НЕ Ekoplastik!
     'asg':         ['asg', 'ASG'],
     'асг':         ['asg', 'ASG'],
+    'fv plast':    ['fv plast', 'FV Plast'],
+    'wavin':       ['wavin', 'Wavin'],
+    # ── Каналізація ──────────────────────────────────────────────────────────
     'ostendorf':   ['ostendorf', 'OSTENDORF'],
     'остендорф':   ['ostendorf', 'OSTENDORF'],
     'plm':         ['plm', 'PLM'],
     'плм':         ['plm', 'PLM'],
-    'hidros':      ['hidros', 'Hidros', 'HIDROS'],
-    'хідрос':      ['hidros', 'Hidros'],
-    'гідрос':      ['hidros', 'Hidros'],
-    'idmar':       ['idmar', 'IDMAR'],
-    'termojet':    ['termojet', 'Termojet'],
-    'термоджет':   ['termojet', 'Termojet'],
-    'tatra':       ['tatra', 'TATRA', 'Tatra-Line'],
-    'татра':       ['tatra', 'TATRA'],
-    'rehau':       ['rehau', 'REHAU'],
-    'рехау':       ['rehau', 'REHAU'],
-    'ecosoft':     ['ecosoft', 'Ecosoft'],
-    'екософт':     ['ecosoft', 'Ecosoft'],
-    'biasi':       ['biasi', 'BIASI'],
-    'біасі':       ['biasi', 'BIASI'],
-    'valrom':      ['valrom', 'Valrom'],
-    'unipak':      ['unipak', 'Unipak'],
-    'kan':         ['kan', 'KAN'],
-    'herz':        ['herz', 'HERZ', 'Herz'],
-    'герц':        ['herz', 'HERZ'],
-    'giacomini':   ['giacomini', 'Giacomini'],
-    'джикоміні':   ['giacomini', 'Giacomini'],
-    'danfoss':     ['danfoss', 'Danfoss'],
-    'данфос':      ['danfoss', 'Danfoss'],
-    'wilo':        ['wilo', 'WILO'],
-    'віло':        ['wilo', 'WILO'],
-    'grundfos':    ['grundfos', 'GRUNDFOS'],
-    'грундфос':    ['grundfos', 'GRUNDFOS'],
-    'bonomi':      ['bonomi', 'Bonomi'],
-    'бономі':      ['bonomi', 'Bonomi'],
-    'pattaroni':   ['pattaroni', 'Pattaroni'],
-    'k-flex':      ['k-flex', 'K-FLEX'],
-    'kflex':       ['k-flex', 'K-FLEX'],
-    'кфлекс':      ['k-flex', 'K-FLEX'],
-    'valsir':      ['valsir', 'Valsir'],
-    'meibes':      ['meibes', 'Meibes'],
-    'flamco':      ['flamco', 'Flamco'],
-    'reflex':      ['reflex', 'Reflex'],
-    'icma':        ['icma', 'Icma'],
-    'drazice':     ['drazice', 'Drazice'],
-    'дражице':     ['drazice', 'Drazice'],
-    'vaillant':    ['vaillant', 'Vaillant'],
-    'вайлант':     ['vaillant', 'Vaillant'],
-    'alcaplast':   ['alcaplast', 'AlcaPlast'],
-    'esbe':        ['esbe', 'ESBE'],
-    # Крос-бренди кранів → RAFTEC (ми продаємо аналог RAFTEC)
-    'giacomini':   ['raftec', 'RAFTEC', 'Giacomini'],
-    'гіакоміні':   ['raftec', 'RAFTEC', 'Giacomini'],
+    # ── Запірна арматура — крос-бренди → RAFTEC ──────────────────────────────
+    # Майстри пишуть KFA/Giacomini/Fado — ми продаємо RAFTEC аналог
     'kfa':         ['raftec', 'RAFTEC'],
     'fado':        ['raftec', 'RAFTEC'],
     'valtec':      ['raftec', 'RAFTEC'],
     'solomon':     ['raftec', 'RAFTEC'],
+    # Giacomini — є в нашому каталозі! Залишаємо як є, але шукаємо і RAFTEC
+    'giacomini':   ['Giacomini', 'giacomini', 'raftec', 'RAFTEC'],
+    'джикоміні':   ['Giacomini', 'giacomini', 'raftec', 'RAFTEC'],
+    'гіакоміні':   ['Giacomini', 'giacomini', 'raftec', 'RAFTEC'],
+    # ── Радіатори ────────────────────────────────────────────────────────────
+    'hidros':      ['hidros', 'Hidros', 'HIDROS'],
+    'хідрос':      ['hidros', 'Hidros'],
+    'гідрос':      ['hidros', 'Hidros'],
+    'idmar':       ['idmar', 'IDMAR'],
+    'mirado':      ['mirado', 'MIRADO'],
+    'мірадо':      ['mirado', 'MIRADO'],
+    'purmo':       ['purmo', 'Purmo'],
+    # ── Насоси ───────────────────────────────────────────────────────────────
+    'termojet':    ['termojet', 'Termojet'],
+    'термоджет':   ['termojet', 'Termojet'],
+    'tatra':       ['tatra', 'TATRA', 'Tatra-Line'],
+    'татра':       ['tatra', 'TATRA'],
+    'wilo':        ['wilo', 'WILO'],
+    'віло':        ['wilo', 'WILO'],
+    'grundfos':    ['grundfos', 'GRUNDFOS'],
+    'грундфос':    ['grundfos', 'GRUNDFOS'],
+    # ── Котли ────────────────────────────────────────────────────────────────
+    'biasi':       ['biasi', 'BIASI'],
+    'біасі':       ['biasi', 'BIASI'],
+    'vaillant':    ['vaillant', 'Vaillant'],
+    'вайлант':     ['vaillant', 'Vaillant'],
+    # ── PUSH ─────────────────────────────────────────────────────────────────
+    'rehau':       ['rehau', 'REHAU'],
+    'рехау':       ['rehau', 'REHAU'],
+    # ── Металопластик ─────────────────────────────────────────────────────────
+    'herz':        ['herz', 'HERZ', 'Herz'],
+    'герц':        ['herz', 'HERZ'],
+    'tweetop':     ['tweetop', 'Tweetop'],
+    # ── Фільтри/Очистка ──────────────────────────────────────────────────────
+    'ecosoft':     ['ecosoft', 'Ecosoft'],
+    'екософт':     ['ecosoft', 'Ecosoft'],
+    'ecostar':     ['ecostar', 'Ecostar', 'ECOSTAR'],
+    'екостар':     ['ecostar', 'Ecostar', 'ECOSTAR'],
+    # ── Ізоляція ─────────────────────────────────────────────────────────────
+    'k-flex':      ['k-flex', 'K-FLEX'],
+    'kflex':       ['k-flex', 'K-FLEX'],
+    'кфлекс':      ['k-flex', 'K-FLEX'],
+    # ── Ущільнення ───────────────────────────────────────────────────────────
+    'unipak':      ['unipak', 'Unipak'],
+    'glidex':      ['glidex', 'Glidex'],
+    # ── Різне ────────────────────────────────────────────────────────────────
+    'danfoss':     ['danfoss', 'Danfoss'],
+    'данфос':      ['danfoss', 'Danfoss'],
+    'valrom':      ['valrom', 'Valrom'],
+    'alcaplast':   ['alcaplast', 'AlcaPlast'],
+    'esbe':        ['esbe', 'ESBE'],
+    'bonomi':      ['bonomi', 'Bonomi'],
+    'icma':        ['icma', 'Icma'],
+    'valsir':      ['valsir', 'Valsir'],
+    'flamco':      ['flamco', 'Flamco'],
     'grohe':       ['grohe', 'Grohe'],
     'thermaflex':  ['thermaflex', 'Thermaflex'],
+    'kan':         ['kan', 'KAN'],
 }
 
 # Синоніми для нормалізації запиту перед пошуком в каталозі
@@ -200,7 +215,7 @@ SIMILAR_CATS = {    # суміжні категорії: якщо не знай�
     'sewage':            ['siphons_fittings'],
     'siphons_fittings':  ['sewage'],
     'shutoff_valves':    ['adapters_reducers', 'safety_valves', 'filtration'],
-    'filtration':        ['shutoff_valves'],  # фільтр грубої очистки часто в shutoff_valves
+    'filtration':        [],              # самопромивні фільтри НЕ шукаємо в shutoff_valves
     'underfloor_heating':['metal_plastic', 'push_systems'],
     'insulation':        ['fasteners_sealants'],
     'fasteners_sealants':['insulation'],
@@ -395,9 +410,14 @@ _BANNED_BRANDS = ['raubasic', 'RAUBASIC']
 
 # Типи що НЕ є взаємозамінними — validate_pick відхилятиме
 _INCOMPATIBLE_TYPES = [
-    ('біметалічний', 'алюмінієвий'),  # радіатори
-    ('горизонтальний', 'вертикальний'),  # гідроакумулятори
-    ('самоочисний', 'грубої очистки'),  # фільтри
+    ('біметалічний', 'алюмінієвий'),    # радіатори — не взаємозамінні
+    ('алюмінієвий',  'біметалічний'),
+    ('горизонтальний', 'вертикальний'), # гідроакумулятори
+    ('вертикальний', 'горизонтальний'),
+    ('самопромивний', 'грубої очистки'),  # фільтри різних типів
+    ('грубої очистки', 'самопромивний'),
+    ('самоочисний', 'грубої очистки'),
+    ('грубої очистки', 'самоочисний'),
 ]
 
 
@@ -505,16 +525,6 @@ def validate_pick(qa: dict, item: dict) -> bool:    # пост-валідаці�
         return False   # товар безшумний але не запитували
     if q_sl is True and i_sl is False:
         return False   # запитали безшумну але товар звичайний
-    # перевірка ВВ vs ВЗ (conn_type)
-    # Якщо запит має conn_type → товар без нього але з "хлопушка" відхиляємо
-    if qa.get('conn_type'):
-        if ia.get('conn_type') and qa['conn_type'] != ia['conn_type']:
-            return False
-        # Хлопушка/пелюстковий = клапан без ВВ з'єднання → не підходить якщо запитали ВВ/ВЗ
-        item_lc = item.get('name', '').lower()
-        if any(x in item_lc for x in ('хлопушк', 'пелюстк', 'поворот.*клапан')):
-            return False
-
     # перевірка типу радіатора (тип 10 ≠ тип 22 — різні товари!)
     _raw_lc = (qa.get('_raw') or '').lower()
     _item_lc = item.get('name', '').lower()
@@ -548,14 +558,11 @@ def validate_pick(qa: dict, item: dict) -> bool:    # пост-валідаці�
     if _qa_cat and _item_cat and (_qa_cat, _item_cat) in _incompatible_cats:
         return False  # несумісні категорії
 
-    # перевірка різьби: 1/2" ≠ 1 1/2" (різні розміри!)
+    # перевірка різьби: 1/2" ≠ 3/4" ≠ 1 1/2" (різні розміри — критично!)
     _q_thread = qa.get('thread', '')
-    _i_thread = (item.get('_attrs') or {}).get('thread', '')
+    _i_thread = (item.get('_attrs') or parse_attrs(item.get('name',''))).get('thread', '')
     if _q_thread and _i_thread and _q_thread != _i_thread:
-        # Строга перевірка тільки якщо обидва мають різьбу
-        # 1_1_2 (1 1/2") ≠ 1_2 (1/2") — це різні товари!
-        if len(_q_thread) != len(_i_thread):
-            return False  # різна кількість символів = різний розмір різьби
+        return False   # пряме порівняння: 1_2 ≠ 3_4, 1_2 ≠ 1_1_2
 
     return True
 
