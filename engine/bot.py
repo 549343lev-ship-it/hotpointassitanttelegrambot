@@ -1151,7 +1151,7 @@ def handle_learn_start(message):    # "навчання" — спочатку п
     _start_learn_session(message.chat.id, slug, reply_to=message)
 
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith('lrn_'))
+@bot.callback_query_handler(func=lambda c: c.data.startswith('lrn_') and c.data != 'lrn_photos_done')
 def cb_learn_pick_client(call):     # вибір клієнта для навчання
     slug = call.data[4:]
     p    = clients.get_profile(slug)
