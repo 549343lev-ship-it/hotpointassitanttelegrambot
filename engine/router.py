@@ -190,7 +190,8 @@ TEXT_RULES = [          # список (паттерн, категорія) — 
      r'|система\s+очист|фільтраційн|очищення', 'filtration'),
 
     # ─ IoT / автоматика ─
-    (r'ajax|waterst\w+|розумний\s+кран|iot\s+кран|електрокран', 'automation'),
+    (r'ajax|waterst\w+|розумний\s+кран|iot\s+кран|електрокран'
+     r'|waterstop|аквасторож|neptune.*кран|протизатопн', 'automation'),
 
     # ─ Котли ─
     (r'котел|котл\b|boiler\b|газов\w+\s+котел|твердопалив', 'boilers'),
@@ -308,21 +309,31 @@ def route_sub(пос: dict, cat: str) -> list[str] | None:    # повертає
 
 # Товари яких НЕ ПРОДАЄМО — бот не шукатиме, одразу знайдено=false
 NOT_OUR_ITEMS = re.compile(
-    r'рукавиц|рукавичк'                    # рукавиці
-    r'|диск відрізн|диск по (бетон|метал)'  # диски
-    r'|бур по бетон'                         # бури
-    r'|мішок будівельн|будівельн мішок'      # мішки будівельні
-    r'|олівець будівельн'                    # олівці
-    r'|маркер (чорн|синій)'                  # маркери
-    r'|скоби (до|для) степлера\s+\d'         # скоби для степлера (не для такера)
-    r'|серветка (до|для) міді'               # серветки
+    r'рукавиц|рукавичк'
+    r'|диск відрізн|диск по (бетон|метал)'
+    r'|бур по бетон'
+    r'|мішок будівельн|будівельн мішок'
+    r'|олівець будівельн'
+    r'|маркер (чорн|синій)'
+    r'|скоби (до|для) степлера\s+\d'
+    r'|серветка (до|для) міді'
     , re.IGNORECASE
 )
+
+# Додаткова перевірка для "мішок" — не наш якщо немає контексту солі
+def _is_bag_not_ours(combined: str) -> bool:
+    if re.search(r'\bмішок\b', combined, re.IGNORECASE):
+        if re.search(r'сіл|таблет', combined, re.IGNORECASE):
+            return False   # сіль у мішку — наша позиція
+        return True
+    return False
 
 
 def is_not_our(пос: dict) -> bool:      # повертає True якщо товар не з нашого асортименту
     combined = (пос.get('normalized', '') + ' ' + пос.get('original', '')).lower()
-    return bool(NOT_OUR_ITEMS.search(combined))
+    if NOT_OUR_ITEMS.search(combined):
+        return True
+    return _is_bag_not_ours(combined)
 
 
 def route(пос: dict) -> str:    # визначає category_code для позиції; повертає код або 'other'
