@@ -160,6 +160,7 @@ TEXT_RULES = [          # список (паттерн, категорія) — 
 
     # ─ PPR пластик ─
     (r'ппр|ppr|поліпропіл|ekoplastik|екопластик|raftec.*муфт|asg.*муфт'
+     r'|пайк|паяний|паяна'                                  # ← пайка = PPR
      r'|муфта\s+(ппр|ppr|mrz|мрз|мрв|rn\b)|коліно\s+(ппр|ppr)'
      r'|трійник\s+(ппр|ppr)|fiber.basalt|faser\b|stabi'
      r'|shengde|wavin.*ppr|pilsa|kalde', 'plastic_ppr'),   # крос-бренди PPR
