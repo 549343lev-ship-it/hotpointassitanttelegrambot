@@ -794,6 +794,14 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
         original     = пос.get('original', '')
         normalized   = пос.get('normalized', '')
         category     = пос.get('category', 'other')
+
+        # Не наш товар (рукавиці, диски, бури...) — одразу пропускаємо
+        if пос.get('_routed_cat') == 'not_ours':
+            результати[i] = {**пос, 'знайдено': False, 'назва': '', 'артикул': '',
+                              'ціна': '', 'confidence': 0, 'джерело': '⛔ не наш товар',
+                              'reason': 'not_ours', 'fail_reason': 'не наш асортимент'}
+            continue
+
         brand_map    = пос.get('_brand_map', {})
         client_slug  = пос.get('_client_slug')
         client_prefs = пос.get('_client_prefs', {})
