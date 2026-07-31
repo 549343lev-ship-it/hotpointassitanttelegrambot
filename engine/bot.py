@@ -49,7 +49,8 @@ from engine.ocr import (normalize_photo, normalize_text, normalize_pdf,
 from engine.search import (find_items, keyword_search, smart_search, build_qa,
                             BRAND_TOKENS, claude_pick_batch)
 from engine.excel_builder import create_excel, parse_qty
-from engine.logger import (log_usage, get_usage_stats, log_not_found, get_catalog_gaps)
+from engine.logger import (log_usage, get_usage_stats, log_not_found,
+                            get_catalog_gaps, get_catalog_gaps_excel)  # статистика і діри каталогу
 
 # ─── Ініціалізація бота ──────────────────────────────────────────────────────
 
@@ -559,15 +560,50 @@ def kb_logs(message):       # адмін: надсилає файл usage_log.js
 
 
 @bot.message_handler(func=lambda m: m.text == "👑 Діри каталогу")
-def kb_gaps(message):       # адмін: показує топ-20 незнайдених позицій — що варто додати в прайси
+def kb_gaps(message):       # адмін: топ незнайдених + кнопка вивантаження Excel
     if not is_admin(message.from_user.id): return
-    bot.reply_to(message, get_catalog_gaps())
+    text = get_catalog_gaps()
+    mk   = InlineKeyboardMarkup()
+    mk.add(InlineKeyboardButton("📥 Завантажити Excel (всі діри)", callback_data="gaps_excel"))
+    bot.reply_to(message, text, reply_markup=mk)
 
 
 @bot.message_handler(commands=['діри', 'gaps'])
 def handle_gaps(message):   # /діри або /gaps — те саме що кнопка "Діри каталогу"
     if not is_admin(message.from_user.id): return
-    bot.reply_to(message, get_catalog_gaps())
+    text = get_catalog_gaps()
+    mk   = InlineKeyboardMarkup()
+    mk.add(InlineKeyboardButton("📥 Завантажити Excel (всі діри)", callback_data="gaps_excel"))
+    bot.reply_to(message, text, reply_markup=mk)
+
+
+@bot.callback_query_handler(func=lambda c: c.data == "gaps_excel")
+def cb_gaps_excel(call):    # генерує і надсилає Excel з усіма незнайденими позиціями
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "⛔ Тільки адмін"); return
+    bot.answer_callback_query(call.id, "⏳ Генерую Excel...")
+    tmp = os.path.join(DATA_DIR, "gaps_export.xlsx")
+    try:
+        count = get_catalog_gaps_excel(tmp)
+        if count == 0:
+            bot.send_message(call.message.chat.id, "🕳 Порожньо — незнайдених немає.")
+            return
+        with open(tmp, 'rb') as f:
+            bot.send_document(
+                call.message.chat.id, f,
+                caption=f"🕳 Діри каталогу: *{count}* унікальних позицій\n"
+                        f"🔴 червоний = ≥5 разів (критично)\n"
+                        f"🟡 жовтий = 2-4 рази\n"
+                        f"Колонка «Дія» — заповни що робити з кожною позицією",
+                visible_file_name=f"діри_каталогу_{time.strftime('%Y%m%d')}.xlsx",
+                parse_mode="Markdown"
+            )
+    except Exception as e:
+        print(f"⚠️ gaps_excel: {e}", flush=True)
+        bot.send_message(call.message.chat.id, f"❌ Помилка: {e}")
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
 
 
 @bot.message_handler(func=lambda m: m.text == "👑 Правила на розгляд")
@@ -1444,56 +1480,80 @@ def cb_client_cache_view(call):     # показує кеш обраного к�
     _show_client_cache(call.message.chat.id, slug)
 
 
-def _show_client_cache(chat_id: int, slug: str):    # надсилає статистику кешу клієнта з кнопками управління
+def _show_client_cache(chat_id: int, slug: str, page: int = 0):    # надсилає кеш клієнта по 5 авто-записів з кнопками ✅/❌ і навігацією
     p     = clients.get_profile(slug)
     stats = clients.get_client_cache_stats(slug)
     cache = clients.get_client_cache(slug)
     name  = p['name'] if p else slug
 
-    # Фільтруємо реальні записи (без ::ban суфіксів)
-    real_items = [(k, v) for k, v in cache.items() if '::ban' not in k]
-    auto_items = [(k, v) for k, v in real_items if v.get('status', 'auto') == 'auto']
-    icons      = {'confirmed': '✅', 'banned': '❌', 'auto': '🔹'}
+    auto_items = [(k, v) for k, v in cache.items()
+                  if '::ban' not in k and v.get('status', 'auto') == 'auto']
+    conf_items = [(k, v) for k, v in cache.items()
+                  if '::ban' not in k and v.get('status') == 'confirmed']
 
-    # Показуємо авто-записи з кнопками підтвердження
+    PAGE_SIZE   = 5
+    total_pages = max(1, (len(auto_items) + PAGE_SIZE - 1) // PAGE_SIZE)
+    page        = max(0, min(page, total_pages - 1))
+    page_items  = auto_items[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+
     text = (
-        f"👤 Кеш клієнта *{name}*\n"
-        f"✅ підтв: {stats['confirmed']} | 🔹 авто: {stats['auto']} | ❌ бан: {stats['banned']}\n\n"
+        f"👤 Кеш *{name}*\n"
+        f"✅ підтв: {stats['confirmed']} | 🔹 авто: {stats['auto']} | ❌ бан: {stats['banned']}\n"
     )
-    if auto_items:
-        text += f"_Авто-записи (перших {min(7, len(auto_items))} з {len(auto_items)}) — підтвердь або відхили:_\n"
 
-    # Кнопки підтвердження/бану для кожного авто-запису (до 7)
     mk = InlineKeyboardMarkup(row_width=2)
-    for k, v in auto_items[:7]:
-        catalog_name = v.get('catalog_name', '')
-        display_key  = k[:25]
-        display_cat  = catalog_name[:35]
-        text += f"\n🔹 `{display_key}` → _{display_cat}_"
-        # Кодуємо slug::key в callback (обрізаємо до 50 символів)
-        cb_key = f"{slug}::{k}"[:50]
-        mk.add(
-            InlineKeyboardButton(f"✅ {display_key[:20]}", callback_data=f"cck_ok_{cb_key}"),
-            InlineKeyboardButton(f"❌ бан",               callback_data=f"cck_no_{cb_key}"),
-        )
 
-    if not auto_items:
-        # Немає авто — показуємо підтверджені
-        lines = []
-        for k, v in real_items[:10]:
-            icon = icons.get(v.get('status', 'auto'), '🔹')
-            lines.append(f"{icon} `{k[:30]}` → {v.get('catalog_name', '')[:40]}")
-        text += "\n".join(lines) if lines else "_порожній_"
+    if page_items:
+        text += f"\n_Авто-записи (стор. {page+1}/{total_pages}):_\n"
+        for k, v in page_items:
+            catalog_name = v.get('catalog_name', '')
+            text += f"\n🔹 `{k[:28]}` → _{catalog_name[:38]}_"
+            cb_key = f"{slug}::{k}"[:55]
+            mk.add(
+                InlineKeyboardButton(f"✅ {k[:18]}", callback_data=f"cck_ok_{cb_key}"),
+                InlineKeyboardButton("❌ бан",        callback_data=f"cck_no_{cb_key}"),
+            )
+    elif conf_items:
+        text += f"\n_Підтверджені (перші 5):_\n"
+        for k, v in conf_items[:5]:
+            text += f"\n✅ `{k[:28]}` → _{v.get('catalog_name','')[:38]}_"
+    else:
+        text += "\n_Кеш порожній_"
 
-    # Кнопки очищення
+    # Навігація
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️", callback_data=f"ccp_{slug}_{page-1}"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton("▶️", callback_data=f"ccp_{slug}_{page+1}"))
+    if nav:
+        mk.row(*nav)
+
     mk.add(
         InlineKeyboardButton("✅ Підтвердити всі авто", callback_data=f"cck_all_{slug}"),
-        InlineKeyboardButton("🧹 Очистити авто",        callback_data=f"ccl_{slug}_auto"),
+        InlineKeyboardButton("🧹 Очистити авто",        callback_data=f"ccl__{slug}__auto"),
     )
     if is_admin(chat_id):
-        mk.add(InlineKeyboardButton("💥 Очистити ВСЕ", callback_data=f"ccl_{slug}_all"))
+        mk.add(
+            InlineKeyboardButton("⚠️ Очистити підтвердж", callback_data=f"ccl__{slug}__confirmed"),
+            InlineKeyboardButton("💥 Очистити ВСЕ",       callback_data=f"ccl__{slug}__all"),
+        )
 
     bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=mk)
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith('ccp_'))
+def cb_cache_page(call):    # навігація по сторінках кешу клієнта
+    parts = call.data[4:].rsplit('_', 1)
+    if len(parts) != 2:
+        bot.answer_callback_query(call.id); return
+    slug, page_str = parts
+    try:
+        page = int(page_str)
+    except ValueError:
+        bot.answer_callback_query(call.id); return
+    bot.answer_callback_query(call.id)
+    _show_client_cache(call.message.chat.id, slug, page)
 
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith('cck_ok_') or c.data.startswith('cck_no_'))
@@ -1510,8 +1570,8 @@ def cb_cache_entry_decision(call):  # підтверджує або банить
     catalog_name = entry.get('catalog_name', '')
     clients.client_cache_set_status(slug, key, catalog_name, action)
     icon = '✅' if action == 'confirmed' else '❌'
-    bot.answer_callback_query(call.id, f"{icon} {action}")
-    # Оновлюємо повідомлення
+    bot.answer_callback_query(call.id, f"{icon} {'Підтверджено' if action=='confirmed' else 'Заборонено'}")
+    # Оновлюємо статистику в повідомленні
     try:
         p     = clients.get_profile(slug)
         stats = clients.get_client_cache_stats(slug)
@@ -1519,7 +1579,7 @@ def cb_cache_entry_decision(call):  # підтверджує або банить
             f"👤 Кеш *{p['name'] if p else slug}*\n"
             f"✅ {stats['confirmed']} | 🔹 {stats['auto']} | ❌ {stats['banned']}\n\n"
             f"{icon} `{key[:40]}` → _{catalog_name[:50]}_\n\n"
-            f"Натисни *👥 Кеш клієнта* щоб переглянути решту.",
+            f"_Натисни_ *👥 Кеш клієнта* _щоб переглянути решту._",
             call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     except Exception:
         pass
@@ -1549,86 +1609,90 @@ def cb_cache_confirm_all(call):     # підтверджує всі авто-з�
 
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith('ccl_'))
-def cb_cache_clear(call):   # кнопка очищення кешу — перший крок підтвердження
-    if not is_admin(call.from_user.id):
-        bot.answer_callback_query(call.id, "⛔ Тільки адмін"); return
-    parts  = call.data[4:].split('_')
-    slug   = parts[0]
-    flt    = parts[1]   # auto / confirmed / all
-    p      = clients.get_profile(slug)
-    name   = p['name'] if p else slug
-    stats  = clients.get_client_cache_stats(slug)
+def cb_cache_clear(call):   # очищення кешу: авто=1 підтв, підтверджений/все=2 підтв; менеджер може чистити авто свого клієнта
+    uid  = call.from_user.id
+    data = call.data[4:]    # наприклад "носаль_ігор_гт_31__auto"
+    # Формат: slug__flt (подвійне підкреслення як роздільник)
+    if '__' not in data:
+        bot.answer_callback_query(call.id, "⚠️ Помилка формату"); return
+    slug, flt = data.rsplit('__', 1)   # rsplit щоб slug з _ не ламався
 
-    label  = {'auto': 'авто', 'confirmed': 'підтверджених', 'all': 'ВСІХ'}[flt]
-    count  = {'auto': stats['auto'], 'confirmed': stats['confirmed'],
-              'all':  stats['total']}[flt]
+    # Права: адмін — все; менеджер — тільки авто свого клієнта
+    active_slug = clients.get_active(call.message.chat.id)
+    is_own      = (active_slug == slug)
+    if not is_admin(uid) and not is_own:
+        bot.answer_callback_query(call.id, "⛔ Не твій клієнт"); return
+    if not is_admin(uid) and flt != 'auto':
+        bot.answer_callback_query(call.id, "⛔ Менеджер може чистити тільки авто-кеш"); return
 
-    if flt == 'confirmed' or flt == 'all':
-        # Підтверджений кеш — потрібно 2 підтвердження
-        _cache_clear_state[call.message.chat.id] = {
-            'slug': slug, 'flt': flt, 'step': 1,
-        }
+    p     = clients.get_profile(slug)
+    name  = p['name'] if p else slug
+    stats = clients.get_client_cache_stats(slug)
+    label = {'auto': 'авто', 'confirmed': 'підтверджених', 'all': 'ВСІХ'}[flt]
+    count = {'auto': stats['auto'], 'confirmed': stats['confirmed'], 'all': stats['total']}[flt]
+
+    if flt in ('confirmed', 'all'):
+        _cache_clear_state[call.message.chat.id] = {'slug': slug, 'flt': flt, 'step': 1}
         mk = InlineKeyboardMarkup(row_width=2)
         mk.add(
-            InlineKeyboardButton("✅ Так, видалити",  callback_data=f"cclc_{slug}_{flt}"),
-            InlineKeyboardButton("❌ Скасувати",      callback_data="cclx"),
+            InlineKeyboardButton("⚠️ Так, видалити", callback_data=f"cclc__{slug}__{flt}"),
+            InlineKeyboardButton("❌ Скасувати",     callback_data="cclx"),
         )
         bot.edit_message_text(
-            f"⚠️ Видалити {count} {label} записів кешу клієнта *{name}*?\n"
-            f"Це незворотньо!",
+            f"⚠️ *Крок 1/2*: Видалити {count} {label} записів кешу *{name}*?\nЦе незворотньо!",
             call.message.chat.id, call.message.message_id,
             parse_mode="Markdown", reply_markup=mk)
     else:
-        # Авто-кеш — одне підтвердження
         deleted = clients.client_cache_clear(slug, 'auto')
         bot.edit_message_text(
-            f"🧹 Видалено {deleted} авто-записів кешу *{name}*",
+            f"🧹 Видалено *{deleted}* авто-записів кешу *{name}*",
             call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     bot.answer_callback_query(call.id)
 
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith('cclc_'))
-def cb_cache_clear_confirm(call):   # друге підтвердження очищення підтвердженого/всього кешу
+@bot.callback_query_handler(func=lambda c: c.data.startswith('cclc__'))
+def cb_cache_clear_confirm(call):   # крок 2/2 підтвердження очищення підтвердженого кешу
     if not is_admin(call.from_user.id):
         bot.answer_callback_query(call.id, "⛔ Тільки адмін"); return
-    parts = call.data[5:].split('_')
-    slug  = parts[0]
-    flt   = parts[1]
-    p     = clients.get_profile(slug)
-    name  = p['name'] if p else slug
+    data = call.data[6:]    # slug__flt
+    if '__' not in data:
+        bot.answer_callback_query(call.id, "⚠️ Помилка"); return
+    slug, flt = data.rsplit('__', 1)
+    p    = clients.get_profile(slug)
+    name = p['name'] if p else slug
 
     st = _cache_clear_state.get(call.message.chat.id, {})
     if st.get('step') == 1 and st.get('slug') == slug:
-        # Другий крок — фінальне підтвердження
         _cache_clear_state[call.message.chat.id]['step'] = 2
         mk = InlineKeyboardMarkup(row_width=2)
         mk.add(
-            InlineKeyboardButton("🔴 ПІДТВЕРДЖУЮ видалення", callback_data=f"cclf_{slug}_{flt}"),
-            InlineKeyboardButton("❌ Скасувати",              callback_data="cclx"),
+            InlineKeyboardButton("🔴 ПІДТВЕРДЖУЮ", callback_data=f"cclf__{slug}__{flt}"),
+            InlineKeyboardButton("❌ Скасувати",   callback_data="cclx"),
         )
         bot.edit_message_text(
-            f"🔴 ФІНАЛЬНЕ ПІДТВЕРДЖЕННЯ\n"
-            f"Видалити {'підтверджений' if flt=='confirmed' else 'ВЕСЬ'} кеш клієнта *{name}*?\n"
-            f"Після цього бот забуде всі навчені пари!",
+            f"🔴 *Крок 2/2 — ФІНАЛЬНО*\n"
+            f"Видалити {'підтверджений' if flt=='confirmed' else 'ВЕСЬ'} кеш *{name}*?\n"
+            f"Бот забуде всі навчені пари!",
             call.message.chat.id, call.message.message_id,
             parse_mode="Markdown", reply_markup=mk)
     bot.answer_callback_query(call.id)
 
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith('cclf_'))
-def cb_cache_clear_final(call):     # фінальне виконання очищення кешу
+@bot.callback_query_handler(func=lambda c: c.data.startswith('cclf__'))
+def cb_cache_clear_final(call):     # фінальне виконання очищення
     if not is_admin(call.from_user.id):
         bot.answer_callback_query(call.id, "⛔ Тільки адмін"); return
-    parts   = call.data[5:].split('_')
-    slug    = parts[0]
-    flt     = parts[1]
+    data = call.data[6:]
+    if '__' not in data:
+        bot.answer_callback_query(call.id, "⚠️ Помилка"); return
+    slug, flt = data.rsplit('__', 1)
     p       = clients.get_profile(slug)
     name    = p['name'] if p else slug
     flt_arg = None if flt == 'all' else flt
     deleted = clients.client_cache_clear(slug, flt_arg)
     _cache_clear_state.pop(call.message.chat.id, None)
     bot.edit_message_text(
-        f"✅ Видалено *{deleted}* записів кешу клієнта *{name}*",
+        f"✅ Видалено *{deleted}* записів кешу *{name}*",
         call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     bot.answer_callback_query(call.id, "Готово")
 
