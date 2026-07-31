@@ -1066,8 +1066,12 @@ def handle_fix_pick(call):  # обробляє вибір правильного
 
 # ─── Навчання клієнта (фото + рахунок → кеш) ─────────────────────────────────
 
-# Стан навчання: chat_id → {slug, example_n, stage: 'photo'|'invoice', photo_path}
+# Стан навчання: chat_id → {slug, example_n, stage, photo_paths, photo_count}
 _learn_state: dict = {}
+# Батч фото навчання: chat_id → [(bytes, ext), ...]
+_learn_photo_batch:  dict = {}
+# Таймери батчу: chat_id → Timer
+_learn_photo_timers: dict = {}
 
 # Стан очищення кешу: chat_id → {slug, step, status_filter, confirm_text}
 _cache_clear_state: dict = {}
@@ -1180,38 +1184,59 @@ def _start_learn_session(chat_id: int, slug: str, reply_to=None):   # запус
 @bot.message_handler(content_types=['photo'],
                      func=lambda m: m.chat.id in _learn_state
                      and _learn_state[m.chat.id].get('stage') in ('photos', 'invoice'))
-def handle_learn_photo(message):    # приймає фото під час навчання — зберігає всі, чекає рахунку
+def handle_learn_photo(message):    # приймає фото під час навчання з батч-таймером 4 сек (як основний флоу)
     st = _learn_state.get(message.chat.id)
-    if not st:
+    if not st or st.get('invoice_received'):
         return
-    # Якщо вже перейшли в invoice але менеджер ще кидає фото — повертаємо в photos
-    if st.get('stage') == 'invoice' and not st.get('invoice_received'):
-        st['stage'] = 'photos'
+    # Скидаємо stage на photos якщо рахунок ще не прийшов
+    st['stage'] = 'photos'
 
-    slug  = st['slug']
-    ex_n  = st['example_n']
-    count = st.get('photo_count', 0) + 1
+    chat_id = message.chat.id
+    slug    = st['slug']
+    ex_n    = st['example_n']
 
+    # Зберігаємо фото в батч (перезапускаємо таймер як в основному флоу)
+    _learn_photo_batch.setdefault(chat_id, [])
     file_info = bot.get_file(message.photo[-1].file_id)
     file_data = bot.download_file(file_info.file_path)
     ext       = file_info.file_path.split('.')[-1] or 'jpg'
+    _learn_photo_batch[chat_id].append((file_data, ext))
 
-    path = os.path.join(
-        clients.CLIENTS_DIR, slug, "examples", f"приклад_{ex_n}", f"photo_{count}.{ext}"
-    )
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'wb') as f:
-        f.write(file_data)
+    # Скасовуємо попередній таймер і запускаємо новий
+    if chat_id in _learn_photo_timers:
+        _learn_photo_timers[chat_id].cancel()
 
-    if path not in st.get('photo_paths', []):
-        st.setdefault('photo_paths', []).append(path)
-    st['photo_count'] = count
+    def _flush_photos(cid):     # спрацьовує після 4 сек паузи — зберігає всі фото на диск
+        batch = _learn_photo_batch.pop(cid, [])
+        _learn_photo_timers.pop(cid, None)
+        lstate = _learn_state.get(cid)
+        if not lstate:
+            return
+        count_before = lstate.get('photo_count', 0)
+        paths = []
+        for i, (fdata, fext) in enumerate(batch, start=count_before + 1):
+            fpath = os.path.join(
+                clients.CLIENTS_DIR, lstate['slug'], "examples",
+                f"приклад_{lstate['example_n']}", f"photo_{i}.{fext}"
+            )
+            os.makedirs(os.path.dirname(fpath), exist_ok=True)
+            with open(fpath, 'wb') as f:
+                f.write(fdata)
+            paths.append(fpath)
+        lstate.setdefault('photo_paths', []).extend(paths)
+        lstate['photo_count'] = count_before + len(batch)
+        total = lstate['photo_count']
+        mk = InlineKeyboardMarkup()
+        mk.add(InlineKeyboardButton("✅ Фото готові — кидай рахунок",
+                                    callback_data="lrn_photos_done"))
+        bot.send_message(cid,
+            f"✅ Збережено фото: *{total}* шт. Кидай ще або натисни кнопку і кидай рахунок.",
+            parse_mode="Markdown", reply_markup=mk)
 
-    mk = InlineKeyboardMarkup()
-    mk.add(InlineKeyboardButton("✅ Фото готові — кидай рахунок", callback_data="lrn_photos_done"))
-    bot.reply_to(message,
-        f"✅ Фото {count} збережено. Кидай ще або натисни кнопку і кидай рахунок.",
-        reply_markup=mk)
+    t = threading.Timer(BATCH_TIMEOUT, _flush_photos, args=[chat_id])
+    t.daemon = True
+    t.start()
+    _learn_photo_timers[chat_id] = t
 
 
 @bot.callback_query_handler(func=lambda c: c.data == 'lrn_photos_done')
