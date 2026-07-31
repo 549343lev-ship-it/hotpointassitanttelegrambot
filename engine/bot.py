@@ -532,25 +532,13 @@ def kb_clients(message):    # кнопка "Клієнти" — показує �
 
 
 @bot.message_handler(func=lambda m: m.text == "👥 Кеш клієнта")
-def kb_client_cache(message):   # показує останні 10 записів кешу активного клієнта
+def kb_client_cache(message):   # показує кеш активного клієнта з кнопками управління
     slug = clients.get_active(message.chat.id)
     if not slug:
         bot.reply_to(message, "Немає активного клієнта.\nАктивуй: `клієнт <ім'я>`",
                      parse_mode="Markdown")
         return
-    p     = clients.get_profile(slug)
-    name  = p['name'] if p else slug
-    cache = clients.get_client_cache(slug)
-    if not cache:
-        bot.reply_to(message, f"👥 Кеш клієнта {name!r} порожній.")
-        return
-    icons = {'confirmed': '✅', 'banned': '❌', 'auto': '🔹'}
-    lines = []
-    for k, v in list(cache.items())[-10:]:
-        lines.append(f"{icons.get(v.get('status', 'auto'), '🔹')} `{k[:35]}` → {v.get('catalog_name', '')[:45]}")
-    bot.reply_to(message,
-        f"👥 Кеш *{name}*: {len(cache)} записів\n✅ підтв | ❌ бан | 🔹 авто\n\n" + "\n".join(lines),
-        parse_mode="Markdown")
+    _show_client_cache(message.chat.id, slug)
 
 
 @bot.message_handler(func=lambda m: m.text == "👑 Статистика")
@@ -1191,18 +1179,23 @@ def _start_learn_session(chat_id: int, slug: str, reply_to=None):   # запус
 
 @bot.message_handler(content_types=['photo'],
                      func=lambda m: m.chat.id in _learn_state
-                     and _learn_state[m.chat.id].get('stage') == 'photos')
+                     and _learn_state[m.chat.id].get('stage') in ('photos', 'invoice'))
 def handle_learn_photo(message):    # приймає фото під час навчання — зберігає всі, чекає рахунку
-    st       = _learn_state.get(message.chat.id)
-    slug     = st['slug']
-    ex_n     = st['example_n']
-    count    = st['photo_count'] + 1
+    st = _learn_state.get(message.chat.id)
+    if not st:
+        return
+    # Якщо вже перейшли в invoice але менеджер ще кидає фото — повертаємо в photos
+    if st.get('stage') == 'invoice' and not st.get('invoice_received'):
+        st['stage'] = 'photos'
 
-    file_info  = bot.get_file(message.photo[-1].file_id)
-    file_data  = bot.download_file(file_info.file_path)
-    ext        = file_info.file_path.split('.')[-1] or 'jpg'
+    slug  = st['slug']
+    ex_n  = st['example_n']
+    count = st.get('photo_count', 0) + 1
 
-    # Зберігаємо фото з індексом: photo_1.jpg, photo_2.jpg...
+    file_info = bot.get_file(message.photo[-1].file_id)
+    file_data = bot.download_file(file_info.file_path)
+    ext       = file_info.file_path.split('.')[-1] or 'jpg'
+
     path = os.path.join(
         clients.CLIENTS_DIR, slug, "examples", f"приклад_{ex_n}", f"photo_{count}.{ext}"
     )
@@ -1210,7 +1203,8 @@ def handle_learn_photo(message):    # приймає фото під час на
     with open(path, 'wb') as f:
         f.write(file_data)
 
-    st['photo_paths'].append(path)
+    if path not in st.get('photo_paths', []):
+        st.setdefault('photo_paths', []).append(path)
     st['photo_count'] = count
 
     mk = InlineKeyboardMarkup()
@@ -1254,7 +1248,8 @@ def handle_learn_invoice(message):  # отримує рахунок → парс
     invoice_path = clients.save_example_invoice(slug, ex_n, file_data, ext)
 
     # Якщо рахунок прийшов без натискання кнопки — stage ще 'photos'
-    st['stage'] = 'invoice'
+    st['stage']            = 'invoice'
+    st['invoice_received'] = True   # блокує повернення stage назад якщо ще кинуть фото
 
     status_msg = bot.reply_to(message, "⏳ Зіставляю фото з рахунком через Gemini...")
 
@@ -1430,29 +1425,102 @@ def _show_client_cache(chat_id: int, slug: str):    # надсилає стат�
     cache = clients.get_client_cache(slug)
     name  = p['name'] if p else slug
 
-    # Останні 10 записів
-    icons = {'confirmed': '✅', 'banned': '❌', 'auto': '🔹'}
-    lines = []
-    for k, v in list(cache.items())[:10]:
-        if '::ban' in k:
-            continue
-        icon = icons.get(v.get('status', 'auto'), '🔹')
-        lines.append(f"{icon} `{k[:30]}` → {v.get('catalog_name', '')[:40]}")
+    # Фільтруємо реальні записи (без ::ban суфіксів)
+    real_items = [(k, v) for k, v in cache.items() if '::ban' not in k]
+    auto_items = [(k, v) for k, v in real_items if v.get('status', 'auto') == 'auto']
+    icons      = {'confirmed': '✅', 'banned': '❌', 'auto': '🔹'}
 
+    # Показуємо авто-записи з кнопками підтвердження
     text = (
         f"👤 Кеш клієнта *{name}*\n"
         f"✅ підтв: {stats['confirmed']} | 🔹 авто: {stats['auto']} | ❌ бан: {stats['banned']}\n\n"
-        + ("\n".join(lines) if lines else "_порожній_")
     )
+    if auto_items:
+        text += f"_Авто-записи (перших {min(7, len(auto_items))} з {len(auto_items)}) — підтвердь або відхили:_\n"
 
+    # Кнопки підтвердження/бану для кожного авто-запису (до 7)
     mk = InlineKeyboardMarkup(row_width=2)
+    for k, v in auto_items[:7]:
+        catalog_name = v.get('catalog_name', '')
+        display_key  = k[:25]
+        display_cat  = catalog_name[:35]
+        text += f"\n🔹 `{display_key}` → _{display_cat}_"
+        # Кодуємо slug::key в callback (обрізаємо до 50 символів)
+        cb_key = f"{slug}::{k}"[:50]
+        mk.add(
+            InlineKeyboardButton(f"✅ {display_key[:20]}", callback_data=f"cck_ok_{cb_key}"),
+            InlineKeyboardButton(f"❌ бан",               callback_data=f"cck_no_{cb_key}"),
+        )
+
+    if not auto_items:
+        # Немає авто — показуємо підтверджені
+        lines = []
+        for k, v in real_items[:10]:
+            icon = icons.get(v.get('status', 'auto'), '🔹')
+            lines.append(f"{icon} `{k[:30]}` → {v.get('catalog_name', '')[:40]}")
+        text += "\n".join(lines) if lines else "_порожній_"
+
+    # Кнопки очищення
     mk.add(
-        InlineKeyboardButton("🧹 Очистити авто",      callback_data=f"ccl_{slug}_auto"),
-        InlineKeyboardButton("⚠️ Очистити підтвердж", callback_data=f"ccl_{slug}_confirmed"),
+        InlineKeyboardButton("✅ Підтвердити всі авто", callback_data=f"cck_all_{slug}"),
+        InlineKeyboardButton("🧹 Очистити авто",        callback_data=f"ccl_{slug}_auto"),
     )
-    mk.add(InlineKeyboardButton("💥 Очистити ВСЕ", callback_data=f"ccl_{slug}_all"))
+    if is_admin(chat_id):
+        mk.add(InlineKeyboardButton("💥 Очистити ВСЕ", callback_data=f"ccl_{slug}_all"))
 
     bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=mk)
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith('cck_ok_') or c.data.startswith('cck_no_'))
+def cb_cache_entry_decision(call):  # підтверджує або банить окремий запис кешу клієнта
+    action  = 'confirmed' if call.data.startswith('cck_ok_') else 'banned'
+    payload = call.data[7:]  # slug::key
+    if '::' not in payload:
+        bot.answer_callback_query(call.id, "⚠️ Помилка ключа"); return
+    slug, key = payload.split('::', 1)
+    cache = clients.get_client_cache(slug)
+    entry = cache.get(key)
+    if not entry:
+        bot.answer_callback_query(call.id, "⚠️ Запис не знайдено"); return
+    catalog_name = entry.get('catalog_name', '')
+    clients.client_cache_set_status(slug, key, catalog_name, action)
+    icon = '✅' if action == 'confirmed' else '❌'
+    bot.answer_callback_query(call.id, f"{icon} {action}")
+    # Оновлюємо повідомлення
+    try:
+        p     = clients.get_profile(slug)
+        stats = clients.get_client_cache_stats(slug)
+        bot.edit_message_text(
+            f"👤 Кеш *{p['name'] if p else slug}*\n"
+            f"✅ {stats['confirmed']} | 🔹 {stats['auto']} | ❌ {stats['banned']}\n\n"
+            f"{icon} `{key[:40]}` → _{catalog_name[:50]}_\n\n"
+            f"Натисни *👥 Кеш клієнта* щоб переглянути решту.",
+            call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    except Exception:
+        pass
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith('cck_all_'))
+def cb_cache_confirm_all(call):     # підтверджує всі авто-записи кешу клієнта
+    slug  = call.data[8:]
+    cache = clients.get_client_cache(slug)
+    count = 0
+    for k, v in cache.items():
+        if '::ban' in k or v.get('status') != 'auto':
+            continue
+        clients.client_cache_set_status(slug, k, v.get('catalog_name', ''), 'confirmed')
+        count += 1
+    p = clients.get_profile(slug)
+    bot.answer_callback_query(call.id, f"✅ Підтверджено {count}")
+    try:
+        stats = clients.get_client_cache_stats(slug)
+        bot.edit_message_text(
+            f"✅ Підтверджено *{count}* авто-записів\n"
+            f"👤 Кеш *{p['name'] if p else slug}*: "
+            f"✅{stats['confirmed']} 🔹{stats['auto']} ❌{stats['banned']}",
+            call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    except Exception:
+        pass
 
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith('ccl_'))
