@@ -1096,45 +1096,6 @@ def kb_learn(message):      # кнопка "Навчання" — запуска
     handle_learn_start(message)
 
 
-
-    rest = message.text[12:].strip()
-    if not rest:
-        bot.reply_to(message, "Формат: `новий клієнт Петренко`",
-                     parse_mode="Markdown"); return
-    parts = rest.split(',', 1)
-    name  = parts[0].strip()
-    notes = parts[1].strip() if len(parts) > 1 else ""
-
-    # Шукаємо схожих клієнтів перед створенням
-    similar = clients.find_similar_clients(name, threshold=0.5)
-    if similar:
-        mk = InlineKeyboardMarkup(row_width=1)
-        for slug, cname, score in similar:
-            mk.add(InlineKeyboardButton(
-                f"👤 {cname} ({int(score*100)}% схожість)",
-                callback_data=f"cl_use_{slug}"))
-        mk.add(InlineKeyboardButton(f"➕ Створити нового «{name}»",
-                                    callback_data=f"cl_new_{clients._slugify(name)}_{name}"))
-        bot.reply_to(message,
-            f"⚠️ Знайдено схожих клієнтів:\nОбери існуючого або створи нового:",
-            reply_markup=mk)
-    else:
-        ok, result = clients.create_client(name, notes)
-        if ok:
-            clients.set_active(message.chat.id, result)
-            bot.reply_to(message, f"✅ Створено *{name}* і активовано.\n"
-                         f"Кидай фото або навчи бота: `навчання`",
-                         parse_mode="Markdown")
-        elif result.startswith("existing:"):
-            slug = result[9:]
-            clients.set_active(message.chat.id, slug)
-            p = clients.get_profile(slug)
-            bot.reply_to(message, f"⚠️ Клієнт *{p['name'] if p else slug}* вже існує — активовано.",
-                         parse_mode="Markdown")
-        else:
-            bot.reply_to(message, f"⚠️ {result}")
-
-
 @bot.callback_query_handler(func=lambda c: c.data == 'cl_rename')
 def cb_client_rename(call):     # менеджер хоче змінити ім'я — просимо ввести знову
     _manual_wait[call.message.chat.id] = {'mode': 'new_client'}
@@ -1173,47 +1134,112 @@ def cb_client_new(call):    # створення нового клієнта п�
 
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() == 'навчання')
-def handle_learn_start(message):    # "навчання" — запускає сесію навчання для активного клієнта
+def handle_learn_start(message):    # "навчання" — спочатку питає клієнта якщо не активний
     slug = clients.get_active(message.chat.id)
     if not slug:
-        bot.reply_to(message, "⚠️ Спочатку активуй клієнта:\n`клієнт Петренко`",
-                     parse_mode="Markdown"); return
+        # Немає активного — показуємо список клієнтів для вибору
+        index = clients.list_clients()
+        if not index:
+            bot.reply_to(message,
+                "⚠️ Немає жодного клієнта.\nСпочатку створи: натисни *➕ Новий клієнт*",
+                parse_mode="Markdown"); return
+        mk = InlineKeyboardMarkup(row_width=1)
+        for s, cname in sorted(index.items(), key=lambda x: x[1])[:10]:
+            mk.add(InlineKeyboardButton(f"👤 {cname}", callback_data=f"lrn_{s}"))
+        bot.reply_to(message, "📚 Кого навчаємо? Обери клієнта:", reply_markup=mk)
+        return
+    _start_learn_session(message.chat.id, slug, reply_to=message)
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith('lrn_'))
+def cb_learn_pick_client(call):     # вибір клієнта для навчання
+    slug = call.data[4:]
+    p    = clients.get_profile(slug)
+    if not p:
+        bot.answer_callback_query(call.id, "Клієнта не знайдено"); return
+    clients.set_active(call.message.chat.id, slug)
+    bot.edit_message_text(
+        f"👤 Обрано: *{p['name']}*",
+        call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    bot.answer_callback_query(call.id)
+    _start_learn_session(call.message.chat.id, slug)
+
+
+def _start_learn_session(chat_id: int, slug: str, reply_to=None):   # запускає сесію навчання: ініціалізує стан і просить фото
     p       = clients.get_profile(slug)
     _, ex_n = clients.get_next_example_dir(slug)
-    _learn_state[message.chat.id] = {'slug': slug, 'example_n': ex_n, 'stage': 'photo'}
-    bot.reply_to(message,
+    _learn_state[chat_id] = {
+        'slug':       slug,
+        'example_n':  ex_n,
+        'stage':      'photos',     # приймає кілька фото
+        'photo_paths': [],          # список шляхів до фото
+        'photo_count': 0,
+    }
+    text = (
         f"📚 Навчання клієнта *{p['name'] if p else slug}*\n"
         f"Приклад #{ex_n}\n\n"
-        f"Крок 1️⃣: Кидай фото замовлення від майстра",
-        parse_mode="Markdown")
+        f"Крок 1️⃣: Кидай фото замовлення від майстра\n"
+        f"_(можна кілька фото — коли всі кинув, натисни_ *Готово* _або кидай рахунок)_"
+    )
+    mk = InlineKeyboardMarkup()
+    mk.add(InlineKeyboardButton("✅ Фото готові — кидай рахунок", callback_data="lrn_photos_done"))
+    if reply_to:
+        bot.reply_to(reply_to, text, parse_mode="Markdown", reply_markup=mk)
+    else:
+        bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=mk)
 
 
 @bot.message_handler(content_types=['photo'],
                      func=lambda m: m.chat.id in _learn_state
-                     and _learn_state[m.chat.id].get('stage') == 'photo')
-def handle_learn_photo(message):    # отримує фото під час сесії навчання → зберігає і просить рахунок
-    st   = _learn_state.get(message.chat.id)
-    slug = st['slug']
-    ex_n = st['example_n']
+                     and _learn_state[m.chat.id].get('stage') == 'photos')
+def handle_learn_photo(message):    # приймає фото під час навчання — зберігає всі, чекає рахунку
+    st       = _learn_state.get(message.chat.id)
+    slug     = st['slug']
+    ex_n     = st['example_n']
+    count    = st['photo_count'] + 1
 
-    # Завантажуємо фото найвищої якості
-    file_info = bot.get_file(message.photo[-1].file_id)
-    file_data = bot.download_file(file_info.file_path)
-    ext       = file_info.file_path.split('.')[-1] or 'jpg'
+    file_info  = bot.get_file(message.photo[-1].file_id)
+    file_data  = bot.download_file(file_info.file_path)
+    ext        = file_info.file_path.split('.')[-1] or 'jpg'
 
-    photo_path = clients.save_example_photo(slug, ex_n, file_data, ext)
-    st['photo_path'] = photo_path
-    st['stage']      = 'invoice'
+    # Зберігаємо фото з індексом: photo_1.jpg, photo_2.jpg...
+    path = os.path.join(
+        clients.CLIENTS_DIR, slug, "examples", f"приклад_{ex_n}", f"photo_{count}.{ext}"
+    )
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'wb') as f:
+        f.write(file_data)
 
+    st['photo_paths'].append(path)
+    st['photo_count'] = count
+
+    mk = InlineKeyboardMarkup()
+    mk.add(InlineKeyboardButton("✅ Фото готові — кидай рахунок", callback_data="lrn_photos_done"))
     bot.reply_to(message,
-        f"✅ Фото збережено!\n\n"
-        f"Крок 2️⃣: Кидай файл рахунку (.xls або .xlsx)")
+        f"✅ Фото {count} збережено. Кидай ще або натисни кнопку і кидай рахунок.",
+        reply_markup=mk)
+
+
+@bot.callback_query_handler(func=lambda c: c.data == 'lrn_photos_done')
+def cb_learn_photos_done(call):     # менеджер натиснув "фото готові" — переходимо до рахунку
+    st = _learn_state.get(call.message.chat.id)
+    if not st:
+        bot.answer_callback_query(call.id, "Сесія завершена"); return
+    count = st.get('photo_count', 0)
+    if count == 0:
+        bot.answer_callback_query(call.id, "⚠️ Спочатку кинь хоча б одне фото!"); return
+    st['stage'] = 'invoice'
+    bot.edit_message_text(
+        f"✅ Фото збережено: {count} шт.\n\n"
+        f"Крок 2️⃣: Кидай файл рахунку (.xls або .xlsx)",
+        call.message.chat.id, call.message.message_id)
+    bot.answer_callback_query(call.id)
 
 
 @bot.message_handler(content_types=['document'],
                      func=lambda m: m.chat.id in _learn_state
                      and _learn_state[m.chat.id].get('stage') == 'invoice')
-def handle_learn_invoice(message):  # отримує рахунок під час навчання → парсить і запускає Gemini для зіставлення
+def handle_learn_invoice(message):  # отримує рахунок → парсить → Gemini зіставляє всі фото з рахунком
     st   = _learn_state.get(message.chat.id)
     slug = st['slug']
     ex_n = st['example_n']
@@ -1223,32 +1249,35 @@ def handle_learn_invoice(message):  # отримує рахунок під ча�
     if ext not in ('xls', 'xlsx'):
         bot.reply_to(message, "⚠️ Потрібен файл .xls або .xlsx"); return
 
-    # Завантажуємо файл
     file_info    = bot.get_file(message.document.file_id)
     file_data    = bot.download_file(file_info.file_path)
     invoice_path = clients.save_example_invoice(slug, ex_n, file_data, ext)
 
+    # Якщо рахунок прийшов без натискання кнопки — stage ще 'photos'
+    st['stage'] = 'invoice'
+
     status_msg = bot.reply_to(message, "⏳ Зіставляю фото з рахунком через Gemini...")
 
-    # Парсимо рахунок
     invoice_items = clients.parse_invoice(invoice_path)
     if not invoice_items:
         bot.edit_message_text("❌ Не вдалося прочитати рахунок. Перевір формат файлу.",
                               message.chat.id, status_msg.message_id); return
 
-    # Читаємо фото для Gemini
-    photo_path = st.get('photo_path')
-    if not photo_path or not os.path.exists(photo_path):
+    photo_paths = st.get('photo_paths', [])
+    if not photo_paths:
         bot.edit_message_text("❌ Фото не знайдено. Почни навчання знову: `навчання`",
                               message.chat.id, status_msg.message_id,
                               parse_mode="Markdown"); return
 
-    with open(photo_path, 'rb') as f:
-        photo_bytes = f.read()
+    # Читаємо всі фото
+    photos_bytes = []
+    for pp in photo_paths:
+        if os.path.exists(pp):
+            with open(pp, 'rb') as f:
+                photos_bytes.append(f.read())
 
-    # Запускаємо Gemini для зіставлення
     try:
-        pairs = _gemini_match_photo_invoice(photo_bytes, invoice_items)
+        pairs = _gemini_match_photo_invoice(photos_bytes, invoice_items)
     except Exception as e:
         print(f"⚠️ Gemini match: {e}")
         bot.edit_message_text(f"❌ Помилка Gemini: {e}",
@@ -1258,7 +1287,6 @@ def handle_learn_invoice(message):  # отримує рахунок під ча�
         bot.edit_message_text("❌ Gemini не зміг зіставити рядки з рахунком.",
                               message.chat.id, status_msg.message_id); return
 
-    # Зберігаємо в кеш
     saved = clients.learn_from_example(slug, ex_n, pairs)
     _learn_state.pop(message.chat.id, None)
 
@@ -1267,14 +1295,14 @@ def handle_learn_invoice(message):  # отримує рахунок під ча�
         f"✅ Навчання завершено!\n"
         f"👤 Клієнт: *{p['name'] if p else slug}*\n"
         f"📚 Приклад #{ex_n}\n"
+        f"📸 Фото: {len(photos_bytes)} шт.\n"
         f"💾 Збережено пар: *{saved}* з {len(invoice_items)} позицій рахунку\n\n"
-        f"Для ще одного прикладу: `навчання`",
+        f"Для ще одного прикладу: натисни *📚 Навчання*",
         message.chat.id, status_msg.message_id, parse_mode="Markdown")
 
 
-def _gemini_match_photo_invoice(photo_bytes: bytes,
-                                 invoice_items: list[str]) -> list[dict]:  # Gemini зіставляє рядки з фото з товарами рахунку; повертає [{original, catalog_name, category}]
-    """Варіант Б: Gemini бачить фото + список товарів → встановлює відповідність."""
+def _gemini_match_photo_invoice(photos_bytes: list[bytes],
+                                 invoice_items: list[str]) -> list[dict]:  # Gemini зіставляє рядки з кількох фото з товарами рахунку; повертає [{original, catalog_name, category}]
     import json as _json
     from google import genai as _genai
     from google.genai import types as _gtypes
@@ -1284,17 +1312,17 @@ def _gemini_match_photo_invoice(photo_bytes: bytes,
 
     invoice_text = "\n".join(f"{i+1}. {name}" for i, name in enumerate(invoice_items))
 
-    prompt = f"""Ти аналізуєш фото замовлення від сантехніка і готовий рахунок.
+    prompt = f"""Ти аналізуєш фото замовлення від сантехніка (може бути кілька фото одного списку) і готовий рахунок.
 
 РАХУНОК (правильні назви товарів з бази):
 {invoice_text}
 
 Твоє завдання:
-1. Прочитай КОЖЕН рядок з фото замовлення
+1. Прочитай КОЖЕН рядок з фото (з усіх фото)
 2. Знайди який товар з рахунку йому відповідає
 3. Поверни JSON масив пар
 
-Формат відповіді — ТІЛЬКИ JSON без пояснень та без markdown:
+Формат — ТІЛЬКИ JSON без пояснень та markdown:
 [
   {{"original": "що написано на фото", "catalog_name": "точна назва з рахунку", "category": "категорія"}},
   ...
@@ -1307,10 +1335,12 @@ siphons_fittings, hoses, water_meters, towel_warmers, safety_valves, automation,
 
 Якщо рядок з фото не має відповідника в рахунку — НЕ включай його."""
 
-    contents = [
-        _gtypes.Part.from_bytes(data=photo_bytes, mime_type="image/jpeg"),
-        _gtypes.Part.from_text(text=prompt),
-    ]
+    # Всі фото + промпт в одному запиті
+    contents = []
+    for pb in photos_bytes:
+        contents.append(_gtypes.Part.from_bytes(data=pb, mime_type="image/jpeg"))
+    contents.append(_gtypes.Part.from_text(text=prompt))
+
     resp = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=contents,
