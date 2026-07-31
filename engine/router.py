@@ -306,6 +306,25 @@ def route_sub(пос: dict, cat: str) -> list[str] | None:    # повертає
     return None
 
 
+# Товари яких НЕ ПРОДАЄМО — бот не шукатиме, одразу знайдено=false
+NOT_OUR_ITEMS = re.compile(
+    r'рукавиц|рукавичк'                    # рукавиці
+    r'|диск відрізн|диск по (бетон|метал)'  # диски
+    r'|бур по бетон'                         # бури
+    r'|мішок будівельн|будівельн мішок'      # мішки будівельні
+    r'|олівець будівельн'                    # олівці
+    r'|маркер (чорн|синій)'                  # маркери
+    r'|скоби (до|для) степлера\s+\d'         # скоби для степлера (не для такера)
+    r'|серветка (до|для) міді'               # серветки
+    , re.IGNORECASE
+)
+
+
+def is_not_our(пос: dict) -> bool:      # повертає True якщо товар не з нашого асортименту
+    combined = (пос.get('normalized', '') + ' ' + пос.get('original', '')).lower()
+    return bool(NOT_OUR_ITEMS.search(combined))
+
+
 def route(пос: dict) -> str:    # визначає category_code для позиції; повертає код або 'other'
     """
     Головна функція маршрутизації.
@@ -313,6 +332,7 @@ def route(пос: dict) -> str:    # визначає category_code для по�
     Вихід: category_code — один з ключів CATALOG_FILES
 
     Пріоритети:
+      0. NOT_OUR_ITEMS — якщо не наш товар → одразу 'not_ours'
       1. Якщо Gemini вже дав category і це не 'other' → перевіряємо text_rules для уточнення
       2. type_route() за полем type від Gemini
       3. text_route() за ключовими словами
@@ -324,6 +344,10 @@ def route(пос: dict) -> str:    # визначає category_code для по�
     gemini_cat = (пос.get('category')   or '').lower().strip()
     gemini_type = (пос.get('type')      or '').lower().strip()
     combined   = normalized + ' ' + original    # рядок для regex-пошуку
+
+    # 0. Не наш товар → не шукати
+    if is_not_our(пос):
+        return 'not_ours'
 
     # 1. Спочатку — жорсткий text_route (незалежно від Gemini)
     #    Він перемагає бо маппінг детальніший за Gemini
