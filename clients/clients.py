@@ -192,10 +192,10 @@ def parse_invoice(invoice_path: str) -> list[str]:  # парсить рахун�
         engine = 'xlrd' if invoice_path.endswith('.xls') else 'openpyxl'
         df     = pd.read_excel(invoice_path, header=None, engine=engine)
 
-        # Шукаємо колонку "Номенклатура" в першому рядку
+        # Шукаємо колонку "Номенклатура" по всіх рядках і колонках
         header_row = None
         nom_col    = None
-        for ri in range(min(5, len(df))):
+        for ri in range(min(15, len(df))):
             for ci in range(len(df.columns)):
                 val = str(df.iloc[ri, ci]).strip().lower()
                 if 'номенклатур' in val:
@@ -206,19 +206,24 @@ def parse_invoice(invoice_path: str) -> list[str]:  # парсить рахун�
                 break
 
         if nom_col is None:
-            # Якщо не знайшли заголовок — беремо колонку 1 (індекс 1) після рядка N
-            # (у файлі альянс: N, Номенклатура, ...)
+            # Fallback: колонка 1 (другий стовпець) після першого рядка
             nom_col    = 1
             header_row = 0
 
         items = []
         for ri in range((header_row or 0) + 1, len(df)):
             val = str(df.iloc[ri, nom_col]).strip()
-            if val and val != 'nan' and val != 'None':
-                # Прибираємо залишки упаковки {N/N}
-                val = re.sub(r'\s*\{[^}]+\}', '', val).strip()
-                if val:
-                    items.append(val)
+            if not val or val == 'nan' or val == 'None':
+                continue
+            # Пропускаємо рядки які явно є підписами/реквізитами
+            if any(skip in val for skip in ['Покупець', 'Виконавець', 'оплат', 'реквізит', 'пропозиці']):
+                continue
+            # Прибираємо залишки упаковки {N/N} і {N}
+            val = re.sub(r'\s*\{[^}]+\}', '', val).strip()
+            # Прибираємо NEW! префікс
+            val = re.sub(r'^NEW!\s*', '', val).strip()
+            if val and len(val) > 3:
+                items.append(val)
         return items
     except Exception as e:
         print(f"⚠️ parse_invoice: {e}")
