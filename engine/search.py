@@ -113,6 +113,12 @@ SEARCH_SYNONYMS = {
     # Ущільнювальна нитка Standart = нитка Thermo Alliance (НЕ пакувальна!)
     'ущільнюючa нитка standart': 'нитка ущільнювальна Thermo Alliance Standart',
     'ущільнююча нитка standart': 'нитка ущільнювальна Thermo Alliance Standart',
+    # Фільтр для води RAFTEC ≠ самопромивний (самопромивний = HYDRA/HERZ)
+    # "Фільтр для води" = фільтр грубої очистки
+    'фільтр для води':          'фільтр грубої очистки',
+    # Glidex = мастило силіконове (не мастило технічне OSTENDORF!)
+    'glidex':                   'Glidex силіконове мастило',
+    'глідекс':                  'Glidex силіконове мастило',
     # Корок монтажний = заглушка різьбова довга
     'корок монтажний':  'заглушка різьбова довга',
     # Тасьма = демпферна стрічка
@@ -416,6 +422,48 @@ def validate_pick(qa: dict, item: dict) -> bool:    # пост-валідаці�
         return False
     if qa.get('type') and ia.get('type') and qa['type'] != ia['type']:
         if {qa['type'], ia['type']} != {'коліно', 'відведення'}:
+            # КРИТИЧНО: муфта ≠ коліно навіть якщо обидва мають РВ/РЗ
+            if {qa['type'], ia['type']} in [
+                {'муфта', 'коліно'}, {'муфта', 'відведення'},
+                {'трійник', 'муфта'}, {'трійник', 'коліно'},
+            ]:
+                return False
+            return False
+
+    # КРИТИЧНО: ВЗ ≠ ВВ для кранів і клапанів
+    # Якщо запит має conn_type → товар з протилежним conn_type відхиляємо
+    if qa.get('conn_type'):
+        ia_conn = ia.get('conn_type')
+        item_lc = item.get('name', '').lower()
+        if ia_conn and qa['conn_type'] != ia_conn:
+            return False
+        # Хлопушка/пелюстковий не має conn_type але не є штоковим ВВ клапаном
+        if any(x in item_lc for x in ('хлопушк', 'пелюстк')):
+            return False
+        # Кран ВЗ: якщо запитали ВЗ але знайшло ВВ (і навпаки)
+        q_conn = qa['conn_type']
+        if q_conn == 'вз' and ' вв' in item_lc and ' вз' not in item_lc:
+            return False
+        if q_conn == 'вв' and ' вз' in item_lc and ' вв' not in item_lc:
+            return False
+
+    # КРИТИЧНО: латунний трійник ≠ PPR трійник
+    # Якщо в запиті є "латунь" або "вввв" → PPR категорія не підходить
+    _raw_lc = (qa.get('_raw') or '').lower()
+    _item_cat = item.get('category', '')
+    if 'латун' in _raw_lc and _item_cat == 'plastic_ppr':
+        return False
+    if 'латун' in _raw_lc and 'ppr' in item.get('name', '').lower():
+        return False
+
+    # КРИТИЧНО: "з американкою" — якщо запит має американку, товар без неї не підходить
+    item_lc = item.get('name', '').lower()
+    if 'американк' in _raw_lc and 'американк' not in item_lc and 'амер' not in item_lc:
+        return False
+
+    # КРИТИЧНО: поливальний кран ≠ звичайний кран
+    if 'поливальн' in _raw_lc or 'поливочн' in _raw_lc:
+        if 'поливальн' not in item_lc and 'поливочн' not in item_lc:
             return False
     if qa.get('angle') and not _angle_match(qa['angle'], ia.get('angle')):
         return False
@@ -865,6 +913,19 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
         # використовуємо ТІЛЬКИ якщо виробник прямо в рядку майстра не знайдено
         # і тільки як підказку для normalized — НЕ як жорстке обмеження
         _global_brand = brand_map.get('_global')  # може бути None
+
+        # ⚡ Для PPR і каналізації — _global_brand є ЖОРСТКИМ якщо це виробник пайки/каналізації
+        # Менеджер написав "пайка екопластик" → ВСІ PPR позиції мають бути Ekoplastik
+        _ppr_sew_cats = {'plastic_ppr', 'sewage', 'push_systems'}
+        if _global_brand and category in _ppr_sew_cats and not hard_brand:
+            # Перевіряємо чи _global_brand є виробником цієї категорії
+            _gb_lc = [t.lower() for t in _global_brand]
+            _is_cat_brand = any(
+                b in _gb_lc for b in
+                ['ekoplastik', 'asg', 'raftec', 'plm', 'ostendorf', 'rehau', 'fv plast']
+            )
+            if _is_cat_brand:
+                hard_brand = _global_brand  # підвищуємо до жорсткого
 
         # РІВЕНЬ 1.5: виробник у самому рядку майстра (Wilo, Bonomi, Herz...)
         line_brand = None
