@@ -438,8 +438,9 @@ def add_to_batch(chat_id: int, item: dict):     # додає файл/текст
 def main_keyboard(uid: int) -> ReplyKeyboardMarkup:     # будує головну клавіатуру; адміни бачать додаткові кнопки статистики і логів
     kb = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     kb.add(KeyboardButton("📸 Як користуватись"), KeyboardButton("🛑 Стоп"))
-    kb.add(KeyboardButton("📋 Правило"), KeyboardButton("📊 Кеш"))
-    kb.add(KeyboardButton("👥 Клієнти"), KeyboardButton("👥 Кеш клієнта"))
+    kb.add(KeyboardButton("📋 Правило"),           KeyboardButton("📊 Кеш"))
+    kb.add(KeyboardButton("👥 Клієнти"),           KeyboardButton("➕ Новий клієнт"))
+    kb.add(KeyboardButton("👥 Кеш клієнта"),       KeyboardButton("📚 Навчання"))
     if is_admin(uid):
         kb.add(KeyboardButton("👑 Статистика"), KeyboardButton("👑 Правила на розгляд"))
         kb.add(KeyboardButton("👑 Логи"),       KeyboardButton("👑 Діри каталогу"))
@@ -1084,8 +1085,18 @@ _learn_state: dict = {}
 _cache_clear_state: dict = {}
 
 
-@bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('новий клієнт'))
-def handle_new_client(message):     # "новий клієнт Ім'я" — створює профіль; якщо схожий є — попереджає
+@bot.message_handler(func=lambda m: m.text == "➕ Новий клієнт")
+def kb_new_client(message):     # кнопка "Новий клієнт" — запитує ім'я
+    _manual_wait[message.chat.id] = {'mode': 'new_client'}
+    bot.reply_to(message, "👤 Введи ім'я нового клієнта:")
+
+
+@bot.message_handler(func=lambda m: m.text == "📚 Навчання")
+def kb_learn(message):      # кнопка "Навчання" — запускає сесію навчання
+    handle_learn_start(message)
+
+
+
     rest = message.text[12:].strip()
     if not rest:
         bot.reply_to(message, "Формат: `новий клієнт Петренко`",
@@ -1122,6 +1133,14 @@ def handle_new_client(message):     # "новий клієнт Ім'я" — ст
                          parse_mode="Markdown")
         else:
             bot.reply_to(message, f"⚠️ {result}")
+
+
+@bot.callback_query_handler(func=lambda c: c.data == 'cl_rename')
+def cb_client_rename(call):     # менеджер хоче змінити ім'я — просимо ввести знову
+    _manual_wait[call.message.chat.id] = {'mode': 'new_client'}
+    bot.edit_message_text("✏️ Введи ім'я знову:",
+                          call.message.chat.id, call.message.message_id)
+    bot.answer_callback_query(call.id)
 
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith('cl_use_'))
@@ -1993,11 +2012,42 @@ def handle_stop(message):   # /stop — скасовує поточний бат
 
 
 @bot.message_handler(func=lambda m: m.text and m.chat.id in _manual_wait)
-def handle_manual_input(message):   # ловить текст коли чекає ручного вводу (режими: fix — пошук виправлення, ocr_fix — виправлення OCR, train — ручний вибір товару)
+def handle_manual_input(message):   # ловить текст коли чекає ручного вводу (режими: fix, ocr_fix, train, new_client, new_client_confirm)
     state = _manual_wait.pop(message.chat.id, None)
     if not state: return
     mode  = state.get('mode')
     query = message.text.strip()
+
+    # ── Новий клієнт: крок 1 — введено ім'я ────────────────────────────────
+    if mode == 'new_client':
+        name = query
+        # Перевіряємо схожих
+        similar = clients.find_similar_clients(name, threshold=0.5)
+        if similar:
+            mk = InlineKeyboardMarkup(row_width=1)
+            for slug, cname, score in similar:
+                mk.add(InlineKeyboardButton(
+                    f"👤 {cname} ({int(score*100)}% схожість)",
+                    callback_data=f"cl_use_{slug}"))
+            mk.add(InlineKeyboardButton(
+                f"➕ Створити нового «{name}»",
+                callback_data=f"cl_new__{name}"))
+            bot.reply_to(message,
+                f"⚠️ Знайдено схожих клієнтів. Оберіть або створіть нового:",
+                reply_markup=mk)
+        else:
+            # Немає схожих — просимо підтвердити
+            mk = InlineKeyboardMarkup(row_width=2)
+            mk.add(
+                InlineKeyboardButton("✅ Так, створити", callback_data=f"cl_new__{name}"),
+                InlineKeyboardButton("✏️ Змінити ім'я",  callback_data="cl_rename"),
+            )
+            bot.reply_to(message,
+                f"👤 Створити нового клієнта?\n\n*{name}*",
+                parse_mode="Markdown", reply_markup=mk)
+        return
+
+    # ── Решта режимів ────────────────────────────────────────────────────────
     cands = [c['name'] for c in keyword_search(query, top_n=9)]
     if not cands:
         bot.reply_to(message, "😕 Нічого не знайдено. Спробуй іншу назву або частину.")
