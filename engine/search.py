@@ -436,8 +436,13 @@ def validate_pick(qa: dict, item: dict) -> bool:    # пост-валідаці�
     if q_sl is True and i_sl is False:
         return False   # запитали безшумну але товар звичайний
     # перевірка ВВ vs ВЗ (conn_type)
-    if qa.get('conn_type') and ia.get('conn_type'):
-        if qa['conn_type'] != ia['conn_type']:
+    # Якщо запит має conn_type → товар без нього але з "хлопушка" відхиляємо
+    if qa.get('conn_type'):
+        if ia.get('conn_type') and qa['conn_type'] != ia['conn_type']:
+            return False
+        # Хлопушка/пелюстковий = клапан без ВВ з'єднання → не підходить якщо запитали ВВ/ВЗ
+        item_lc = item.get('name', '').lower()
+        if any(x in item_lc for x in ('хлопушк', 'пелюстк', 'поворот.*клапан')):
             return False
 
     # перевірка типу радіатора (тип 10 ≠ тип 22 — різні товари!)
