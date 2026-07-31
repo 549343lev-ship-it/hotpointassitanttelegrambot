@@ -35,13 +35,13 @@ claude        = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 BRAND_TOKENS = {    # словник: що пише менеджер → офіційні токени виробника для пошуку в назвах
     'raftec':      ['raftec', 'RAFTEC'],
     'рафтек':      ['raftec', 'RAFTEC'],
-    'ekoplastik':  ['ekoplastik', 'Ekoplastik'],
-    'екопластик':  ['ekoplastik', 'Ekoplastik'],
-    'еко':         ['ECO', 'eco', 'Ekoplastik', 'ekoplastik'],  # ЕКО = ECO лінійка Ekoplastik
-    'eko':         ['ECO', 'eco', 'Ekoplastik', 'ekoplastik'],
-    'eco':         ['ECO', 'eco', 'Ekoplastik', 'ekoplastik'],
-    'wavin':       ['wavin', 'Wavin'],  # PPR виробник
-    'екопласт':    ['ekoplastik', 'Ekoplastik'],
+    'ekoplastik':  ['ekoplastik', 'Ekoplastik', 'PP-RCT'],
+    'екопластик':  ['ekoplastik', 'Ekoplastik', 'PP-RCT'],
+    'еко':         ['ekoplastik', 'Ekoplastik', 'PP-RCT'],  # ЕКО в підказці = Ekoplastik PP-RCT
+    'eko':         ['ekoplastik', 'Ekoplastik', 'PP-RCT'],
+    'eco':         ['ECO'],          # ECO = окремий виробник PPR, НЕ Ekoplastik!
+    'wavin':       ['wavin', 'Wavin'],
+    'екопласт':    ['ekoplastik', 'Ekoplastik', 'PP-RCT'],
     'asg':         ['asg', 'ASG'],
     'асг':         ['asg', 'ASG'],
     'ostendorf':   ['ostendorf', 'OSTENDORF'],
@@ -92,6 +92,13 @@ BRAND_TOKENS = {    # словник: що пише менеджер → офі�
     'вайлант':     ['vaillant', 'Vaillant'],
     'alcaplast':   ['alcaplast', 'AlcaPlast'],
     'esbe':        ['esbe', 'ESBE'],
+    # Крос-бренди кранів → RAFTEC (ми продаємо аналог RAFTEC)
+    'giacomini':   ['raftec', 'RAFTEC', 'Giacomini'],
+    'гіакоміні':   ['raftec', 'RAFTEC', 'Giacomini'],
+    'kfa':         ['raftec', 'RAFTEC'],
+    'fado':        ['raftec', 'RAFTEC'],
+    'valtec':      ['raftec', 'RAFTEC'],
+    'solomon':     ['raftec', 'RAFTEC'],
     'grohe':       ['grohe', 'Grohe'],
     'thermaflex':  ['thermaflex', 'Thermaflex'],
 }
@@ -168,17 +175,20 @@ CATEGORY_ALIASES = {    # словник: що пише менеджер у пі
 }
 
 DEFAULT_BRAND_PRIORITY = {  # якщо менеджер не вказав виробника — беремо з цього списку за пріоритетом
-    'sewage':                  [['asg', 'ASG'], ['ostendorf', 'OSTENDORF']],
-    'plastic_ppr':             [['ekoplastik', 'Ekoplastik'], ['asg', 'ASG'], ['raftec', 'RAFTEC']],
+    'sewage':                  [['ostendorf', 'OSTENDORF'], ['asg', 'ASG']],   # OSTENDORF першим!
+    'plastic_ppr':             [['ekoplastik', 'Ekoplastik', 'PP-RCT'], ['asg', 'ASG'], ['raftec', 'RAFTEC']],
     'shutoff_valves':          [['raftec', 'RAFTEC']],
     'adapters_reducers':       [['raftec', 'RAFTEC']],
-    'filtration':              [['ecosoft', 'Ecosoft']],
-    'radiators_radiatorsvalve':[['hidros', 'Hidros'], ['idmar', 'IDMAR']],
-    'pumps':                   [['tatra', 'TATRA'], ['termojet', 'Termojet']],
+    'filtration':              [['raftec', 'RAFTEC'], ['ecosoft', 'Ecosoft']],  # фільтр під пломбу RAFTEC першим
+    'radiators_radiatorsvalve':[['mirado', 'MIRADO'], ['hidros', 'Hidros'], ['idmar', 'IDMAR']],  # MIRADO першим
+    'pumps':                   [['lider', 'Lider'], ['tatra', 'TATRA'], ['termojet', 'Termojet']],  # Lider першим
     'insulation':              [['plm', 'PLM']],
     'push_systems':            [['raftec', 'RAFTEC'], ['rehau', 'REHAU']],
     'metal_plastic':           [['raftec', 'RAFTEC']],
-    'fasteners_sealants':      [['eco', 'ECO']],
+    'fasteners_sealants':      [['eco', 'ECO'], ['raftec', 'RAFTEC'], ['walraven', 'Walraven']],
+    'underfloor_heating':      [['raftec', 'RAFTEC'], ['plm', 'PLM']],
+    'heating':                 [['ekoplastik', 'Ekoplastik'], ['raftec', 'RAFTEC']],
+    'water_meters':            [['ecostar', 'Ecostar', 'ECOSTAR']],
 }
 
 SIMILAR_CATS = {    # суміжні категорії: якщо не знайшли в основній — шукаємо тут (Gemini міг помилитись категорією)
@@ -447,7 +457,19 @@ def validate_pick(qa: dict, item: dict) -> bool:    # пост-валідаці�
         if q_conn == 'вв' and ' вз' in item_lc and ' вв' not in item_lc:
             return False
 
-    # КРИТИЧНО: латунний трійник ≠ PPR трійник
+    # ЖОРСТКО: ECO ≠ Ekoplastik — різні виробники, різні папки!
+    # Якщо підказка "екопластик" → ECO товари заборонені і навпаки
+    _req_brand_lc = [t.lower() for t in (qa.get('_brand_tokens') or [])]
+    _item_name_lc = item.get('name', '').lower()
+    if _req_brand_lc:
+        wants_ekoplastik = any(b in ('ekoplastik', 'pp-rct') for b in _req_brand_lc)
+        wants_eco        = _req_brand_lc == ['eco']
+        item_is_eco      = ', eco' in _item_name_lc or ' eco' == _item_name_lc[-4:]
+        item_is_ekoplas  = 'ekoplastik' in _item_name_lc or 'pp-rct' in _item_name_lc
+        if wants_ekoplastik and item_is_eco and not item_is_ekoplas:
+            return False   # хотіли Ekoplastik — ECO заборонено
+        if wants_eco and item_is_ekoplas and not item_is_eco:
+            return False   # хотіли ECO — Ekoplastik заборонено
     # Якщо в запиті є "латунь" або "вввв" → PPR категорія не підходить
     _raw_lc = (qa.get('_raw') or '').lower()
     _item_cat = item.get('category', '')
@@ -692,6 +714,9 @@ def smart_search(пос: dict, top_n: int = 12,
     if qa is None:
         qa = build_qa(пос)
         пос['_qa'] = qa
+    # Передаємо brand_tokens в qa для validate_pick (ECO ≠ Ekoplastik перевірка)
+    if brand_tokens:
+        qa['_brand_tokens'] = brand_tokens
 
     routed_cat = пос.get('_routed_cat') or пос.get('category')
     is_other   = (routed_cat in (None, 'other'))
