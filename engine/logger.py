@@ -93,6 +93,38 @@ def log_not_found(rows: list):  # дописує незнайдені позиц
         print(f"⚠️ log_not_found: {e}")
 
 
+def get_catalog_gaps() -> str:  # будує текстовий топ-20 найчастіше незнайдених позицій
+    import re
+    if not os.path.exists(NOT_FOUND_FILE):
+        return "🕳 Порожньо — все знаходилось."
+    try:
+        with open(NOT_FOUND_FILE, encoding="utf-8") as f:
+            log = json.load(f)
+    except Exception:
+        return "⚠️ Помилка читання."
+    if not log:
+        return "🕳 Порожньо."
+    groups = {}
+    for rec in log:
+        key = re.sub(r"\s+", " ",
+                     (rec.get("normalized") or rec.get("original", "")).lower()).strip()
+        if not key:
+            continue
+        if key not in groups:
+            groups[key] = {"n": 0, "show": rec.get("normalized") or rec.get("original", ""),
+                           "orig": rec.get("original", ""), "last": rec.get("date", "")}
+        groups[key]["n"] += 1
+        groups[key]["last"] = rec.get("date", groups[key]["last"])
+    top   = sorted(groups.values(), key=lambda g: -g["n"])[:20]
+    lines = [f"🕳 ДІРИ КАТАЛОГУ — топ незнайдених ({len(log)} записів):\n"]
+    for i, g in enumerate(top, 1):
+        lines.append(f"{i}. ×{g['n']}  {g['show'][:48]}")
+        if g['orig'] and g['orig'].lower() != g['show'].lower():
+            lines.append(f"      (писали: {g['orig'][:45]})")
+    lines.append("\n➡️ Ці товари варто додати в прайси або створити правило.")
+    return "\n".join(lines)
+
+
 def get_catalog_gaps_excel(output_path: str) -> int:    # будує Excel з усіма незнайденими позиціями згрупованими по частоті; повертає кількість унікальних позицій
     import re
     import openpyxl
