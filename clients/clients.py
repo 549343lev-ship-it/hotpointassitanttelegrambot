@@ -362,7 +362,7 @@ def client_cache_save(slug: str, original: str, catalog_name: str,
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
 
-def client_cache_set_status(slug: str, original: str,
+def client_cache_set_status(slug: str, original_or_key: str,
                             catalog_name: str, status: str) -> bool:    # встановлює статус confirmed/banned для запису в кеші клієнта
     path = os.path.join(CLIENTS_DIR, slug, "cache.json")
     if not os.path.exists(path):
@@ -372,9 +372,21 @@ def client_cache_set_status(slug: str, original: str,
             cache = json.load(f)
     except Exception:
         return False
-    key   = re.sub(r'\s+', ' ', original.lower().strip())
+
+    # Спочатку пробуємо точний ключ (з cb_cache_entry_decision)
+    if original_or_key in cache:
+        entry = cache[original_or_key]
+        if entry.get('catalog_name') == catalog_name or not catalog_name:
+            entry['status']   = status
+            entry['saved_at'] = time.strftime("%Y-%m-%d")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(cache, f, ensure_ascii=False, indent=2)
+            return True
+
+    # Fallback: нормалізований ключ
+    key   = re.sub(r'\s+', ' ', original_or_key.lower().strip())
     entry = cache.get(key)
-    if entry and entry.get('catalog_name') == catalog_name:
+    if entry and (entry.get('catalog_name') == catalog_name or not catalog_name):
         entry['status']   = status
         entry['saved_at'] = time.strftime("%Y-%m-%d")
         with open(path, "w", encoding="utf-8") as f:
