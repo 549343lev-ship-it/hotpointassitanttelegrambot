@@ -1259,11 +1259,14 @@ def handle_learn_invoice(message):  # отримує рахунок → парс
     status_msg = bot.reply_to(message, "⏳ Зіставляю фото з рахунком через Gemini...")
 
     invoice_items = clients.parse_invoice(invoice_path)
+    print(f"📄 parse_invoice: знайдено {len(invoice_items)} позицій з {invoice_path}", flush=True)
     if not invoice_items:
-        bot.edit_message_text("❌ Не вдалося прочитати рахунок. Перевір формат файлу.",
-                              message.chat.id, status_msg.message_id); return
+        msg = "❌ Не вдалося прочитати рахунок. Перевір формат файлу."
+        print(f"⚠️ {msg}", flush=True)
+        bot.edit_message_text(msg, message.chat.id, status_msg.message_id); return
 
     photo_paths = st.get('photo_paths', [])
+    print(f"📸 Фото для навчання: {photo_paths}", flush=True)
     if not photo_paths:
         bot.edit_message_text("❌ Фото не знайдено. Почни навчання знову: `навчання`",
                               message.chat.id, status_msg.message_id,
@@ -1275,20 +1278,43 @@ def handle_learn_invoice(message):  # отримує рахунок → парс
         if os.path.exists(pp):
             with open(pp, 'rb') as f:
                 photos_bytes.append(f.read())
+            print(f"  ✅ Фото завантажено: {pp} ({os.path.getsize(pp)} байт)", flush=True)
+        else:
+            print(f"  ❌ Фото не знайдено: {pp}", flush=True)
+
+    if not photos_bytes:
+        bot.edit_message_text("❌ Файли фото не читаються. Спробуй знову.",
+                              message.chat.id, status_msg.message_id); return
+
+    bot.edit_message_text(
+        f"⏳ Gemini аналізує {len(photos_bytes)} фото та {len(invoice_items)} позицій рахунку...",
+        message.chat.id, status_msg.message_id)
 
     try:
-        pairs = _gemini_match_photo_invoice(photos_bytes, invoice_items)
+        pairs, raw_response = _gemini_match_photo_invoice(photos_bytes, invoice_items)
+        print(f"🤖 Gemini відповідь (перші 500 символів):\n{raw_response[:500]}", flush=True)
     except Exception as e:
-        print(f"⚠️ Gemini match: {e}")
-        bot.edit_message_text(f"❌ Помилка Gemini: {e}",
-                              message.chat.id, status_msg.message_id); return
+        import traceback
+        err = traceback.format_exc()
+        print(f"❌ Gemini match exception:\n{err}", flush=True)
+        bot.edit_message_text(
+            f"❌ Помилка Gemini:\n`{str(e)[:200]}`",
+            message.chat.id, status_msg.message_id, parse_mode="Markdown"); return
 
     if not pairs:
-        bot.edit_message_text("❌ Gemini не зміг зіставити рядки з рахунком.",
-                              message.chat.id, status_msg.message_id); return
+        print(f"⚠️ Gemini повернув порожній список. Raw: {raw_response[:300]}", flush=True)
+        bot.edit_message_text(
+            f"⚠️ Gemini не знайшов збігів між фото і рахунком.\n\n"
+            f"Можливі причини:\n"
+            f"• Фото і рахунок від різних замовлень\n"
+            f"• Фото нечітке або погано освітлене\n"
+            f"• Gemini не зміг розібрати почерк\n\n"
+            f"_Відповідь Gemini:_\n`{raw_response[:300]}`",
+            message.chat.id, status_msg.message_id, parse_mode="Markdown"); return
 
     saved = clients.learn_from_example(slug, ex_n, pairs)
     _learn_state.pop(message.chat.id, None)
+    print(f"✅ Навчання завершено: збережено {saved} пар з {len(pairs)} знайдених", flush=True)
 
     p = clients.get_profile(slug)
     bot.edit_message_text(
@@ -1296,13 +1322,14 @@ def handle_learn_invoice(message):  # отримує рахунок → парс
         f"👤 Клієнт: *{p['name'] if p else slug}*\n"
         f"📚 Приклад #{ex_n}\n"
         f"📸 Фото: {len(photos_bytes)} шт.\n"
-        f"💾 Збережено пар: *{saved}* з {len(invoice_items)} позицій рахунку\n\n"
+        f"🔗 Знайдено збігів: *{len(pairs)}*\n"
+        f"💾 Збережено в кеш: *{saved}*\n\n"
         f"Для ще одного прикладу: натисни *📚 Навчання*",
         message.chat.id, status_msg.message_id, parse_mode="Markdown")
 
 
 def _gemini_match_photo_invoice(photos_bytes: list[bytes],
-                                 invoice_items: list[str]) -> list[dict]:  # Gemini зіставляє рядки з кількох фото з товарами рахунку; повертає [{original, catalog_name, category}]
+                                 invoice_items: list[str]) -> tuple[list[dict], str]:  # повертає (пари збігів, сира відповідь Gemini)
     import json as _json
     from google import genai as _genai
     from google.genai import types as _gtypes
@@ -1327,7 +1354,7 @@ def _gemini_match_photo_invoice(photos_bytes: list[bytes],
 
 ПРАВИЛА зіставлення:
 - "Труба ф25" на фото → "Труба PPR..." в рахунку ✓
-- "Трійник ф25" → "Трійник однозначний рівний PPR ф 25..." ✓  
+- "Трійник ф25" → "Трійник однозначний рівний PPR ф 25..." ✓
 - "Кол ф25 90" → "Коліно PPR 90° ф 25..." ✓
 - "Заглушка ф20" → "Заглушка PPR ф 20..." ✓
 - Скорочення майстрів: "Тр" = Трійник, "Кол/Кут" = Коліно, "Тр-ба" = Труба
@@ -1345,7 +1372,6 @@ metal_plastic, fasteners_sealants, filtration, insulation, radiators_radiatorsva
 underfloor_heating, water_heaters, boilers, pumps, mixers_faucets, sanitary_ware,
 siphons_fittings, hoses, water_meters, towel_warmers, safety_valves, automation, other"""
 
-    # Всі фото + промпт в одному запиті
     contents = []
     for pb in photos_bytes:
         contents.append(_gtypes.Part.from_bytes(data=pb, mime_type="image/jpeg"))
@@ -1356,12 +1382,16 @@ siphons_fittings, hoses, water_meters, towel_warmers, safety_valves, automation,
         contents=contents,
         config=_gtypes.GenerateContentConfig(temperature=0),
     )
-    text = (resp.text or '').strip()
-    text = re.sub(r'^```json\s*', '', text)
-    text = re.sub(r'\s*```$', '', text)
+    raw = (resp.text or '').strip()
+    text = re.sub(r'^```json\s*', '', raw)
+    text = re.sub(r'\s*```$', '', text).strip()
 
-    pairs = _json.loads(text)
-    return pairs if isinstance(pairs, list) else []
+    try:
+        pairs = _json.loads(text)
+        return (pairs if isinstance(pairs, list) else []), raw
+    except _json.JSONDecodeError as e:
+        print(f"❌ JSON parse error: {e}\nRaw: {raw[:500]}", flush=True)
+        return [], raw
 
 
 # ─── Перегляд і очищення кешу клієнта ────────────────────────────────────────
