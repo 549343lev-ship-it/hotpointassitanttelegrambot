@@ -1075,28 +1075,393 @@ def handle_fix_pick(call):  # обробляє вибір правильного
         bot.answer_callback_query(call.id, "📥 На розгляді")
 
 
-# ─── Клієнти ─────────────────────────────────────────────────────────────────
+# ─── Навчання клієнта (фото + рахунок → кеш) ─────────────────────────────────
+
+# Стан навчання: chat_id → {slug, example_n, stage: 'photo'|'invoice', photo_path}
+_learn_state: dict = {}
+
+# Стан очищення кешу: chat_id → {slug, step, status_filter, confirm_text}
+_cache_clear_state: dict = {}
+
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('новий клієнт'))
-def handle_new_client(message):     # "новий клієнт Ім'я" — створює профіль і одразу активує клієнта
-    rest  = message.text[12:].strip()
+def handle_new_client(message):     # "новий клієнт Ім'я" — створює профіль; якщо схожий є — попереджає
+    rest = message.text[12:].strip()
     if not rest:
-        bot.reply_to(message, "Формат: `новий клієнт Петренко, примітка`",
+        bot.reply_to(message, "Формат: `новий клієнт Петренко`",
                      parse_mode="Markdown"); return
     parts = rest.split(',', 1)
     name  = parts[0].strip()
     notes = parts[1].strip() if len(parts) > 1 else ""
-    ok, result = clients.create_client(name, notes)
-    if ok:
-        clients.set_active(message.chat.id, result)
-        bot.reply_to(message, f"✅ Створено *{name}* і активовано. Кидай фото!",
-                     parse_mode="Markdown")
-    else:
-        bot.reply_to(message, f"⚠️ {result}")
 
+    # Шукаємо схожих клієнтів перед створенням
+    similar = clients.find_similar_clients(name, threshold=0.5)
+    if similar:
+        mk = InlineKeyboardMarkup(row_width=1)
+        for slug, cname, score in similar:
+            mk.add(InlineKeyboardButton(
+                f"👤 {cname} ({int(score*100)}% схожість)",
+                callback_data=f"cl_use_{slug}"))
+        mk.add(InlineKeyboardButton(f"➕ Створити нового «{name}»",
+                                    callback_data=f"cl_new_{clients._slugify(name)}_{name}"))
+        bot.reply_to(message,
+            f"⚠️ Знайдено схожих клієнтів:\nОбери існуючого або створи нового:",
+            reply_markup=mk)
+    else:
+        ok, result = clients.create_client(name, notes)
+        if ok:
+            clients.set_active(message.chat.id, result)
+            bot.reply_to(message, f"✅ Створено *{name}* і активовано.\n"
+                         f"Кидай фото або навчи бота: `навчання`",
+                         parse_mode="Markdown")
+        elif result.startswith("existing:"):
+            slug = result[9:]
+            clients.set_active(message.chat.id, slug)
+            p = clients.get_profile(slug)
+            bot.reply_to(message, f"⚠️ Клієнт *{p['name'] if p else slug}* вже існує — активовано.",
+                         parse_mode="Markdown")
+        else:
+            bot.reply_to(message, f"⚠️ {result}")
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith('cl_use_'))
+def cb_client_use(call):    # вибір існуючого клієнта зі списку схожих
+    slug = call.data[7:]
+    p    = clients.get_profile(slug)
+    if not p:
+        bot.answer_callback_query(call.id, "Клієнта не знайдено"); return
+    clients.set_active(call.message.chat.id, slug)
+    bot.edit_message_text(
+        f"✅ Активовано: *{p['name']}*\n📦 Замовлень: {p.get('orders_count', 0)}",
+        call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    bot.answer_callback_query(call.id)
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith('cl_new_'))
+def cb_client_new(call):    # створення нового клієнта після підтвердження
+    parts = call.data[7:].split('_', 1)
+    name  = parts[1] if len(parts) > 1 else parts[0]
+    ok, result = clients.create_client(name)
+    if ok:
+        clients.set_active(call.message.chat.id, result)
+        bot.edit_message_text(
+            f"✅ Створено *{name}* і активовано.",
+            call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    else:
+        bot.edit_message_text(f"⚠️ {result}",
+            call.message.chat.id, call.message.message_id)
+    bot.answer_callback_query(call.id)
+
+
+@bot.message_handler(func=lambda m: m.text and m.text.lower().strip() == 'навчання')
+def handle_learn_start(message):    # "навчання" — запускає сесію навчання для активного клієнта
+    slug = clients.get_active(message.chat.id)
+    if not slug:
+        bot.reply_to(message, "⚠️ Спочатку активуй клієнта:\n`клієнт Петренко`",
+                     parse_mode="Markdown"); return
+    p       = clients.get_profile(slug)
+    _, ex_n = clients.get_next_example_dir(slug)
+    _learn_state[message.chat.id] = {'slug': slug, 'example_n': ex_n, 'stage': 'photo'}
+    bot.reply_to(message,
+        f"📚 Навчання клієнта *{p['name'] if p else slug}*\n"
+        f"Приклад #{ex_n}\n\n"
+        f"Крок 1️⃣: Кидай фото замовлення від майстра",
+        parse_mode="Markdown")
+
+
+@bot.message_handler(content_types=['photo'],
+                     func=lambda m: m.chat.id in _learn_state
+                     and _learn_state[m.chat.id].get('stage') == 'photo')
+def handle_learn_photo(message):    # отримує фото під час сесії навчання → зберігає і просить рахунок
+    st   = _learn_state.get(message.chat.id)
+    slug = st['slug']
+    ex_n = st['example_n']
+
+    # Завантажуємо фото найвищої якості
+    file_info = bot.get_file(message.photo[-1].file_id)
+    file_data = bot.download_file(file_info.file_path)
+    ext       = file_info.file_path.split('.')[-1] or 'jpg'
+
+    photo_path = clients.save_example_photo(slug, ex_n, file_data, ext)
+    st['photo_path'] = photo_path
+    st['stage']      = 'invoice'
+
+    bot.reply_to(message,
+        f"✅ Фото збережено!\n\n"
+        f"Крок 2️⃣: Кидай файл рахунку (.xls або .xlsx)")
+
+
+@bot.message_handler(content_types=['document'],
+                     func=lambda m: m.chat.id in _learn_state
+                     and _learn_state[m.chat.id].get('stage') == 'invoice')
+def handle_learn_invoice(message):  # отримує рахунок під час навчання → парсить і запускає Gemini для зіставлення
+    st   = _learn_state.get(message.chat.id)
+    slug = st['slug']
+    ex_n = st['example_n']
+
+    fname = message.document.file_name or ''
+    ext   = fname.split('.')[-1].lower() if '.' in fname else 'xlsx'
+    if ext not in ('xls', 'xlsx'):
+        bot.reply_to(message, "⚠️ Потрібен файл .xls або .xlsx"); return
+
+    # Завантажуємо файл
+    file_info    = bot.get_file(message.document.file_id)
+    file_data    = bot.download_file(file_info.file_path)
+    invoice_path = clients.save_example_invoice(slug, ex_n, file_data, ext)
+
+    status_msg = bot.reply_to(message, "⏳ Зіставляю фото з рахунком через Gemini...")
+
+    # Парсимо рахунок
+    invoice_items = clients.parse_invoice(invoice_path)
+    if not invoice_items:
+        bot.edit_message_text("❌ Не вдалося прочитати рахунок. Перевір формат файлу.",
+                              message.chat.id, status_msg.message_id); return
+
+    # Читаємо фото для Gemini
+    photo_path = st.get('photo_path')
+    if not photo_path or not os.path.exists(photo_path):
+        bot.edit_message_text("❌ Фото не знайдено. Почни навчання знову: `навчання`",
+                              message.chat.id, status_msg.message_id,
+                              parse_mode="Markdown"); return
+
+    with open(photo_path, 'rb') as f:
+        photo_bytes = f.read()
+
+    # Запускаємо Gemini для зіставлення
+    try:
+        pairs = _gemini_match_photo_invoice(photo_bytes, invoice_items)
+    except Exception as e:
+        print(f"⚠️ Gemini match: {e}")
+        bot.edit_message_text(f"❌ Помилка Gemini: {e}",
+                              message.chat.id, status_msg.message_id); return
+
+    if not pairs:
+        bot.edit_message_text("❌ Gemini не зміг зіставити рядки з рахунком.",
+                              message.chat.id, status_msg.message_id); return
+
+    # Зберігаємо в кеш
+    saved = clients.learn_from_example(slug, ex_n, pairs)
+    _learn_state.pop(message.chat.id, None)
+
+    p = clients.get_profile(slug)
+    bot.edit_message_text(
+        f"✅ Навчання завершено!\n"
+        f"👤 Клієнт: *{p['name'] if p else slug}*\n"
+        f"📚 Приклад #{ex_n}\n"
+        f"💾 Збережено пар: *{saved}* з {len(invoice_items)} позицій рахунку\n\n"
+        f"Для ще одного прикладу: `навчання`",
+        message.chat.id, status_msg.message_id, parse_mode="Markdown")
+
+
+def _gemini_match_photo_invoice(photo_bytes: bytes,
+                                 invoice_items: list[str]) -> list[dict]:  # Gemini зіставляє рядки з фото з товарами рахунку; повертає [{original, catalog_name, category}]
+    """Варіант Б: Gemini бачить фото + список товарів → встановлює відповідність."""
+    import json as _json
+    from google import genai as _genai
+    from google.genai import types as _gtypes
+
+    GEMINI_KEY = os.environ.get("GEMINI_KEY", "")
+    client     = _genai.Client(api_key=GEMINI_KEY)
+
+    invoice_text = "\n".join(f"{i+1}. {name}" for i, name in enumerate(invoice_items))
+
+    prompt = f"""Ти аналізуєш фото замовлення від сантехніка і готовий рахунок.
+
+РАХУНОК (правильні назви товарів з бази):
+{invoice_text}
+
+Твоє завдання:
+1. Прочитай КОЖЕН рядок з фото замовлення
+2. Знайди який товар з рахунку йому відповідає
+3. Поверни JSON масив пар
+
+Формат відповіді — ТІЛЬКИ JSON без пояснень та без markdown:
+[
+  {{"original": "що написано на фото", "catalog_name": "точна назва з рахунку", "category": "категорія"}},
+  ...
+]
+
+Категорії: plastic_ppr, push_systems, sewage, adapters_reducers, shutoff_valves, heating,
+metal_plastic, fasteners_sealants, filtration, insulation, radiators_radiatorsvalve,
+underfloor_heating, water_heaters, boilers, pumps, mixers_faucets, sanitary_ware,
+siphons_fittings, hoses, water_meters, towel_warmers, safety_valves, automation, other
+
+Якщо рядок з фото не має відповідника в рахунку — НЕ включай його."""
+
+    contents = [
+        _gtypes.Part.from_bytes(data=photo_bytes, mime_type="image/jpeg"),
+        _gtypes.Part.from_text(text=prompt),
+    ]
+    resp = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=contents,
+        config=_gtypes.GenerateContentConfig(temperature=0),
+    )
+    text = (resp.text or '').strip()
+    text = re.sub(r'^```json\s*', '', text)
+    text = re.sub(r'\s*```$', '', text)
+
+    pairs = _json.loads(text)
+    return pairs if isinstance(pairs, list) else []
+
+
+# ─── Перегляд і очищення кешу клієнта ────────────────────────────────────────
+
+@bot.message_handler(func=lambda m: m.text and re.match(r'^кеш\s+клієнт', m.text.lower().strip()))
+def handle_client_cache_view(message):  # "кеш клієнт Петренко" або "кеш клієнт" — переглядає кеш клієнта
+    rest = re.sub(r'^кеш\s+клієнт\w*\s*', '', message.text, flags=re.IGNORECASE).strip()
+    if rest:
+        slug = clients.find_client(rest)
+        if not slug:
+            similar = clients.find_similar_clients(rest, 0.4)
+            if similar:
+                mk = InlineKeyboardMarkup(row_width=1)
+                for s, cname, _ in similar:
+                    mk.add(InlineKeyboardButton(f"👤 {cname}", callback_data=f"ckcv_{s}"))
+                bot.reply_to(message, "Оберіть клієнта:", reply_markup=mk); return
+            bot.reply_to(message, f"⚠️ Клієнта '{rest}' не знайдено."); return
+    else:
+        slug = clients.get_active(message.chat.id)
+        if not slug:
+            bot.reply_to(message, "⚠️ Активуй клієнта або вкажи ім'я: `кеш клієнт Петренко`",
+                         parse_mode="Markdown"); return
+    _show_client_cache(message.chat.id, slug)
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith('ckcv_'))
+def cb_client_cache_view(call):     # показує кеш обраного клієнта
+    slug = call.data[5:]
+    bot.answer_callback_query(call.id)
+    _show_client_cache(call.message.chat.id, slug)
+
+
+def _show_client_cache(chat_id: int, slug: str):    # надсилає статистику кешу клієнта з кнопками управління
+    p     = clients.get_profile(slug)
+    stats = clients.get_client_cache_stats(slug)
+    cache = clients.get_client_cache(slug)
+    name  = p['name'] if p else slug
+
+    # Останні 10 записів
+    icons = {'confirmed': '✅', 'banned': '❌', 'auto': '🔹'}
+    lines = []
+    for k, v in list(cache.items())[:10]:
+        if '::ban' in k:
+            continue
+        icon = icons.get(v.get('status', 'auto'), '🔹')
+        lines.append(f"{icon} `{k[:30]}` → {v.get('catalog_name', '')[:40]}")
+
+    text = (
+        f"👤 Кеш клієнта *{name}*\n"
+        f"✅ підтв: {stats['confirmed']} | 🔹 авто: {stats['auto']} | ❌ бан: {stats['banned']}\n\n"
+        + ("\n".join(lines) if lines else "_порожній_")
+    )
+
+    mk = InlineKeyboardMarkup(row_width=2)
+    mk.add(
+        InlineKeyboardButton("🧹 Очистити авто",      callback_data=f"ccl_{slug}_auto"),
+        InlineKeyboardButton("⚠️ Очистити підтвердж", callback_data=f"ccl_{slug}_confirmed"),
+    )
+    mk.add(InlineKeyboardButton("💥 Очистити ВСЕ", callback_data=f"ccl_{slug}_all"))
+
+    bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=mk)
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith('ccl_'))
+def cb_cache_clear(call):   # кнопка очищення кешу — перший крок підтвердження
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "⛔ Тільки адмін"); return
+    parts  = call.data[4:].split('_')
+    slug   = parts[0]
+    flt    = parts[1]   # auto / confirmed / all
+    p      = clients.get_profile(slug)
+    name   = p['name'] if p else slug
+    stats  = clients.get_client_cache_stats(slug)
+
+    label  = {'auto': 'авто', 'confirmed': 'підтверджених', 'all': 'ВСІХ'}[flt]
+    count  = {'auto': stats['auto'], 'confirmed': stats['confirmed'],
+              'all':  stats['total']}[flt]
+
+    if flt == 'confirmed' or flt == 'all':
+        # Підтверджений кеш — потрібно 2 підтвердження
+        _cache_clear_state[call.message.chat.id] = {
+            'slug': slug, 'flt': flt, 'step': 1,
+        }
+        mk = InlineKeyboardMarkup(row_width=2)
+        mk.add(
+            InlineKeyboardButton("✅ Так, видалити",  callback_data=f"cclc_{slug}_{flt}"),
+            InlineKeyboardButton("❌ Скасувати",      callback_data="cclx"),
+        )
+        bot.edit_message_text(
+            f"⚠️ Видалити {count} {label} записів кешу клієнта *{name}*?\n"
+            f"Це незворотньо!",
+            call.message.chat.id, call.message.message_id,
+            parse_mode="Markdown", reply_markup=mk)
+    else:
+        # Авто-кеш — одне підтвердження
+        deleted = clients.client_cache_clear(slug, 'auto')
+        bot.edit_message_text(
+            f"🧹 Видалено {deleted} авто-записів кешу *{name}*",
+            call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    bot.answer_callback_query(call.id)
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith('cclc_'))
+def cb_cache_clear_confirm(call):   # друге підтвердження очищення підтвердженого/всього кешу
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "⛔ Тільки адмін"); return
+    parts = call.data[5:].split('_')
+    slug  = parts[0]
+    flt   = parts[1]
+    p     = clients.get_profile(slug)
+    name  = p['name'] if p else slug
+
+    st = _cache_clear_state.get(call.message.chat.id, {})
+    if st.get('step') == 1 and st.get('slug') == slug:
+        # Другий крок — фінальне підтвердження
+        _cache_clear_state[call.message.chat.id]['step'] = 2
+        mk = InlineKeyboardMarkup(row_width=2)
+        mk.add(
+            InlineKeyboardButton("🔴 ПІДТВЕРДЖУЮ видалення", callback_data=f"cclf_{slug}_{flt}"),
+            InlineKeyboardButton("❌ Скасувати",              callback_data="cclx"),
+        )
+        bot.edit_message_text(
+            f"🔴 ФІНАЛЬНЕ ПІДТВЕРДЖЕННЯ\n"
+            f"Видалити {'підтверджений' if flt=='confirmed' else 'ВЕСЬ'} кеш клієнта *{name}*?\n"
+            f"Після цього бот забуде всі навчені пари!",
+            call.message.chat.id, call.message.message_id,
+            parse_mode="Markdown", reply_markup=mk)
+    bot.answer_callback_query(call.id)
+
+
+@bot.callback_query_handler(func=lambda c: c.data.startswith('cclf_'))
+def cb_cache_clear_final(call):     # фінальне виконання очищення кешу
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, "⛔ Тільки адмін"); return
+    parts   = call.data[5:].split('_')
+    slug    = parts[0]
+    flt     = parts[1]
+    p       = clients.get_profile(slug)
+    name    = p['name'] if p else slug
+    flt_arg = None if flt == 'all' else flt
+    deleted = clients.client_cache_clear(slug, flt_arg)
+    _cache_clear_state.pop(call.message.chat.id, None)
+    bot.edit_message_text(
+        f"✅ Видалено *{deleted}* записів кешу клієнта *{name}*",
+        call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    bot.answer_callback_query(call.id, "Готово")
+
+
+@bot.callback_query_handler(func=lambda c: c.data == 'cclx')
+def cb_cache_clear_cancel(call):    # скасування очищення
+    _cache_clear_state.pop(call.message.chat.id, None)
+    bot.edit_message_text("❌ Скасовано.", call.message.chat.id, call.message.message_id)
+    bot.answer_callback_query(call.id)
+
+
+# ─── Клієнти (пошук з кнопками) ──────────────────────────────────────────────
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() == 'клієнти')
-def handle_clients_list(message):   # показує список всіх клієнтів з кількістю замовлень кожного
+def handle_clients_list(message):   # показує список всіх клієнтів
     index = clients.list_clients()
     if not index:
         bot.reply_to(message, "📁 Клієнтів немає.\n`новий клієнт <ім'я>`",
@@ -1109,7 +1474,7 @@ def handle_clients_list(message):   # показує список всіх кл�
 
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('клієнт'))
-def handle_client(message):     # "клієнт Ім'я" — активує клієнта; "клієнт стоп" — скидає; "клієнт Ім'я: нотатка" — додає примітку
+def handle_client(message):     # "клієнт Ім'я" — шукає з кнопками; "клієнт стоп" — скидає
     rest = message.text[6:].strip()
     if not rest:
         slug = clients.get_active(message.chat.id)
@@ -1133,24 +1498,56 @@ def handle_client(message):     # "клієнт Ім'я" — активує кл
         clients.add_note(slug, note.strip())
         bot.reply_to(message, "✅ Примітку додано.")
         return
+
+    # Точний збіг
     slug = clients.find_client(rest)
-    if not slug:
-        bot.reply_to(message, f"⚠️ '{rest}' не знайдено.\n`новий клієнт {rest}`",
-                     parse_mode="Markdown"); return
-    clients.set_active(message.chat.id, slug)
+    if slug:
+        _activate_client(message.chat.id, slug, message)
+        return
+
+    # Нечіткий пошук з кнопками
+    similar = clients.find_similar_clients(rest, threshold=0.3)
+    if similar:
+        mk = InlineKeyboardMarkup(row_width=1)
+        for s, cname, score in similar:
+            mk.add(InlineKeyboardButton(
+                f"👤 {cname} ({int(score*100)}%)",
+                callback_data=f"cl_use_{s}"))
+        mk.add(InlineKeyboardButton(f"➕ Новий клієнт «{rest}»",
+                                    callback_data=f"cl_new__{rest}"))
+        bot.reply_to(message, f"🔍 Знайдено схожих клієнтів:", reply_markup=mk)
+    else:
+        bot.reply_to(message,
+            f"⚠️ '{rest}' не знайдено.\n`новий клієнт {rest}` — створити",
+            parse_mode="Markdown")
+
+
+def _activate_client(chat_id: int, slug: str, message=None):   # активує клієнта і показує його профіль
+    clients.set_active(chat_id, slug)
     p     = clients.get_profile(slug)
     prefs = clients.get_preferences(slug)
+    stats = clients.get_client_cache_stats(slug)
     top   = ", ".join(b for b, _ in prefs.get('top_brands', [])[:3]) or "ще немає даних"
     notes = p.get('notes', []) if p else []
     notes_s = "\n".join(f"  • {n}" for n in notes[-3:] if n) or "  —"
-    bot.reply_to(message,
+    exs   = clients.list_examples(slug)
+    text  = (
         f"✅ Активовано: *{p['name'] if p else slug}*\n"
         f"📦 Замовлень: {p.get('orders_count', 0) if p else 0}\n"
-        f"🏷 Топ виробники: {top}\n📝 Примітки:\n{notes_s}\n\nКидай фото!",
-        parse_mode="Markdown")
+        f"💾 Кеш: ✅{stats['confirmed']} 🔹{stats['auto']} ❌{stats['banned']}\n"
+        f"📚 Прикладів навчання: {len(exs)}\n"
+        f"🏷 Топ виробники: {top}\n"
+        f"📝 Примітки:\n{notes_s}\n\n"
+        f"Кидай фото або `навчання`"
+    )
+    if message:
+        bot.reply_to(message, text, parse_mode="Markdown")
+    else:
+        bot.send_message(chat_id, text, parse_mode="Markdown")
 
 
 # ─── OCR / правила / кеш ─────────────────────────────────────────────────────
+
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('ocr '))
 def handle_ocr_correction(message):     # "ocr слово = правильне" — зберігає корекцію почерку для майбутніх фото
