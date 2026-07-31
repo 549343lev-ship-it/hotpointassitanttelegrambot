@@ -135,7 +135,7 @@ def normalize_photo(image_b64: str, caption: str = "", client_prefs: dict = None
 ЗАВДАННЯ: прочитай кожен рядок, нормалізуй назву (КОРОТКО!), витягни кількість.
 JSON масив ТІЛЬКИ:
 [{{"original":"що написано","normalized":"коротка назва","qty":"кількість",
-"category":"plastic_ppr/sewage/push_systems/shutoff_valves/pumps/radiators_radiatorsvalve/filtration/insulation/metal_plastic/adapters_reducers/other",
+"category":"plastic_ppr/sewage/push_systems/shutoff_valves/pumps/radiators_radiatorsvalve/filtration/insulation/metal_plastic/adapters_reducers/heating/underfloor_heating/water_heaters/boilers/mixers_faucets/sanitary_ware/siphons_fittings/hoses/water_meters/towel_warmers/safety_valves/automation/fasteners_sealants/other",
 "type":"труба/коліно/трійник/муфта/кран/гільза/перехід/...","dia":[110,50],"angle":87,"thread":"1/2 або null"}}]"""
     try:
         image_bytes = base64.b64decode(image_b64)
@@ -152,8 +152,19 @@ JSON масив ТІЛЬКИ:
 
 def normalize_text(text: str, caption: str = "") -> list[dict]:
     ocr_block = _get_ocr_prompt_block()
+    brand_map  = parse_caption_brands(caption)
+    brand_hint = ""
+    if brand_map:
+        global_b   = brand_map.get('_global')
+        cat_brands = {k: v for k, v in brand_map.items() if k != '_global'}
+        lines = []
+        if global_b:
+            lines.append(f"  загальний пріоритет → {global_b[0]}")
+        lines.extend(f"  {cat} → {toks[0]}" for cat, toks in cat_brands.items())
+        if lines:
+            brand_hint = "\n\n⚠️ ВИРОБНИКИ (пріоритет!):\n" + "\n".join(lines)
     prompt = f"""Ти — досвідчений менеджер з продажу сантехніки. Текстовий запит.
-ПІДКАЗКА: {caption}{ocr_block}
+ПІДКАЗКА: {caption}{brand_hint}{ocr_block}
 БАЗА ЗНАНЬ:
 {_get_full_knowledge()}
 ЗАПИТ: {text}
