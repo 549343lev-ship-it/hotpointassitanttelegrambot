@@ -96,6 +96,39 @@ BRAND_TOKENS = {    # словник: що пише менеджер → офі�
     'thermaflex':  ['thermaflex', 'Thermaflex'],
 }
 
+# Синоніми для нормалізації запиту перед пошуком в каталозі
+# ключ (рядок що зустрічається в normalized) → замінити на токени для пошуку
+SEARCH_SYNONYMS = {
+    # Зворотні клапани
+    'лат. шток':        'ВВ латунь',
+    'лат.шток':         'ВВ латунь',
+    'латунний шток':    'ВВ',
+    'karro':            'RAFTEC',      # KARRO = наш RAFTEC
+    'fado':             'RAFTEC',
+    'valtec':           'RAFTEC',
+    # Самоочисний = самопромивний
+    'самоочисний':      'самопромивний',
+    'самоочищувальний': 'самопромивний',
+    # Фільтр з редуктором
+    'фільтр з редуктором тиску': 'самопромивний фільтр',
+    # Коліно PPR — додаємо PP-RCT
+    'коліно ppr 90°':   'Коліно PPR 90° PP-RCT',
+    'коліно ppr 45°':   'Коліно PPR 45° PP-RCT',
+    # Корок монтажний = заглушка різьбова довга
+    'корок монтажний':  'заглушка різьбова довга',
+    # Тасьма = демпферна стрічка
+    'тасьма 50мм':      'демпферна стрічка',
+    'тасьма широка':    'демпферна стрічка',
+    # Лічильник без бренду → Ecostar
+    'лічильник gidrotek': 'лічильник Ecostar',
+    'лічильник холодної': 'лічильник холодної Ecostar',
+    'лічильник гарячої':  'лічильник гарячої Ecostar',
+    # Bi-Vulcan → MIRADO
+    'bi-vulcan':        'MIRADO',
+    'bi-vullkan':       'MIRADO',
+    'бі-вулкан':        'MIRADO',
+}
+
 CATEGORY_ALIASES = {    # словник: що пише менеджер у підказці → внутрішня назва категорії
     'каналізація': 'sewage', 'канал': 'sewage', 'каналізац': 'sewage',
     'пайка': 'plastic_ppr',
@@ -606,6 +639,13 @@ def smart_search(пос: dict, top_n: int = 12,
     routed_cat = пос.get('_routed_cat') or пос.get('category')
     is_other   = (routed_cat in (None, 'other'))
     query_text = пос.get('normalized', '') or пос.get('original', '')
+
+    # Застосовуємо синоніми — замінюємо проблемні фрази для кращого пошуку
+    qt_lower = query_text.lower()
+    for src, dst in SEARCH_SYNONYMS.items():
+        if src in qt_lower:
+            query_text = re.sub(re.escape(src), dst, query_text, flags=re.IGNORECASE)
+            break  # одна заміна за раз
 
     # ── КРОК 0: VOYAGE AI (семантичний пошук з ієрархічною маршрутизацією) ──
     # routing_path будується з category + group + subgroup товару (з xlsx-структури)
