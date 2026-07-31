@@ -2240,20 +2240,20 @@ def handle_document(message):   # приймає документ (jpg/png/pdf) 
                 time.sleep(2)
 
 
-def _ask_order_setup(message, item: dict, hint_already: bool = False):  # після отримання файлу — питаємо клієнта і підказку
+# Буфер фото до питання клієнта/підказки: chat_id → {'items': [], 'timer': Timer}
+_pre_batch: dict = {}
+
+
+def _ask_order_setup(message, item: dict, hint_already: bool = False):  # збирає фото в буфер, через 4 сек питає клієнта і підказку
     """
-    Якщо є активний клієнт і є підказка → одразу до батчу.
-    Якщо немає клієнта → показуємо кнопки вибору (без клієнта / вибрати клієнта).
-    Якщо немає підказки → питаємо підказку виробника.
+    Якщо вже є активний батч (клієнт і підказка вже вибрані) → одразу в батч.
+    Інакше → збираємо всі фото в _pre_batch (з таймером 4 сек як основний флоу),
+    потім питаємо клієнта і підказку ОДИН РАЗ для всього пакету.
     """
     chat_id = message.chat.id
-    slug    = clients.get_active(chat_id)
 
-    # Якщо вже є батч — просто додаємо файл без повторного запиту
+    # Якщо вже є активний батч (клієнт і підказка вже обрані) — одразу додаємо
     if chat_id in user_batches and user_batches[chat_id].get('items'):
-        # Підказка вже питалась — одразу в батч
-        if hint_already:
-            pending_hints.pop(chat_id, None)
         caption = item.get('caption', '')
         hint    = pending_hints.pop(chat_id, '')
         if hint and hint not in caption:
@@ -2261,26 +2261,59 @@ def _ask_order_setup(message, item: dict, hint_already: bool = False):  # піс
         add_to_batch(chat_id, item)
         return
 
-    # Зберігаємо item тимчасово
-    _order_setup[chat_id] = {'item': item, 'hint_already': hint_already}
+    # Додаємо фото в pre-батч буфер
+    if chat_id not in _pre_batch:
+        _pre_batch[chat_id] = {'items': [], 'hint_already': hint_already}
+    _pre_batch[chat_id]['items'].append(item)
+    if hint_already:
+        _pre_batch[chat_id]['hint_already'] = True
 
-    # Будуємо повідомлення з запитом
-    need_hint   = not hint_already
-    active_name = clients.get_profile(slug)['name'] if slug and clients.get_profile(slug) else None
+    # Скасовуємо попередній таймер і запускаємо новий (4 сек)
+    old_timer = _pre_batch[chat_id].get('timer')
+    if old_timer:
+        old_timer.cancel()
 
-    # Кнопки клієнта
-    mk = InlineKeyboardMarkup(row_width=1)
-    if active_name:
-        mk.add(InlineKeyboardButton(
-            f"✅ {active_name} (активний)", callback_data="osetup_active"))
-    mk.add(InlineKeyboardButton("👤 Без клієнта", callback_data="osetup_none"))
-    mk.add(InlineKeyboardButton("🔍 Вибрати клієнта", callback_data="osetup_pick"))
+    count = len(_pre_batch[chat_id]['items'])
 
-    text = "📋 *Для кого замовлення?*"
-    if need_hint:
-        text += "\n_(після вибору клієнта введи підказку виробника або одразу жми Пропустити)_"
+    def _flush_pre_batch(cid, msg):     # спрацьовує після 4 сек паузи — питає клієнта/підказку для всього пакету
+        pre = _pre_batch.pop(cid, None)
+        if not pre or not pre['items']:
+            return
 
-    bot.reply_to(message, text, parse_mode="Markdown", reply_markup=mk)
+        # Якщо за цей час з'явився активний батч — одразу кидаємо всі фото туди
+        if cid in user_batches and user_batches[cid].get('items'):
+            for it in pre['items']:
+                add_to_batch(cid, it)
+            return
+
+        slug        = clients.get_active(cid)
+        hint_ready  = pre.get('hint_already', False)
+        active_name = clients.get_profile(slug)['name'] if slug and clients.get_profile(slug) else None
+
+        # Зберігаємо весь пакет
+        _order_setup[cid] = {
+            'items':        pre['items'],
+            'hint_already': hint_ready,
+        }
+
+        mk = InlineKeyboardMarkup(row_width=1)
+        if active_name:
+            mk.add(InlineKeyboardButton(
+                f"✅ {active_name} (активний)", callback_data="osetup_active"))
+        mk.add(InlineKeyboardButton("👤 Без клієнта",     callback_data="osetup_none"))
+        mk.add(InlineKeyboardButton("🔍 Вибрати клієнта", callback_data="osetup_pick"))
+
+        n_photos = len(pre['items'])
+        text = f"📋 *Для кого замовлення?* ({n_photos} фото)"
+        if not hint_ready:
+            text += "\n_(після вибору клієнта введи підказку або жми Пропустити)_"
+
+        bot.send_message(cid, text, parse_mode="Markdown", reply_markup=mk)
+
+    t = threading.Timer(BATCH_TIMEOUT, _flush_pre_batch, args=[chat_id, message])
+    t.daemon = True
+    t.start()
+    _pre_batch[chat_id]['timer'] = t
 
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith('osetup_'))
@@ -2325,38 +2358,39 @@ def cb_order_setup(call):   # обробляє вибір клієнта для 
         _finish_order_setup(call.message, setup, slug)
 
 
-def _finish_order_setup(msg, setup: dict, slug: str | None):    # завершує налаштування замовлення — питає підказку або одразу запускає батч
-    chat_id    = msg.chat.id
-    item       = setup['item']
+def _finish_order_setup(msg, setup: dict, slug: str | None):    # завершує налаштування — питає підказку або відразу запускає батч для всіх фото
+    chat_id      = msg.chat.id
+    items        = setup.get('items') or ([setup['item']] if setup.get('item') else [])
     hint_already = setup.get('hint_already', False)
 
-    # Встановлюємо клієнта
     if slug:
-        p = clients.get_profile(slug)
+        p    = clients.get_profile(slug)
         name = p['name'] if p else slug
     else:
         name = None
 
     _order_setup.pop(chat_id, None)
 
+    def _add_all(hint=''):
+        for it in items:
+            caption = it.get('caption', '')
+            if hint and hint not in caption:
+                it['caption'] = ' | '.join(filter(None, [caption, hint]))
+            add_to_batch(chat_id, it)
+
     if hint_already:
-        # Підказка вже є — одразу в батч
-        hint = pending_hints.pop(chat_id, '')
-        if hint and hint not in item.get('caption', ''):
-            item['caption'] = ' | '.join(filter(None, [item.get('caption', ''), hint]))
+        hint  = pending_hints.pop(chat_id, '')
         label = f"👤 {name}" if name else "без клієнта"
-        bot.edit_message_text(f"✅ Прийнято ({label})\n⏳ Обробляю...",
-                              chat_id, msg.message_id)
-        add_to_batch(chat_id, item)
+        n     = len(items)
+        bot.edit_message_text(
+            f"✅ Прийнято ({label}, {n} фото)\n⏳ Обробляю...",
+            chat_id, msg.message_id)
+        _add_all(hint)
     else:
-        # Питаємо підказку виробника
         label = f"👤 *{name}*" if name else "без клієнта"
-        mk = InlineKeyboardMarkup()
-        mk.add(InlineKeyboardButton("⏩ Пропустити підказку", callback_data=f"osetup_skip"))
-
-        # Зберігаємо item до отримання підказки
-        _order_setup[chat_id] = {'item': item, 'slug': slug, 'waiting_hint': True}
-
+        mk    = InlineKeyboardMarkup()
+        mk.add(InlineKeyboardButton("⏩ Пропустити підказку", callback_data="osetup_skip"))
+        _order_setup[chat_id] = {'items': items, 'slug': slug, 'waiting_hint': True}
         bot.edit_message_text(
             f"✅ Клієнт: {label}\n\n"
             f"💬 *Введи підказку виробника* (напр. _пайка екопластик_)\n"
@@ -2369,17 +2403,20 @@ def _finish_order_setup(msg, setup: dict, slug: str | None):    # завершу
 def cb_order_setup_skip(call):  # пропуск підказки — запускаємо батч без підказки
     chat_id = call.message.chat.id
     setup   = _order_setup.pop(chat_id, {})
-    item    = setup.get('item')
-    if not item:
+    items   = setup.get('items') or ([setup['item']] if setup.get('item') else [])
+    if not items:
         bot.answer_callback_query(call.id, "⏱ Сесія закінчилась"); return
     slug = setup.get('slug')
     if slug:
         clients.set_active(chat_id, slug)
     bot.answer_callback_query(call.id)
-    label = clients.get_profile(slug)['name'] if slug and clients.get_profile(slug) else "без клієнта"
-    bot.edit_message_text(f"✅ {label} | без підказки\n⏳ Обробляю...",
-                          chat_id, call.message.message_id)
-    add_to_batch(chat_id, item)
+    p     = clients.get_profile(slug) if slug else None
+    label = p['name'] if p else "без клієнта"
+    bot.edit_message_text(
+        f"✅ {label} | без підказки\n⏳ Обробляю...",
+        chat_id, call.message.message_id)
+    for it in items:
+        add_to_batch(chat_id, it)
 
 
 @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('пошук'))
@@ -2405,6 +2442,7 @@ def handle_stop(message):   # /stop — скасовує поточний бат
         user_batches.pop(chat_id, None)
     # Очищаємо всі незавершені стани
     _order_setup.pop(chat_id, None)
+    _pre_batch.pop(chat_id, None)   # буфер фото до питання клієнта
     _learn_state.pop(chat_id, None)
     _learn_photo_batch.pop(chat_id, None)
     if chat_id in _learn_photo_timers:
@@ -2540,18 +2578,20 @@ def handle_text_hint(message):  # ловить довільний текст: я
     # Якщо чекаємо підказку після вибору клієнта → обробляємо тут
     setup = _order_setup.get(message.chat.id)
     if setup and setup.get('waiting_hint'):
-        item = setup.get('item')
-        slug = setup.get('slug')
+        items = setup.get('items') or ([setup['item']] if setup.get('item') else [])
+        slug  = setup.get('slug')
         _order_setup.pop(message.chat.id, None)
         if slug:
             clients.set_active(message.chat.id, slug)
-        # Додаємо підказку до caption
-        caption = item.get('caption', '')
-        item['caption'] = ' | '.join(filter(None, [caption, text]))
-        name = clients.get_profile(slug)['name'] if slug and clients.get_profile(slug) else "без клієнта"
+        p    = clients.get_profile(slug) if slug else None
+        name = p['name'] if p else "без клієнта"
         bot.reply_to(message,
             f"✅ {name} | _{text}_\n⏳ Обробляю...", parse_mode="Markdown")
-        add_to_batch(message.chat.id, item)
+        for it in items:
+            caption = it.get('caption', '')
+            if text and text not in caption:
+                it['caption'] = ' | '.join(filter(None, [caption, text]))
+            add_to_batch(message.chat.id, it)
         return
 
     lines   = [l.strip() for l in text.splitlines() if l.strip()]
