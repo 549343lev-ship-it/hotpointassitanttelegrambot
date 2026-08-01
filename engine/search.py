@@ -726,6 +726,7 @@ def smart_search(пос: dict, top_n: int = 12,
         qa['_brand_tokens'] = brand_tokens
 
     routed_cat = пос.get('_routed_cat') or пос.get('category')
+    node_id    = пос.get('_node_id', '')            # ієрархічний ID вузла
     is_other   = (routed_cat in (None, 'other'))
     query_text = пос.get('normalized', '') or пос.get('original', '')
 
@@ -755,6 +756,7 @@ def smart_search(пос: dict, top_n: int = 12,
             query_text, top_n=top_n,
             category=routed_cat if not is_other else None,
             routing_path=v_path,
+            node_id=node_id if node_id and node_id != 'xx' else None,
             brand_tokens=brand_tokens,
             catalog=CATALOG
         )
@@ -767,7 +769,22 @@ def smart_search(пос: dict, top_n: int = 12,
     else:
         _voyage_fallback = []
 
-    # ── КРОК 0.5: ПІДГРУПА — шукаємо в точній підгрупі каталогу ────────────
+    # ── КРОК 0.5: NODE_POOL або ПІДГРУПА ─────────────────────────────────────
+    if not is_other:
+        from engine.node_mapper import node_pool
+        if node_id and node_id != 'xx':
+            # Точний пул за node_id — всі товари у вузлі і підвузлах
+            sub_cand = node_pool(CATALOG, node_id)
+        else:
+            # Fallback: стара логіка через route_sub + group keywords
+            sub_keywords = route_sub(пос, routed_cat)
+            sub_cand = [
+                it for it in CATALOG
+                if it.get('category') == routed_cat
+                and sub_keywords
+                and any(kw.lower() in (it.get('group','') + ' ' + it.get('subgroup','')).lower()
+                        for kw in sub_keywords)
+            ] if sub_keywords else []
     # group/subgroup береться з xlsx (наприклад "ASG труба", "REHAU", "тип 22")
     if not is_other:
         sub_keywords = route_sub(пос, routed_cat)
