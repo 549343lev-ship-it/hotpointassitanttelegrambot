@@ -303,6 +303,7 @@ def voyage_search(query: str,
                   top_n: int = 5,
                   category: str | None = None,
                   routing_path: str | None = None,
+                  node_id: str | None = None,
                   brand_tokens: list[str] | None = None,
                   catalog: list | None = None) -> list[dict]:   # головна функція: семантичний пошук з ієрархічною маршрутизацією
     """
@@ -331,7 +332,23 @@ def voyage_search(query: str,
     # Cosine similarity по всьому каталогу
     scores = _cosine_sim(q_vec, _vectors)   # shape (N,)
 
-    # Застосовуємо маску маршрутизації
+    # Фільтр node_id (точніший) або category (fallback)
+    if (node_id or category) and catalog:
+        if node_id and node_id != 'xx':
+            # Фільтр за ієрархічним node_id: startswith → охоплює всі підвузли
+            cat_mask = np.array([
+                catalog[i].get('_node_id', '').startswith(node_id) if i < len(catalog) else False
+                for i in range(len(_names))
+            ], dtype=bool)
+        else:
+            # Fallback: фільтр за категорією
+            cat_mask = np.array([
+                catalog[i].get('category') == category if i < len(catalog) else False
+                for i in range(len(_names))
+            ], dtype=bool)
+        scores = np.where(cat_mask, scores, scores * 0.4)
+
+    # Застосовуємо маску маршрутизації (routing_path + brand_tokens)
     mask   = _build_score_mask(category, routing_path, brand_tokens)
     scores = scores * mask                  # елементне множення
 
