@@ -9,6 +9,7 @@ import os
 import re
 import json
 import pandas as pd
+from engine.node_mapper import assign_node_id   # маппінг group/subgroup → node_id
 
 DATA_DIR     = os.environ.get("DATA_DIR") or ("/var/data" if os.path.isdir("/var/data") else ".")
 CATALOG_PATH = os.path.join(DATA_DIR, "catalog.json")   # кешований каталог на диску
@@ -126,8 +127,9 @@ def build_catalog_from_xlsx() -> list[dict]:    # читає всі xlsx з pric
                         'artikul':   art if art != 'nan' else '',
                         'category':  category,
                         'price':     p,
-                        'group':     current_group,      # підгрупа з xlsx
-                        'subgroup':  current_subgroup,   # підпідгрупа з xlsx
+                        'group':     current_group,
+                        'subgroup':  current_subgroup,
+                        '_node_id':  assign_node_id(category, current_group, current_subgroup),
                     })
                     count += 1
                 print(f"  ✅ {key}: {count} товарів")
@@ -145,6 +147,13 @@ def load_catalog():     # завантажує каталог з JSON-кешу �
     if os.path.exists(CATALOG_PATH):
         with open(CATALOG_PATH, encoding="utf-8") as f:
             CATALOG = json.load(f)
+        # Якщо каталог старий (без _node_id) — перебудовуємо
+        if CATALOG and '_node_id' not in CATALOG[0]:
+            print("⚙️ Каталог без node_id — перебудовую...", flush=True)
+            CATALOG = build_catalog_from_xlsx()
+            if CATALOG:
+                with open(CATALOG_PATH, "w", encoding="utf-8") as f:
+                    json.dump(CATALOG, f, ensure_ascii=False)
         print(f"✅ Каталог: {len(CATALOG)} позицій", flush=True)
     else:
         print("⚙️ Будую catalog.json...", flush=True)
