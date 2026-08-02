@@ -112,7 +112,8 @@ TREE: list[tuple] = [
                             ['Raftec (Germany)']),
 
     # Внутрішня — труби (без бренду)
-    ('kn.u.p',   'sewage',  [r'труба\s+канал|труба.*ф\s*\d{2,3}|канал.*труб|сіра\s+труба'],
+    # ТІЛЬКИ якщо немає маркерів PPR/металопластик/push в рядку
+    ('kn.u.p',   'sewage',  [r'труба\s+канал|канал.*труб|сіра\s+труба'],
                             ['Труба', '*Внутренняя', 'Труба серая (внутренняя)']),
 
     # Внутрішня — фітинги → виробники
@@ -128,11 +129,11 @@ TREE: list[tuple] = [
                             ['OSTENDORF', 'Ostendorf']),
 
     # Внутрішня — фітинги (без бренду)
-    # Впізнаємо по: "коліно канал", "трійник ° канал", "° ... канал", "фітинг канал"
+    # НЕ PPR (ppr/ппр/вз без канал контексту)
     ('kn.u.f',   'sewage',  [r'(коліно|муфта|трійник|заглушка|хрестовина|ревізія)\s+(канал|°\s*\d)'
                               r'|фітинг\s+канал'
                               r'|канал.*(коліно|муфта|трійник|заглушка|хрестовина)'
-                              r'|(коліно|трійник).*\d{2}°.*(канал|ф\s*\d{2,3})'
+                              r'|(коліно|трійник).*\d{2}°.*канал'
                               r'|\d{2}°.*канал.*(коліно|трійник)'],
                             ['Фитинг', '*Внутренняя']),
 
@@ -309,7 +310,9 @@ TREE: list[tuple] = [
     # ТЕПЛА ПІДЛОГА (uf)
     # ─────────────────────────────────────────────────────────────────────────
 
-    ('uf.c',    'underfloor_heating', [r'колектор.*(тп|підлог|uf)|гребінка.?(тп|uf)'],
+    ('uf.c',    'underfloor_heating', [r'колектор.*(тп|підлог|uf)|гребінка.?(тп|uf)'
+                                       r'|гребінка.*(plm|raftec|латун|steel|4.*вих|6.*вих|8.*вих|12.*вих)'
+                                       r'|(plm|raftec).*(гребінк|колектор)'],
                                       ['Коллектора RAFTEC', 'Коллектора ASG', 'RAFTEC Brass',
                                        'RAFTEC Stainless']),
 
@@ -382,7 +385,7 @@ TREE: list[tuple] = [
     # ─────────────────────────────────────────────────────────────────────────
 
     ('fl',      'filtration',        [r'фільтр|filtration|ecosoft|екософт|картридж|колб.?фільтр'], []),
-    ('ins',     'insulation',        [r'утеплюв|мірелон|k.?flex|thermaflex|plm\b|ізоляц.?труб'], []),
+    ('ins',     'insulation',        [r'утеплюв|мірелон|k.?flex|thermaflex|ізоляц.?труб'], []),
     ('wm',      'water_meters',      [r'лічильн|водомір|водомер|gidrotek|dn\s*(15|20|25)\s*лічильн'], []),
     ('mx',      'mixers_faucets',    [r'змішувач|кран\s+(умивальн|мийк|ванн|душ)|смесител|однорукавк'], []),
     ('tw',      'towel_warmers',     [r'рушникосуш|полотенцесуш|towel.?warm'], []),
@@ -555,7 +558,15 @@ def route_batch(позиції: list[dict]) -> list[dict]:     # мутує по
 
 def _match_tree(combined: str) -> Optional[str]:    # шукає перший збіг у TREE; повертає node_id або None
     """Перебирає TREE від специфічніших до загальних, повертає перший node_id."""
-    for node_id, _cat, patterns, _groups in TREE:
+    # Якщо є чіткі маркери PPR або металопластик — пропускаємо sewage вузли
+    _is_ppr   = bool(re.search(r'\b(ppr|ппр|fiber|pn\s*\d{2}|polipr|pp-rct)\b', combined, re.IGNORECASE))
+    _is_mp    = bool(re.search(r'металопласт|м\/п\b|м\.п\.\b|\bmp\b|прес.?фіт|пресс.?фіт', combined, re.IGNORECASE))
+    _is_push  = bool(re.search(r'\b(pex|пекс|push|пуш|rautitan|натяжн|гільз)\b', combined, re.IGNORECASE))
+
+    for node_id, cat, patterns, _groups in TREE:
+        # Пропускаємо sewage якщо є PPR/металопластик/push маркери
+        if cat == 'sewage' and (_is_ppr or _is_mp or _is_push):
+            continue
         for pat in patterns:
             if re.search(pat, combined, re.IGNORECASE):
                 return node_id
