@@ -91,7 +91,8 @@ _RULES: list[tuple] = [
     # Внутрішня — фітинги
     ('sewage', 'Фитинг',                    'ASG',           'kn.u.f.a'),
     ('sewage', 'Фитинг',                    '',              'kn.u.f'),    # фітинги загально
-    ('sewage', 'ASG',                       '',              'kn.u.f.a'),  # ASG фітинги
+    ('sewage', 'ASG',                       'Фитинг',        'kn.u.f.a'),  # ASG фітинги
+    ('sewage', 'ASG',                       '',              'kn'),         # ASG загальний
     ('sewage', 'OSTENDORF',                 '',              'kn.u.f.o'),
     ('sewage', 'VALROM',                    '',              'kn.u.f.v'),
     ('sewage', 'ИНСТАЛПЛАСТ',              '',              'kn.u.f.i'),
@@ -149,6 +150,7 @@ _RULES: list[tuple] = [
     # RAFTEC PPR
     ('plastic_ppr', 'RAFTEC',               'RAFTEC Труба',  'pp.r.p'),
     ('plastic_ppr', 'RAFTEC Фитинг',        '',              'pp.r.f'),
+    ('plastic_ppr', 'RAFTEC',               '',              'pp.r'),   # загальна RAFTEC група
     # Індивідуальні raftec группи (коліна, муфти як окремі G)
     ('plastic_ppr', r'Коліно PPR',          '',              'pp.r.f'),
     ('plastic_ppr', r'Муфта PPR',           '',              'pp.r.f'),
@@ -502,6 +504,41 @@ _RULES: list[tuple] = [
     ('adapters_reducers', 'Под заказ',      '',              'ar.g'),
     ('adapters_reducers', 'ПЕРЕХОДНИКИ',    '',              'ar.y'),  # fallback жовта
 
+    # ══════════════════════════════════════════════════════════════════════════
+    # ТЕПЛА ПІДЛОГА (underfloor_heating) uf
+    # Реальні групи з xlsx каталогу
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # Колектори
+    ('underfloor_heating', r'Колектор.*RAFTEC',  '',   'uf.c'),
+    ('underfloor_heating', r'Коллектора RAFTEC', '',   'uf.c'),
+    ('underfloor_heating', r'Коллектора.*PLM',   '',   'uf.c'),
+    ('underfloor_heating', r'Колектор.*PLM',     '',   'uf.c'),
+    ('underfloor_heating', r'Коллектора FADO',   '',   'uf.c'),
+    ('underfloor_heating', r'Коллектора GROSS',  '',   'uf.c'),
+    ('underfloor_heating', r'Коллектора ICMA',   '',   'uf.c'),
+    ('underfloor_heating', r'Коллектора Luxor',  '',   'uf.c'),
+    ('underfloor_heating', r'Коллектора',        '',   'uf.c'),   # fallback колектори
+    ('underfloor_heating', r'KAN-Therm',         '',   'uf.c'),
+
+    # Терморегулятори
+    ('underfloor_heating', 'Danfoss',            '',   'uf.r'),
+    ('underfloor_heating', 'DEVI',               '',   'uf.r'),
+    ('underfloor_heating', 'PROFI THERM',        '',   'uf.r'),
+    ('underfloor_heating', r'HERZ',              '',   'uf.r'),
+
+    # Монтажні матеріали (плівка, скоби, такер)
+    ('underfloor_heating', 'Плити',              'Плівка', 'uf.s'),
+    ('underfloor_heating', r'Монтажна стрічка',  '',   'uf.s'),
+    ('underfloor_heating', r'Демпфер',           '',   'uf.s'),
+
+    # RAFTEC аксесуари ТП
+    ('underfloor_heating', 'RAFTEC',             '',   'uf.x'),
+
+    # Шафи колекторні
+    ('underfloor_heating', r'Коллекторные шкафы','',   'uf.b'),
+    ('underfloor_heating', r'Шафа',              '',   'uf.b'),
+
 ]
 
 
@@ -541,14 +578,13 @@ def assign_node_id(category: str, group: str, subgroup: str) -> str:
     for cat, gp, sp, nid in _COMPILED:
         if cat != category:
             continue
-        # Перевірка group: None=будь-який, regex=re.search, str=точне порівняння (==)
-        # Точне == запобігає помилці: 'raftec' in 'raftec труба' = True
+        # Перевірка group: None=будь-який, regex=re.search, str=підрядок (in)
         if gp is None:
             g_ok = True
         elif isinstance(gp, re.Pattern):
             g_ok = bool(gp.search(group))
         else:
-            g_ok = (gp == g_lower)
+            g_ok = (gp in g_lower)   # підрядок: 'ekoplastik' in 'ekoplastik труба'
         if not g_ok:
             continue
         # Перевірка subgroup: аналогічно
@@ -557,7 +593,7 @@ def assign_node_id(category: str, group: str, subgroup: str) -> str:
         elif isinstance(sp, re.Pattern):
             s_ok = bool(sp.search(subgroup))
         else:
-            s_ok = (sp == s_lower)
+            s_ok = (sp in s_lower)   # підрядок: 'труба' in 'ekoplastik труба'
         if not s_ok:
             continue
         return nid
