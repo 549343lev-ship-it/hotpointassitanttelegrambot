@@ -785,31 +785,21 @@ def smart_search(пос: dict, top_n: int = 12,
                 and any(kw.lower() in (it.get('group','') + ' ' + it.get('subgroup','')).lower()
                         for kw in sub_keywords)
             ] if sub_keywords else []
-    # group/subgroup береться з xlsx (наприклад "ASG труба", "REHAU", "тип 22")
-    if not is_other:
-        sub_keywords = route_sub(пос, routed_cat)
-        if sub_keywords:
-            sub_cand = [
-                it for it in CATALOG
-                if it.get('category') == routed_cat
-                and any(kw.lower() in (it.get('group','') + ' ' + it.get('subgroup','')).lower()
-                        for kw in sub_keywords)
-            ]
-            if sub_cand:
-                # Шукаємо attr/keyword тільки серед товарів підгрупи
-                sub_tokens_built = all('_tokens' in it for it in sub_cand[:5])
-                if sub_tokens_built:
-                    q_toks = tokenize(query_text)
-                    scored = []
-                    for it in sub_cand:
-                        hits = len(q_toks & it.get('_tokens', set()))
-                        if hits > 0:
-                            c = dict(it)
-                            c['_match_pct'] = min(int(hits / max(len(q_toks),1) * 100), 100)
-                            scored.append(c)
-                    scored.sort(key=lambda x: -x['_match_pct'])
-                    if scored:
-                        return scored[:top_n]
+
+        if sub_cand:
+            sub_tokens_built = all('_tokens' in it for it in sub_cand[:5])
+            if sub_tokens_built:
+                q_toks = tokenize(query_text)
+                scored = []
+                for it in sub_cand:
+                    hits = len(q_toks & it.get('_tokens', set()))
+                    if hits > 0:
+                        c = dict(it)
+                        c['_match_pct'] = min(int(hits / max(len(q_toks),1) * 100), 100)
+                        scored.append(c)
+                scored.sort(key=lambda x: -x['_match_pct'])
+                if scored:
+                    return scored[:top_n]
 
     # ── КРОК 1: СТРОГО у своїй категорії (attr_search strict) ──────────────
     if not is_other:
