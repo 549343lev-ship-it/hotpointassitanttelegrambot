@@ -940,6 +940,29 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
     # Кожна позиція отримує _routed_cat і _prefix на основі тексту нормалізації
     route_batch(позиції)   # мутує позиції: додає _routed_cat і _prefix in-place
 
+    # Уточнення node_id по виробнику з brand_map
+    # Якщо підказка "пайка екопластик" + node=pp.f.k → уточнюємо до pp.e.f
+    _PPR_BRAND_NODE = {
+        'ekoplastik': 'pp.e.f', 'екопластик': 'pp.e.f',
+        'asg':        'pp.a.f',
+        'raftec':     'pp.r.f',
+        'plm':        'pp.p.f',
+        'kan':        'pp.k.f',
+        'fv plast':   'pp.f.f', 'fv':         'pp.f.f',
+        'eco':        'pp.c.f',
+    }
+    for пос in позиції:
+        node = пос.get('_node_id', '')
+        if node.startswith('pp.f') and пос.get('_routed_cat') == 'plastic_ppr':
+            brand_map_p = пос.get('_brand_map', {})
+            global_b    = brand_map_p.get('_global', [])
+            if global_b:
+                for tok in global_b:
+                    refined = _PPR_BRAND_NODE.get(tok.lower())
+                    if refined:
+                        пос['_node_id'] = refined
+                        break
+
     результати        = [None] * len(позиції)
     потребують_claude = []
     retry_позиції     = []
