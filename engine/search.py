@@ -771,10 +771,18 @@ def smart_search(пос: dict, top_n: int = 12,
 
     # ── КРОК 0.5: NODE_POOL або ПІДГРУПА ─────────────────────────────────────
     if not is_other:
-        from engine.node_mapper import node_pool
-        if node_id and node_id != 'xx':
-            # Точний пул за node_id — всі товари у вузлі і підвузлах
-            sub_cand = node_pool(CATALOG, node_id)
+        # Захищений імпорт — працює і на сервері (engine/) і локально
+        try:
+            from engine.node_mapper import node_pool as _node_pool
+        except ImportError:
+            try:
+                from node_mapper import node_pool as _node_pool
+            except ImportError:
+                _node_pool = None
+                print("⚠️ node_mapper не знайдено", flush=True)
+
+        if _node_pool and node_id and node_id != 'xx':
+            sub_cand = _node_pool(CATALOG, node_id)
         else:
             # Fallback: стара логіка через route_sub + group keywords
             sub_keywords = route_sub(пос, routed_cat)
