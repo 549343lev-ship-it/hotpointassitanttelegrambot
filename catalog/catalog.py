@@ -9,7 +9,13 @@ import os
 import re
 import json
 import pandas as pd
-from engine.node_mapper import assign_node_id   # маппінг group/subgroup → node_id
+try:
+    from engine.node_mapper import assign_node_id   # на сервері (engine/)
+except ImportError:
+    try:
+        from node_mapper import assign_node_id       # локально (плоска структура)
+    except ImportError:
+        def assign_node_id(cat, grp, sub): return 'xx'  # fallback без node_mapper
 
 DATA_DIR     = os.environ.get("DATA_DIR") or ("/var/data" if os.path.isdir("/var/data") else ".")
 CATALOG_PATH = os.path.join(DATA_DIR, "catalog.json")   # кешований каталог на диску
