@@ -443,6 +443,31 @@ PREFIX_CAT: dict[str, str] = {v: k for k, v in CAT_PREFIX.items()}
 
 # ─── Основні функції ─────────────────────────────────────────────────────────
 
+def _refine_ppr_node(combined: str, base_node: str) -> str:     # уточнює вузол PPR фітингів по виробнику (pp.f.k → pp.e.f якщо ekoplastik)
+    """
+    Якщо в тексті є виробник PPR → повертає вузол виробника + тип фітинга.
+    pp.f.k (коліно) + ekoplastik → pp.e.f
+    pp.f.m (муфта) + asg → pp.a.f
+    pp.f.t (трійник) + raftec → pp.r.f
+    Без виробника → pp.f (загальний)
+    """
+    # Маппінг виробника → кореневий вузол
+    BRAND_NODES = {
+        r'ekoplastik|екопластик|pp-rct.*ekoplast': 'pp.e.f',
+        r'\basg\b':                                  'pp.a.f',
+        r'\braftec\b':                               'pp.r.f',
+        r'\bplm\b':                                  'pp.p.f',
+        r'\bkan\b':                                  'pp.k.f',
+        r'fv\s*plast|fv\s+plast':                    'pp.f.f',
+        r'\beco\s+ppr\b|\beco\b.*ppr':               'pp.c.f',
+    }
+    for pat, brand_node in BRAND_NODES.items():
+        if re.search(pat, combined, re.IGNORECASE):
+            return brand_node
+    # Без виробника — загальний вузол фітингів
+    return 'pp.f'
+
+
 def route(пос: dict) -> str:    # визначає category_code і node_id для позиції
     """
     Головна функція маршрутизації.
@@ -469,6 +494,12 @@ def route(пос: dict) -> str:    # визначає category_code і node_id �
 
     if node_id:
         cat = _node_category(node_id)
+
+        # Уточнення node_id по виробнику для PPR фітингів
+        # pp.f.k/pp.f.m/pp.f.t + виробник → pp.e.f / pp.a.f / pp.r.f тощо
+        if node_id.startswith('pp.f') and cat == 'plastic_ppr':
+            node_id = _refine_ppr_node(combined, node_id)
+
         пос['_node_id']    = node_id
         пос['_routed_cat'] = cat
         пос['_prefix']     = CAT_PREFIX.get(cat, 'XX')
