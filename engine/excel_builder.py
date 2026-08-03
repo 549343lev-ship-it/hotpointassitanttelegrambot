@@ -81,10 +81,16 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list, list]
                 or r.get('brand_warning')
                 or r.get('джерело', '') in ('⚠️ fallback', '🔍 вільний', '⚠️ аналог')
             )
-            # Розділ = [PP] + розділ PDF специфікації (якщо є)
+            # Розділ = node_id (новий маршрутизатор) або _prefix (старий fallback)
+            _node = r.get('_node_id', '')
             _pref = r.get('_prefix', '')
             _sect = r.get('розділ', '')
-            _rozd = f"[{_pref}] {_sect}".strip() if _pref else _sect
+            if _node and _node != 'xx':
+                _rozd = f"[{_node}]"
+                if _sect:
+                    _rozd += f" {_sect}"
+            else:
+                _rozd = f"[{_pref}] {_sect}".strip() if _pref else _sect
             rows.append({
                 '№':            len(rows) + 1,
                 'Артикул':      r.get('артикул', ''),
@@ -113,9 +119,15 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list, list]
                     full  = it.get('name_full', best)
                     price = it.get('price', '')
                     break
+            _node2 = r.get('_node_id', '')
             _pref2 = r.get('_prefix', '')
             _sect2 = r.get('розділ', '')
-            _rozd2 = f"[{_pref2}] {_sect2}".strip() if _pref2 else _sect2
+            if _node2 and _node2 != 'xx':
+                _rozd2 = f"[{_node2}]"
+                if _sect2:
+                    _rozd2 += f" {_sect2}"
+            else:
+                _rozd2 = f"[{_pref2}] {_sect2}".strip() if _pref2 else _sect2
             rows.append({
                 '№':            len(rows) + 1,
                 'Артикул':      art,
