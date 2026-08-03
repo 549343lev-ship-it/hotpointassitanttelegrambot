@@ -783,6 +783,18 @@ def smart_search(пос: dict, top_n: int = 12,
 
         if _node_pool and node_id and node_id != 'xx':
             sub_cand = _node_pool(CATALOG, node_id)
+
+            # Якщо є brand_tokens — додатково фільтруємо пул по виробнику
+            # "пайка екопластик" + node_id="pp.f.m" → шукаємо тільки Ekoplastik фітинги
+            if brand_tokens and sub_cand:
+                bt_lc = [t.lower() for t in brand_tokens]
+                sub_cand_brand = [
+                    it for it in sub_cand
+                    if any(bt in it.get('name', '').lower() for bt in bt_lc)
+                ]
+                # Використовуємо звужений пул тільки якщо щось знайшли
+                if sub_cand_brand:
+                    sub_cand = sub_cand_brand
         else:
             # Fallback: стара логіка через route_sub + group keywords
             sub_keywords = route_sub(пос, routed_cat)
