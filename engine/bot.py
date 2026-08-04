@@ -46,6 +46,9 @@ from knowledge.rules import (get_rules, add_rule, delete_rule,
                              load_pending_rules, save_pending_rules, add_pending_rule)
 from engine.ocr import (normalize_photo, normalize_text, normalize_pdf,
                         save_ocr_correction, load_ocr_corrections, parse_caption_brands)
+from engine.brand_selector import (start_brand_selection, handle_callback as bs_handle,
+                                    cancel as bs_cancel, has_active as bs_has_active,
+                                    inject_brand_map_to_positions)
 from engine.search import (find_items, keyword_search, smart_search, build_qa,
                             BRAND_TOKENS, claude_pick_batch)
 from engine.excel_builder import create_excel, parse_qty
@@ -321,7 +324,7 @@ def expand_push_sleeves(позиції):   # автоматично додає �
 
 # ─── process_batch ────────────────────────────────────────────────────────────
 
-def process_batch(chat_id: int):    # головний оркестратор: збирає всі файли батчу, нормалізує OCR, розгортає PUSH/ізол, шукає товари, формує Excel
+def process_batch(chat_id: int):    # головний оркестратор: збирає файли, нормалізує OCR, запускає brand_selector, шукає товари, формує Excel
     batch = user_batches.pop(chat_id, None)
     if not batch:
         return
@@ -367,18 +370,41 @@ def process_batch(chat_id: int):    # головний оркестратор: �
     всі_позиції = expand_insulation(всі_позиції)
     всі_позиції = expand_push_sleeves(всі_позиції)
 
-    all_captions = [it.get('caption', '') for it in items if it.get('caption', '')]
-    caption      = ' | '.join(all_captions)
-    brand_map    = parse_caption_brands(caption)
+    all_captions      = [it.get('caption', '') for it in items if it.get('caption', '')]
+    caption           = ' | '.join(all_captions)
+    caption_brand_map = parse_caption_brands(caption)
+
+    # Встановлюємо базовий brand_map (з підказки менеджера)
     for п in всі_позиції:
-        п['_brand_map'] = brand_map
-        if active_slug:
-            п['_client_slug']  = active_slug
-            п['_client_prefs'] = client_prefs
+        п['_brand_map']     = dict(caption_brand_map)
+        п['_client_slug']   = active_slug or ''
+        п['_client_prefs']  = client_prefs
+
+    # ── Запускаємо brand_selector — він сам викличе _run_search після вибору ──
+    start_brand_selection(
+        chat_id       = chat_id,
+        позиції       = всі_позиції,
+        items         = items,
+        caption       = caption,
+        callback_fn   = _run_search_after_brand_selection,
+        status_msg_id = msg_id,
+        bot           = bot,
+    )
+
+
+def _run_search_after_brand_selection(
+        chat_id: int, всі_позиції: list[dict], items: list[dict],
+        caption: str, chosen_brand_map: dict, msg_id: int) -> None:
+    """Викликається brand_selector після вибору виробників. Запускає пошук і Excel."""
+    active_slug  = clients.get_active(chat_id)
+    caption_brand_map = parse_caption_brands(caption)
+
+    # Вставляємо вибраний brand_map в позиції
+    inject_brand_map_to_positions(всі_позиції, chosen_brand_map, caption_brand_map)
 
     safe_edit(chat_id, msg_id, f"🔍 Шукаю {len(всі_позиції)} позицій...")
 
-    def progress(cur, total):   # колбек прогресу: оновлює статус-повідомлення кожні 5 позицій
+    def progress(cur, total):
         if cur % 5 == 0 or cur == total:
             safe_edit(chat_id, msg_id, f"🔍 Пошук: {cur}/{total}...")
 
@@ -401,7 +427,6 @@ def process_batch(chat_id: int):    # головний оркестратор: �
     звіт = f"✅ Знайдено: {len(знайдено)}/{total}\n"
     if not_found: звіт += f"🟥 Не знайдено: {len(not_found)}\n"
     if warn:      звіт += f"🟨 Перевір: {len(warn)}\n"
-    if errors:    звіт += "\n" + "\n".join(errors)
     safe_edit(chat_id, msg_id, звіт)
 
     mk = InlineKeyboardMarkup()
@@ -1546,6 +1571,14 @@ def _show_client_cache(chat_id: int, slug: str, page: int = 0):    # надси�
     bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=mk)
 
 
+@bot.callback_query_handler(func=lambda c: c.data.startswith('bs_'))
+def cb_brand_selector(call):    # обробляє вибір виробника в brand_selector
+    if bs_handle(call.message.chat.id, call.data, bot):
+        bot.answer_callback_query(call.id)
+    else:
+        bot.answer_callback_query(call.id, "⏱ Сесія закінчилась")
+
+
 @bot.callback_query_handler(func=lambda c: c.data.startswith('ccp_'))
 def cb_cache_page(call):    # навігація по сторінках кешу клієнта
     parts = call.data[4:].rsplit('_', 1)
@@ -2442,7 +2475,8 @@ def handle_stop(message):   # /stop — скасовує поточний бат
         user_batches.pop(chat_id, None)
     # Очищаємо всі незавершені стани
     _order_setup.pop(chat_id, None)
-    _pre_batch.pop(chat_id, None)   # буфер фото до питання клієнта
+    _pre_batch.pop(chat_id, None)
+    bs_cancel(chat_id)   # brand_selector
     _learn_state.pop(chat_id, None)
     _learn_photo_batch.pop(chat_id, None)
     if chat_id in _learn_photo_timers:
