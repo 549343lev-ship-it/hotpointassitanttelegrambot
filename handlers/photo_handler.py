@@ -175,6 +175,8 @@ def _add_to_batch(chat_id: int, item: dict, state: dict, bot):
         old_timer.cancel()
 
     state['user_batches'][chat_id]['items'].append(item)
+    # Позначаємо що батч зібраний — нові фото не запустять новий флоу
+    state['user_batches'][chat_id]['ready'] = True
 
     t = threading.Timer(BATCH_TIMEOUT, process_batch,
                         args=[chat_id, bot, state])
