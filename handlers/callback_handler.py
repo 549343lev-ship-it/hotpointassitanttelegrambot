@@ -1,6 +1,18 @@
 """handlers/callback_handler.py — Загальний диспетчер callback_query."""
 
 
+def _safe_edit(bot, chat_id, msg_id, text, parse_mode=None, reply_markup=None):
+    """edit_message_text що ковтає 'message is not modified'."""
+    try:
+        kwargs = {}
+        if parse_mode:   kwargs['parse_mode']   = parse_mode
+        if reply_markup: kwargs['reply_markup'] = reply_markup
+        bot.edit_message_text(text, chat_id, msg_id, **kwargs)
+    except Exception as e:
+        if 'message is not modified' not in str(e) and 'message to edit not found' not in str(e):
+            print(f"⚠️ safe_edit: {e}", flush=True)
+
+
 def register(bot, state: dict):
     from clients import clients
 
@@ -32,12 +44,12 @@ def register(bot, state: dict):
         elif data == 'osetup_pick':
             profiles = clients.list_profiles()
             if not profiles:
-                bot.edit_message_text(
+                _safe_edit(bot, chat_id, call.message.message_id,
                     "❓ Немає клієнтів. Спочатку створи: `новий клієнт Ім'я`",
-                    chat_id, call.message.message_id, parse_mode="Markdown"); return
+                    parse_mode="Markdown"); return
             from keyboards.client_keyboards import client_list_keyboard
-            bot.edit_message_text(
-                "Оберіть клієнта:", chat_id, call.message.message_id,
+            _safe_edit(bot, chat_id, call.message.message_id,
+                "Оберіть клієнта:",
                 reply_markup=client_list_keyboard(profiles)); return
         else:
             slug = None
@@ -61,15 +73,14 @@ def register(bot, state: dict):
         bot.answer_callback_query(call.id)
         p     = clients.get_profile(slug) if slug else None
         label = p['name'] if p else "без клієнта"
-        bot.edit_message_text(
-            f"✅ {label} | без підказки\n⏳ Обробляю...",
-            chat_id, call.message.message_id)
+        _safe_edit(bot, chat_id, call.message.message_id,
+                   f"✅ {label} | без підказки\n⏳ Обробляю...")
         for it in items:
             _add_to_batch(chat_id, it, state, bot)
 
 
 def _finish_order_setup(msg, setup: dict, slug, bot, state: dict):
-    """Завершує налаштування — питає підказку або одразу запускає батч."""
+    """Завершує налаштування — якщо підказка є, одразу запускає батч."""
     from handlers.photo_handler import _add_to_batch
     from clients import clients
     from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -93,22 +104,22 @@ def _finish_order_setup(msg, setup: dict, slug, bot, state: dict):
             _add_to_batch(chat_id, it, state, bot)
 
     if hint_already:
+        # Підказка вже є (caption або pending_hints) — одразу обробляємо
         hint  = state.get('pending_hints', {}).pop(chat_id, '')
         label = f"👤 {name}" if name else "без клієнта"
         n     = len(items)
-        bot.edit_message_text(
-            f"✅ Прийнято ({label}, {n} фото)\n⏳ Обробляю...",
-            chat_id, msg.message_id)
+        _safe_edit(bot, chat_id, msg.message_id,
+                   f"✅ Прийнято ({label}, {n} фото)\n⏳ Обробляю...")
         _add_all(hint)
     else:
+        # Немає підказки — питаємо
         label = f"👤 *{name}*" if name else "без клієнта"
         mk    = InlineKeyboardMarkup()
         mk.add(InlineKeyboardButton("⏩ Пропустити підказку", callback_data="osetup_skip"))
         state.setdefault('_order_setup', {})[chat_id] = {
             'items': items, 'slug': slug, 'waiting_hint': True}
-        bot.edit_message_text(
-            f"✅ Клієнт: {label}\n\n"
-            f"💬 *Введи підказку виробника* (напр. _пайка екопластик_)\n"
-            f"або натисни Пропустити:",
-            chat_id, msg.message_id,
-            parse_mode="Markdown", reply_markup=mk)
+        _safe_edit(bot, chat_id, msg.message_id,
+                   f"✅ Клієнт: {label}\n\n"
+                   f"💬 *Введи підказку виробника* (напр. _пайка екопластик_)\n"
+                   f"або натисни Пропустити:",
+                   parse_mode="Markdown", reply_markup=mk)
