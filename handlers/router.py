@@ -40,7 +40,7 @@ def register_all():
     """Реєструє всі хендлери бота."""
     from handlers import (commands, admin_handler, photo_handler,
                           text_handler, client_handler, callback_handler,
-                          training_handler)
+                          training_handler, rules_handler)
 
     commands.register(bot, state)
     admin_handler.register(bot, state)
@@ -49,6 +49,11 @@ def register_all():
     client_handler.register(bot, state)
     callback_handler.register(bot, state)
     training_handler.register(bot, state)
+    rules_handler.register(bot, state)
+
+    # Додаємо load_pending_fixes в state для admin_handler
+    from services.fix_service import load_pending_fixes
+    state['load_pending_fixes'] = load_pending_fixes
 
     print(f"✅ bot.py OK, зареєстровано handlers: {len(bot.message_handlers)}",
           flush=True)
