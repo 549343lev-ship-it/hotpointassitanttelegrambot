@@ -75,22 +75,26 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list, list]
                     qty_unit = 'м'
 
         if r.get('знайдено'):
-            # вважаємо сумнівним якщо впевненість низька або джерело ненадійне
             suspicious = (
                 conf < 70 or kw < 50
                 or r.get('brand_warning')
                 or r.get('джерело', '') in ('⚠️ fallback', '🔍 вільний', '⚠️ аналог')
             )
-            # Розділ = node_id (новий маршрутизатор) або _prefix (старий fallback)
-            _node = r.get('_node_id', '')
-            _pref = r.get('_prefix', '')
-            _sect = r.get('розділ', '')
-            if _node and _node != 'xx':
-                _rozd = f"[{_node}]"
-                if _sect:
-                    _rozd += f" {_sect}"
+            # Маршрут = node_id від ROUTER (куди бот направляв пошук)
+            _route_node = r.get('_node_id', '')   # ← від router через пос
+            _pref       = r.get('_prefix', '')
+            if _route_node and _route_node != 'xx':
+                _маршрут = f"[{_route_node}]"
             else:
-                _rozd = f"[{_pref}] {_sect}".strip() if _pref else _sect
+                _маршрут = f"[{_pref}]" if _pref else ''
+
+            # Розділ = node_id ЗНАЙДЕНОГО товару (з каталогу)
+            _found_item = r.get('_catalog_node', '')  # node_id товару що знайшло
+            _розд = f"[{_found_item}]" if _found_item and _found_item != 'xx' else _маршрут
+
+            # Бренд = який виробник використовувався при пошуку
+            _brand = r.get('_used_brand', '') or r.get('brand_warning', '')
+
             rows.append({
                 '№':            len(rows) + 1,
                 'Артикул':      r.get('артикул', ''),
@@ -100,7 +104,9 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list, list]
                 'Ціна':         r.get('ціна', ''),
                 'Збіг':         f"🔍{kw}%/🤖{conf}%",
                 'Джерело':      r.get('джерело', ''),
-                'Розділ':       _rozd,
+                'Маршрут':      _маршрут,
+                'Розділ':       _розд,
+                'Бренд':        _brand,
                 'Чому знайшло': r.get('reason', ''),
                 'Оригінал':     r.get('original', ''),
                 'Нормалізовано': r.get('normalized', ''),
@@ -119,15 +125,14 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list, list]
                     full  = it.get('name_full', best)
                     price = it.get('price', '')
                     break
+            # Маршрут від router для незнайдених
             _node2 = r.get('_node_id', '')
             _pref2 = r.get('_prefix', '')
-            _sect2 = r.get('розділ', '')
             if _node2 and _node2 != 'xx':
-                _rozd2 = f"[{_node2}]"
-                if _sect2:
-                    _rozd2 += f" {_sect2}"
+                _маршрут2 = f"[{_node2}]"
             else:
-                _rozd2 = f"[{_pref2}] {_sect2}".strip() if _pref2 else _sect2
+                _маршрут2 = f"[{_pref2}]" if _pref2 else ''
+
             rows.append({
                 '№':            len(rows) + 1,
                 'Артикул':      art,
@@ -137,7 +142,9 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list, list]
                 'Ціна':         price,
                 'Збіг':         '—',
                 'Джерело':      '❓ НЕ ЗНАЙДЕНО',
-                'Розділ':       _rozd2,
+                'Маршрут':      _маршрут2,
+                'Розділ':       '',
+                'Бренд':        '',
                 'Чому знайшло': (r.get('fail_reason', '') or '')[:100],
                 'Оригінал':     r.get('original', ''),
                 'Нормалізовано': r.get('normalized', ''),
@@ -146,17 +153,29 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list, list]
             not_found.append(r.get('original', ''))
 
     output = BytesIO()
-    cols   = ['№', 'Артикул', 'Наименование', 'Кількість', 'Од.',
-              'Ціна', 'Збіг', 'Джерело', 'Розділ', 'Чому знайшло', 'Оригінал', 'Нормалізовано']
+    cols = ['№', 'Артикул', 'Наименование', 'Кількість', 'Од.',
+            'Ціна', 'Збіг', 'Джерело', 'Маршрут', 'Розділ', 'Бренд',
+            'Чому знайшло', 'Оригінал', 'Нормалізовано']
 
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=cols)
+        df = df[cols]   # правильний порядок колонок
         df.to_excel(writer, index=False, sheet_name='Замовлення')
         ws = writer.sheets['Замовлення']
-        ws.column_dimensions['A'].width = 4    # стовпець №
-        ws.column_dimensions['C'].width = 55   # стовпець Найменування — широкий
-        ws.column_dimensions['J'].width = 20   # стовпець Оригінал
-        ws.column_dimensions['K'].width = 35   # стовпець Нормалізовано
+        # Ширини колонок: A=№, B=Артикул, C=Найменування, D=Кіл, E=Од,
+        # F=Ціна, G=Збіг, H=Джерело, I=Маршрут, J=Розділ, K=Бренд,
+        # L=Чому, M=Оригінал, N=Нормалізовано
+        ws.column_dimensions['A'].width = 4
+        ws.column_dimensions['B'].width = 12
+        ws.column_dimensions['C'].width = 55
+        ws.column_dimensions['G'].width = 14
+        ws.column_dimensions['H'].width = 14
+        ws.column_dimensions['I'].width = 16   # Маршрут
+        ws.column_dimensions['J'].width = 16   # Розділ
+        ws.column_dimensions['K'].width = 18   # Бренд
+        ws.column_dimensions['L'].width = 20   # Чому знайшло
+        ws.column_dimensions['M'].width = 30   # Оригінал
+        ws.column_dimensions['N'].width = 35   # Нормалізовано
         for i, fl in enumerate(flags, start=2):
             fill = RED if fl == 'nf' else (YELLOW if fl == 'warn' else None)
             if fill:
