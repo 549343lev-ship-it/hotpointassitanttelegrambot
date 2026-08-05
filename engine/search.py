@@ -880,6 +880,81 @@ def _parse_claude_json(raw: str) -> list:   # витягує JSON-масив з 
     return objects
 
 
+def gemini_pick_batch(позиції: list[dict], _retry=True) -> list[dict]:  # вибір товару через Gemini 2.5 Flash замість Claude
+    from google import genai as genai_new
+    from google.genai import types as genai_types
+    import os
+
+    gemini_client = genai_new.Client(api_key=os.getenv('GEMINI_KEY', ''))
+
+    запити = []
+    for i, пос in enumerate(позиції):
+        brand_note = f"\n   ⚠️ ТІЛЬКИ: {пос['required_brand']}" if пос.get('required_brand') else ""
+        кандидати  = "\n".join(
+            f"  {j+1}. [{c.get('_match_pct', 0)}%] {c['name']}"
+            for j, c in enumerate(пос['candidates'])
+        )
+        запити.append(f"{i+1}. {пос['normalized']}{brand_note}\n{кандидати}")
+
+    prompt = f"""Ти — досвідчений менеджер сантехнічного магазину. Для кожного запиту вибери правильний товар з кандидатів або скажи що не знайдено.
+
+ЕКВІВАЛЕНТИ: кутник/кут/відвід=коліно; канал 87≈90; ASG=HTR; OSTENDORF=HT Safe;
+Ekoplastik труби=EVO; Джикоміні≈Raftec (термоклапани);
+PUSH: гільза≠кільце, "натяжний" обов'язково.
+
+КРИТИЧНІ ПРАВИЛА:
+1. Діаметр/різьба ОБОВ'ЯЗКОВО збігається: 1/2" ≠ 1", 3/4" ≠ 1/2"
+2. ВИРОБНИК якщо вказано — ТІЛЬКИ він або знайдено=false
+3. ТИП товару МУСИТЬ збігатись (СУВОРО — краще НЕ ЗНАЙДЕНО ніж неправильний тип!):
+   - ніпель/футорка/подовжувач ≠ муфта/американка/PPR фітинг
+   - гідроакумулятор ≠ термостат/мембрана
+   - радіатор БІМЕТАЛІЧНИЙ ≠ алюмінієвий (ЗАБОРОНЕНО!)
+   - зворотний клапан ≠ змішувальний/запобіжний клапан
+   - фільтр самоочисний ≠ фільтр грубої очистки
+   - трійник латунний ≠ трійник PPR
+4. Якщо жоден кандидат не підходить → знайдено=false
+5. Різьба 1/2 = DN15, 3/4 = DN20, 1" = DN25
+
+{chr(10).join(запити)}
+
+Відповідь — ТІЛЬКИ JSON масив рівно {len(позиції)} елементів без пояснень:
+[{{"знайдено":true,"номер_кандидата":1,"confidence":95,"reason":"причина","fail_reason":""}}]"""
+
+    try:
+        resp = gemini_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[genai_types.Part.from_text(text=prompt)],
+            config=genai_types.GenerateContentConfig(temperature=0)
+        )
+        parsed = _parse_claude_json(resp.text)
+        if not parsed:
+            raise ValueError("порожній JSON від Gemini")
+        while len(parsed) < len(позиції):
+            parsed.append({"знайдено": False, "confidence": 0,
+                           "reason": "", "fail_reason": "немає відповіді"})
+        return parsed[:len(позиції)]
+    except Exception as e:
+        if _retry and len(позиції) > 1:
+            print(f"⚠️ Gemini батч впав ({e}), ретрай поштучно...")
+            results = []
+            for п in позиції:
+                results.extend(gemini_pick_batch([п], _retry=False))
+            return results
+        print(f"⚠️ Gemini picker: {e} — fallback на Claude")
+        return claude_pick_batch(позиції, _retry=_retry)
+
+
+# Вибір моделі для підбору кандидатів — перемикається через ENV без деплою
+import os as _os
+_PICKER = _os.getenv('PICKER_MODEL', 'claude').lower()  # 'claude' або 'gemini'
+
+
+def pick_batch(позиції: list[dict], _retry=True) -> list[dict]:     # єдина точка входу — делегує до Claude або Gemini залежно від PICKER_MODEL
+    if _PICKER == 'gemini':
+        return gemini_pick_batch(позиції, _retry=_retry)
+    return claude_pick_batch(позиції, _retry=_retry)
+
+
 def claude_pick_batch(позиції: list[dict], _retry=True) -> list[dict]:  # відправляє батч кандидатів до Claude; він вибирає правильний товар для кожної позиції
     запити = []
     for i, пос in enumerate(позиції):
@@ -1234,7 +1309,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
 
     # ─── Claude batch: відправляємо всі неочевидні позиції одним запитом ─────
     if потребують_claude:
-        відповіді = claude_pick_batch(потребують_claude)
+        відповіді = pick_batch(потребують_claude)
         for j, пос in enumerate(потребують_claude):
             r    = відповіді[j] if j < len(відповіді) else {'знайдено': False}
             idx  = пос['idx']
@@ -1316,7 +1391,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                         'candidates_debug': [c['name'] for c in nc[:5]],
                         'required_brand': None, 'old_brand': пос['required_brand']})
             if retry_batch:
-                відп2 = claude_pick_batch(retry_batch)
+                відп2 = pick_batch(retry_batch)
                 for j, пос in enumerate(retry_batch):
                     r = відп2[j] if j < len(відп2) else {'знайдено': False}
                     if r.get('знайдено') and r.get('номер_кандидата'):
