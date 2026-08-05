@@ -992,22 +992,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                     manager_brand = brand_map[similar_cat]
                     break
         # '_global' = м'яка підказка (бренд без категорії від менеджера)
-        # використовуємо ТІЛЬКИ якщо виробник прямо в рядку майстра не знайдено
-        # і тільки як підказку для normalized — НЕ як жорстке обмеження
         _global_brand = brand_map.get('_global')  # може бути None
-
-        # ⚡ Для PPR і каналізації — _global_brand є ЖОРСТКИМ якщо це виробник пайки/каналізації
-        # Менеджер написав "пайка екопластик" → ВСІ PPR позиції мають бути Ekoplastik
-        _ppr_sew_cats = {'plastic_ppr', 'sewage', 'push_systems'}
-        if _global_brand and category in _ppr_sew_cats and not hard_brand:
-            # Перевіряємо чи _global_brand є виробником цієї категорії
-            _gb_lc = [t.lower() for t in _global_brand]
-            _is_cat_brand = any(
-                b in _gb_lc for b in
-                ['ekoplastik', 'asg', 'raftec', 'plm', 'ostendorf', 'rehau', 'fv plast']
-            )
-            if _is_cat_brand:
-                hard_brand = _global_brand  # підвищуємо до жорсткого
 
         # РІВЕНЬ 1.5: виробник у самому рядку майстра (Wilo, Bonomi, Herz...)
         line_brand = None
@@ -1016,10 +1001,22 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
             if re.search(r'(?<![a-zа-яёіїєґ0-9])' + re.escape(bk) + r'(?![a-zа-яёіїєґ0-9])', _orig_lc):
                 line_brand = bt
                 break
+
         # hard_brand = жорстке обмеження пошуку (тільки цей виробник)
         # manager_brand — ТІЛЬКИ якщо категорія явно вказана менеджером
-        # _global_brand — м'яка підказка, НЕ hard constraint
         hard_brand = manager_brand or line_brand
+
+        # ⚡ Для PPR і каналізації — _global_brand є ЖОРСТКИМ якщо це виробник пайки/каналізації
+        # Менеджер написав "пайка екопластик" → ВСІ PPR позиції мають бути Ekoplastik
+        _ppr_sew_cats = {'plastic_ppr', 'sewage', 'push_systems'}
+        if _global_brand and category in _ppr_sew_cats and not hard_brand:
+            _gb_lc = [t.lower() for t in _global_brand]
+            _is_cat_brand = any(
+                b in _gb_lc for b in
+                ['ekoplastik', 'asg', 'raftec', 'plm', 'ostendorf', 'rehau', 'fv plast']
+            )
+            if _is_cat_brand:
+                hard_brand = _global_brand  # підвищуємо до жорсткого
 
         # РІВЕНЬ 2: кеш клієнта
         if client_slug:
