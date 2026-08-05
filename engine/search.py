@@ -418,6 +418,10 @@ _INCOMPATIBLE_TYPES = [
     ('грубої очистки', 'самопромивний'),
     ('самоочисний', 'грубої очистки'),
     ('грубої очистки', 'самоочисний'),
+    # стрічка/плівка ≠ насос/шафа/колектор
+    ('демпфер', 'насос'), ('демпфер', 'шафа'), ('демпфер', 'колектор'),
+    ('стрічка', 'насос'), ('стрічка', 'шафа'), ('стрічка', 'колектор'),
+    ('плівка',  'насос'), ('плівка',  'шафа'), ('плівка',  'клапан'),
 ]
 
 
@@ -1006,17 +1010,25 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
         # manager_brand — ТІЛЬКИ якщо категорія явно вказана менеджером
         hard_brand = manager_brand or line_brand
 
-        # ⚡ Для PPR і каналізації — _global_brand є ЖОРСТКИМ якщо це виробник пайки/каналізації
-        # Менеджер написав "пайка екопластик" → ВСІ PPR позиції мають бути Ekoplastik
-        _ppr_sew_cats = {'plastic_ppr', 'sewage', 'push_systems'}
-        if _global_brand and category in _ppr_sew_cats and not hard_brand:
+        # ⚡ _global_brand стає жорстким тільки якщо виробник актуальний для цієї категорії
+        # "пайка екопластик" → жорстко для PPR, але НЕ для каналізації!
+        # "пуш рафтек" → жорстко для push, але НЕ для каналізації і PPR!
+        _PPR_BRANDS  = {'ekoplastik', 'asg', 'plm', 'raftec', 'fv plast', 'kan', 'eco'}
+        _PUSH_BRANDS = {'raftec', 'rehau', 'fado', 'kan', 'uponor', 'heat-pex'}
+        _SEW_BRANDS  = {'ostendorf', 'asg', 'valrom', 'plm'}
+
+        _CAT_BRAND_MAP = {
+            'plastic_ppr': _PPR_BRANDS,
+            'push_systems': _PUSH_BRANDS,
+            'sewage': _SEW_BRANDS,
+        }
+
+        if _global_brand and category in _CAT_BRAND_MAP and not hard_brand:
             _gb_lc = [t.lower() for t in _global_brand]
-            _is_cat_brand = any(
-                b in _gb_lc for b in
-                ['ekoplastik', 'asg', 'raftec', 'plm', 'ostendorf', 'rehau', 'fv plast']
-            )
+            _allowed = _CAT_BRAND_MAP[category]
+            _is_cat_brand = any(b in _allowed for b in _gb_lc)
             if _is_cat_brand:
-                hard_brand = _global_brand  # підвищуємо до жорсткого
+                hard_brand = _global_brand  # підвищуємо до жорсткого тільки якщо виробник підходить
 
         # РІВЕНЬ 2: кеш клієнта
         if client_slug:
