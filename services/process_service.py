@@ -145,7 +145,9 @@ def _run_search(chat_id: int, всі_позиції: list, items: list,
 
 
 def _safe_edit(bot, chat_id, msg_id, text):
+    """Редагує повідомлення — ковтає 'message is not modified'."""
     try:
         bot.edit_message_text(text, chat_id, msg_id)
-    except Exception:
-        pass
+    except Exception as e:
+        if 'message is not modified' not in str(e) and 'message to edit not found' not in str(e):
+            print(f"⚠️ safe_edit: {e}", flush=True)
