@@ -258,21 +258,23 @@ class BrandSelectionState:
 def start_brand_selection(chat_id: int, позиції: list[dict],
                            items: list[dict], caption: str,
                            callback_fn, status_msg_id: int,
-                           bot) -> None:
+                           bot, _state: dict = None) -> None:
     """
     Запускає діалог вибору виробника.
     Якщо в замовленні немає груп з виробниками — одразу викликає callback_fn.
     """
-    state = BrandSelectionState(
+    bs = BrandSelectionState(
         chat_id, позиції, items, caption, callback_fn, status_msg_id)
+    bs._bot   = bot
+    bs._state = _state or {}
 
-    if not state.groups_needed:
+    if not bs.groups_needed:
         # Немає груп для вибору — одразу пускаємо з порожнім brand_map
-        callback_fn(chat_id, позиції, items, caption, {}, status_msg_id)
+        _call_callback(bs, {})
         return
 
-    _states[chat_id] = state
-    _send_initial_question(chat_id, state, bot)
+    _states[chat_id] = bs
+    _send_initial_question(chat_id, bs, bot)
 
 
 def handle_callback(chat_id: int, data: str, bot) -> bool:
@@ -401,19 +403,46 @@ def _send_next_group(chat_id: int, state: BrandSelectionState, bot) -> None:
             parse_mode="Markdown", reply_markup=mk)
 
 
+def _call_callback(state: BrandSelectionState, brand_map: dict) -> None:
+    """Викликає callback з усіма потрібними параметрами."""
+    import inspect
+    sig = inspect.signature(state.callback_fn)
+    params = list(sig.parameters.keys())
+    try:
+        if 'bot' in params and '_state' in params:
+            state.callback_fn(
+                state.chat_id, state.позиції, state.items,
+                state.caption, brand_map, state.status_msg_id,
+                bot=state._bot, _state=state._state)
+        elif 'bot' in params:
+            state.callback_fn(
+                state.chat_id, state.позиції, state.items,
+                state.caption, brand_map, state.status_msg_id,
+                bot=state._bot)
+        else:
+            state.callback_fn(
+                state.chat_id, state.позиції, state.items,
+                state.caption, brand_map, state.status_msg_id)
+    except Exception as e:
+        print(f"❌ brand_selector callback: {e}", flush=True)
+        try:
+            state._bot.send_message(state.chat_id, f"❌ Помилка пошуку: {e}")
+        except Exception:
+            pass
+
+
 def _finish(chat_id: int, state: BrandSelectionState, bot) -> None:
     """Завершує вибір і запускає пошук."""
     brand_map = state.build_brand_map()
 
-    # Показуємо що вибрано
-    if brand_map:
-        chosen_text = "\n".join(
+    msg = (
+        f"✅ Виробники обрані:\n" +
+        "\n".join(
             f"  • {CATEGORY_BRANDS.get(cat, {}).get('label', cat)}: *{bk[0]}*"
             for cat, bk in brand_map.items()
-        )
-        msg = f"✅ Виробники обрані:\n{chosen_text}\n\n🔍 Шукаю..."
-    else:
-        msg = "🔍 Шукаю з дефолтними виробниками..."
+        ) + "\n\n🔍 Шукаю..."
+        if brand_map else "🔍 Шукаю з дефолтними виробниками..."
+    )
 
     try:
         bot.edit_message_text(msg, chat_id, state.status_msg_id,
@@ -422,15 +451,7 @@ def _finish(chat_id: int, state: BrandSelectionState, bot) -> None:
         pass
 
     _states.pop(chat_id, None)
-
-    # Викликаємо callback — передаємо brand_map
-    try:
-        state.callback_fn(
-            chat_id, state.позиції, state.items,
-            state.caption, brand_map, state.status_msg_id)
-    except Exception as e:
-        print(f"❌ brand_selector callback: {e}", flush=True)
-        bot.send_message(chat_id, f"❌ Помилка пошуку: {e}")
+    _call_callback(state, brand_map)
 
 
 def inject_brand_map_to_positions(
