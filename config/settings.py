@@ -26,6 +26,7 @@ VOYAGE_MODEL       = "voyage-3"
 THRESHOLD_AUTO     = 0.82
 THRESHOLD_CONFIRM  = 0.72
 
-# ── Claude ────────────────────────────────────────────────────────────────────
+# ── Вибір моделі для підбору кандидатів ──────────────────────────────────────
+PICKER_MODEL       = os.getenv('PICKER_MODEL', 'claude')  # 'claude' або 'gemini'
 CLAUDE_MODEL       = "claude-sonnet-4-6"
 CLAUDE_MAX_TOKENS  = 1024
