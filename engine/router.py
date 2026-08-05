@@ -205,7 +205,9 @@ TREE: list[tuple] = [
     ('ps.p.c',  'push_systems', [r'труба.*heat.?pex|heat.?pex.*труба'],
                                 ['HEAT-PEX']),
 
-    ('ps.p.d',  'push_systems', [r'труба.*raftec.*push|raftec.*push.*труба'],
+    ('ps.p.d',  'push_systems', [r'труба.*raftec.*push|raftec.*push.*труба'
+                                  r'|труба.*raftec.*(pex|silver|evoh)'
+                                  r'|raftec.*(pex|silver).*(труба|трубу)'],
                                 ['RAFTEC', 'RAFTEC PPSU PUSH']),
 
     # Труби PEX загально
@@ -226,7 +228,8 @@ TREE: list[tuple] = [
                                 ['Натяжной фитинг', 'General Fittings', 'FADO']),
 
     # Гільзи / кільця
-    ('ps.g',    'push_systems', [r'гільза.*(push|pex)|кільце.*(push|pex)|(push|pex).*(гільза|кільце)'],
+    ('ps.g',    'push_systems', [r'гільза.*(push|pex)|кільце.*(push|pex)|(push|pex).*(гільза|кільце)'
+                                  r'|гільза натяжна|гільза ф\s*\d{2}'],
                                 ['RAFTEC', 'REHAU']),
 
     # PUSH загально
