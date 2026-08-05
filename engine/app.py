@@ -11,7 +11,8 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 WEBHOOK_URL    = os.environ.get("WEBHOOK_URL", "").rstrip("/")
 
 print("📦 Імпортую bot.py...", flush=True)
-from engine.bot import bot as tg_bot
+from handlers.router import register_all
+tg_bot = register_all()
 print(f"✅ bot.py OK, зареєстровано handlers: {len(tg_bot.message_handlers)}", flush=True)
 
 flask_app = Flask(__name__)
