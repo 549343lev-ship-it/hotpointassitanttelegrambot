@@ -447,8 +447,9 @@ def _finish(chat_id: int, state: BrandSelectionState, bot) -> None:
     try:
         bot.edit_message_text(msg, chat_id, state.status_msg_id,
                               parse_mode="Markdown")
-    except Exception:
-        pass
+    except Exception as _e:
+        if 'message is not modified' not in str(_e) and 'message to edit not found' not in str(_e):
+            print(f"⚠️ brand_selector: {_e}", flush=True)
 
     _states.pop(chat_id, None)
     _call_callback(state, brand_map)
