@@ -140,9 +140,13 @@ def _ask_order_setup(message, item: dict, hint_already: bool,
             prof = clients.get_profile(slug)
             active_name = prof['name'] if prof else None
 
+        # Якщо є підказка в pending_hints — вона вже готова, не питаємо знову
+        has_hint = bool(state.get('pending_hints', {}).get(cid))
+        hint_ready = p.get('hint_already', False) or has_hint
+
         state.setdefault('_order_setup', {})[cid] = {
             'items':        p['items'],
-            'hint_already': p.get('hint_already', False),
+            'hint_already': hint_ready,
         }
 
         mk = InlineKeyboardMarkup(row_width=1)
