@@ -1179,9 +1179,26 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                 required_brand = hard_brand[0]
                 джерело = '👨 менеджер' if manager_brand else '📝 з рядка'
             else:
-                кандидати = smart_search(пос, top_n=12)    # виробник не знайдений — шукаємо без нього
-                brand_warning = f"⚠️ {hard_brand[0]} відсутній для цієї позиції"
-                джерело = '⚠️ fallback'
+                # Виробник не знайдений — спробуємо дефолтні бренди категорії
+                brand_list = DEFAULT_BRAND_PRIORITY.get(category, [])
+                if category == 'sewage':
+                    node = пос.get('_node_id', '')
+                    brand_list = ([['ostendorf', 'OSTENDORF'], ['asg', 'ASG']]
+                                  if node.startswith('kn.s')
+                                  else [['asg', 'ASG'], ['ostendorf', 'OSTENDORF']])
+                for pt in brand_list:
+                    if pt[0].lower() == hard_brand[0].lower():
+                        continue  # вже пробували
+                    кандидати = smart_search(пос, top_n=12, brand_tokens=pt)
+                    if кандидати:
+                        required_brand = pt[0]
+                        джерело = '⚙️ дефолт'
+                        break
+                if not кандидати:
+                    кандидати = smart_search(пос, top_n=12)
+                brand_warning = f"⚠️ у {hard_brand[0]} немає — аналог"
+                if not джерело:
+                    джерело = '⚠️ fallback'
         else:
             # 4а: преференції клієнта з історії замовлень
             for brand, _cnt in client_prefs.get('by_category', {}).get(category, [])[:3]:
