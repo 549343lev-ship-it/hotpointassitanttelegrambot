@@ -38,7 +38,9 @@ def register(bot, state: dict):
             bot.answer_callback_query(call.id, "⏱ Сесія закінчилась"); return
         bot.answer_callback_query(call.id)
 
-        if data == 'osetup_active':
+        if data.startswith('osetup_cl_'):
+            slug = data[10:]
+        elif data == 'osetup_active':
             slug = clients.get_active(chat_id)
         elif data == 'osetup_none':
             slug = None
