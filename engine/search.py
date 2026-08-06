@@ -190,7 +190,7 @@ CATEGORY_ALIASES = {    # словник: що пише менеджер у пі
 }
 
 DEFAULT_BRAND_PRIORITY = {  # якщо менеджер не вказав виробника — беремо з цього списку за пріоритетом
-    'sewage':                  [['ostendorf', 'OSTENDORF'], ['asg', 'ASG']],   # OSTENDORF першим!
+    'sewage':                  [['asg', 'ASG'], ['ostendorf', 'OSTENDORF']],   # ASG першим для внутрішньої!
     'plastic_ppr':             [['ekoplastik', 'Ekoplastik', 'PP-RCT'], ['asg', 'ASG'], ['raftec', 'RAFTEC']],
     'shutoff_valves':          [['raftec', 'RAFTEC']],
     'adapters_reducers':       [['raftec', 'RAFTEC']],
@@ -1194,7 +1194,19 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                     break
             # 4б: дефолтні виробники для категорії
             if not кандидати:
-                for pt in DEFAULT_BRAND_PRIORITY.get(category, []):
+                brand_list = DEFAULT_BRAND_PRIORITY.get(category, [])
+
+                # Для каналізації: пріоритет залежить від вузла
+                # kn.u (внутрішня) → ASG першим
+                # kn.e (зовнішня) / kn.s (безшумна) → OSTENDORF першим
+                if category == 'sewage':
+                    node = пос.get('_node_id', '')
+                    if node.startswith('kn.s'):
+                        brand_list = [['ostendorf', 'OSTENDORF'], ['asg', 'ASG']]
+                    else:
+                        brand_list = [['asg', 'ASG'], ['ostendorf', 'OSTENDORF']]
+
+                for pt in brand_list:
                     кандидати = smart_search(пос, top_n=12, brand_tokens=pt)
                     if кандидати:
                         required_brand = pt[0]
