@@ -497,8 +497,536 @@ _RULES: list[tuple] = [
     ('adapters_reducers', 'GEBO Fittings(ПЕРЕХОДНИКИ)','',   'ar.g.o'),
     ('adapters_reducers', r'Ремонтний хомут','',             'ar.g.u'),
     ('adapters_reducers', 'Чугунные',       '',              'ar.g'),
-    ('adapters_reducers', 'Под заказ',      '',              'ar.g'),
+    ('adapters_reducers', 'Під заказ',      '',              'ar.g'),
     ('adapters_reducers', 'ПЕРЕХОДНИКИ',    '',              'ar.y'),  # fallback жовта
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # ОПАЛЕННЯ / КОТЕЛЬНЕ (heating) ht
+    # ══════════════════════════════════════════════════════════════════════════
+    ('heating', 'Термоэлектрические приводы TWA, 230В', '', 'ht.a.t'),
+    ('heating', r'r:Термоелект',            '',              'ht.a.t'),
+    ('heating', 'AFRISO',                  'Манометры и термометры', 'ht.m.a'),
+    ('heating', 'AFRISO',                  '',              'ht.v.a'),
+    ('heating', 'Herz (все)',              'Балансировка + для котлов', 'ht.v.h'),
+    ('heating', 'Herz (все)',              '',              'ht.v.h'),
+    ('heating', 'HERZ',                    '',              'ht.v.h'),
+    ('heating', 'ESBE',                    '',              'ht.v.e'),
+    ('heating', 'HONEYWELL',               '',              'ht.v.w'),
+    ('heating', 'CALEFFI',                 '',              'ht.v.c'),
+    ('heating', 'ICMA',                    '',              'ht.v.i'),
+    ('heating', 'OLE-PRO',                 '',              'ht.v.o'),
+    ('heating', 'AW',                      '',              'ht.v.x'),
+    ('heating', 'TERMOJET Прочее',         '',              'ht.v.x'),
+    ('heating', 'Измерительные приборы',   '',              'ht.m'),
+    ('heating', 'Коллектор в теплоизоляции','',             'ht.c.i'),
+    ('heating', 'Коллектора',              'Коллектор без теплоизоляции', 'ht.c'),
+    ('heating', 'Коллектора',              '',              'ht.c'),
+    ('heating', 'Насосные группы',         '',              'ht.g'),
+    ('heating', 'Теплый пол',              '',              'ht.p'),
+    ('heating', r'r:Запобіжний клапан',    '',              'ht.s'),
+    ('heating', r'r:Клапан.*безпек',       '',              'ht.s'),
+    ('heating', r'r:Термозмішувальний клапан','',           'ht.v.t'),
+    ('heating', r'r:Кран кульовий',        '',              'ht.v.x'),
+    ('heating', r'r:Комплект термостат',   '',              'ht.v.x'),
+    ('heating', 'Прочее',                  '',              'ht.x'),
+    ('heating', 'ПРОЧЕЕ',                  '',              'ht.x'),
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # РАДІАТОРИ (radiators_radiatorsvalve) rd
+    # ══════════════════════════════════════════════════════════════════════════
+    ('radiators_radiatorsvalve', 'PURMO',          '',      'rd.s.pu'),
+    ('radiators_radiatorsvalve', 'KORAD',          '',      'rd.s.ko'),
+    ('radiators_radiatorsvalve', 'KORADO',         '',      'rd.s.ko'),
+    ('radiators_radiatorsvalve', 'IDEALE',         '',      'rd.s.id'),
+    ('radiators_radiatorsvalve', 'IDMAR',          '',      'rd.s.im'),
+    ('radiators_radiatorsvalve', '**СТАЛЬ',        '11 тип (п/з)', 'rd.s.11'),
+    ('radiators_radiatorsvalve', '11 тип ( п/з)',  '',      'rd.s.11'),
+    ('radiators_radiatorsvalve', '22 тип',         '',      'rd.s.22'),
+    ('radiators_radiatorsvalve', '33 тип (п/з)',   '',      'rd.s.33'),
+    ('radiators_radiatorsvalve', '33 тип',         '',      'rd.s.33'),
+    ('radiators_radiatorsvalve', r'r:Радіатор сталевий.*тип 11', '', 'rd.s.11'),
+    ('radiators_radiatorsvalve', r'r:Радіатор сталевий.*тип 22', '', 'rd.s.22'),
+    ('radiators_radiatorsvalve', r'r:Радіатор сталевий.*тип 33', '', 'rd.s.33'),
+    ('radiators_radiatorsvalve', 'АЛЮМИНИЙ',       'Алюминий по заказ', 'rd.a'),
+    ('radiators_radiatorsvalve', 'Алюминий прочее','',      'rd.a'),
+    ('radiators_radiatorsvalve', r'r:Консоль',     '',      'rd.f'),
+    ('radiators_radiatorsvalve', 'Прочее ПОД заказ','ENGEL/Moreli', 'rd.x'),
+    ('radiators_radiatorsvalve', 'Прочее',         'Стальной радиатор 11тип', 'rd.s.11'),
+    ('radiators_radiatorsvalve', 'Прочее',         '',      'rd.x'),
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # КОТЛИ (boilers) bl
+    # ══════════════════════════════════════════════════════════════════════════
+    ('boilers', 'Feniks',                  'Пелетні',       'bl.p.f'),
+    ('boilers', 'BAXI + WESTEN',           'Гідравліка до котла Baxi', 'bl.g.b'),
+    ('boilers', 'BOSCH',                   '',              'bl.g.o'),
+    ('boilers', 'Термобар',                '',              'bl.g.t'),
+    ('boilers', 'Комплектующие Ariston',   '',              'bl.g.a'),
+    ('boilers', 'Комплектующие',           '',              'bl.g.x'),
+    ('boilers', 'Труба',                   'Труба без термоизоляции', 'bl.d.t'),
+    ('boilers', 'Труба с термоизоляцией',  '',              'bl.d.i'),
+    ('boilers', r'r:Труба для димаря',     '',              'bl.d.t'),
+    ('boilers', 'Тройник',                 '',              'bl.d.f'),
+    ('boilers', 'Колено',                  '',              'bl.d.f'),
+    ('boilers', 'Переход',                 '',              'bl.d.f'),
+    ('boilers', 'Хомут',                   '',              'bl.d.f'),
+    ('boilers', r'r:Конус для димаря',     '',              'bl.d.f'),
+    ('boilers', 'Дымоходы (под заказ,цены уточнять)','',   'bl.d'),
+    ('boilers', r'r:Блок керування',       '',              'bl.e'),
+    ('boilers', 'Прочее',                  '',              'bl.x'),
+    ('boilers', 'ПРОЧЕЕ',                  '',              'bl.x'),
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # БОЙЛЕРИ (water_heaters) wh
+    # ══════════════════════════════════════════════════════════════════════════
+    ('water_heaters', 'ARISTON',           'Комбинированные', 'wh.k.a'),
+    ('water_heaters', 'GORENJE/ТІКІ',      'Комбинированные', 'wh.k.g'),
+    ('water_heaters', 'Комбинированные',   '',              'wh.k'),
+    ('water_heaters', 'Косвенные',         '',              'wh.c'),
+    ('water_heaters', 'Теплоаккумуляторы', '',              'wh.t'),
+    ('water_heaters', 'Електричні накопичувальні','',       'wh.e'),
+    ('water_heaters', 'Электрические накопительные','',     'wh.e'),
+    ('water_heaters', 'BOSCH',             '',              'wh.e.b'),
+    ('water_heaters', 'ARISTON',           '',              'wh.e.a'),
+    ('water_heaters', 'Hi-therm',          '',              'wh.e.h'),
+    ('water_heaters', 'RENS',              '',              'wh.e.r'),
+    ('water_heaters', 'MIDEA',             '',              'wh.e.m'),
+    ('water_heaters', 'KOSPEL',            '',              'wh.e.k'),
+    ('water_heaters', 'ELDOM',             '',              'wh.e.e'),
+    ('water_heaters', 'Сухой тен',         '',              'wh.z.s'),
+    ('water_heaters', 'Мокрый тен',        '',              'wh.z.m'),
+    ('water_heaters', 'Тены Drazice',      '',              'wh.z.d'),
+    ('water_heaters', 'Запчастини',        '',              'wh.z'),
+    ('water_heaters', 'Под заказ',         '',              'wh.x'),
+    ('water_heaters', 'ПРОЧИЕ',            '',              'wh.x'),
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # НАСОСИ (pumps) pm
+    # ══════════════════════════════════════════════════════════════════════════
+    ('pumps', 'WILO',                      'WILO циркуля',  'pm.c.w'),
+    ('pumps', 'Циркуляционные Lider',      '',              'pm.c.l'),
+    ('pumps', 'Циркуляционные насосы',     '',              'pm.c'),
+    ('pumps', r'r:Насос циркуляційний',    '',              'pm.c'),
+    ('pumps', 'Поверхностные насосы',      '',              'pm.s'),
+    ('pumps', 'Насосные станции',          '',              'pm.st'),
+    ('pumps', 'Дренажные насосы',          '',              'pm.d'),
+    ('pumps', 'SOLOLIFT',                  'Другие',        'pm.f'),
+    ('pumps', 'Свердловинні насоси Pedrollo','',            'pm.b'),
+    ('pumps', 'ZILMET',                    '',              'pm.g'),
+    ('pumps', 'Reflex баки',               '',              'pm.g'),
+    ('pumps', 'IMERA',                     '',              'pm.s'),
+    ('pumps', 'Sprut-NPO',                 '',              'pm.s'),
+    ('pumps', r'r:Насос підвищення тиску', '',              'pm.s'),
+    ('pumps', 'Насосы',                    '',              'pm'),
+    ('pumps', 'Аксесуари до насосної техніки','',           'pm.x'),
+    ('pumps', 'Комплектующие',             '',              'pm.x'),
+    ('pumps', 'Прочее',                    '',              'pm.x'),
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # ІЗОЛЯЦІЯ (insulation) ins
+    # ══════════════════════════════════════════════════════════════════════════
+    ('insulation', 'PLM',                  '',              'ins.p'),
+    ('insulation', 'K-FLEX (под заказ)',   '',              'ins.k'),
+    ('insulation', r'r:Утеплювач ф.*K-FLEX', '',           'ins.k'),
+    ('insulation', 'SANFLEX(EcoLine)',      '',              'ins.s'),
+    ('insulation', 'Теплоизол',            '',              'ins.t'),
+    ('insulation', 'Фольгированные цилиндры','',            'ins.f'),
+    ('insulation', '*ПОЛОТНО',             '',              'ins.l'),
+    ('insulation', 'УТЕПЛИТЕЛЬ',           '* Серый утеплитель', 'ins.g'),
+    ('insulation', 'Изоляция прочее',      'Thermaflex',    'ins.x'),
+    ('insulation', 'Изоляция прочее',      '',              'ins.x'),
+    ('insulation', r'r:трубний утеплювач', '',              'ins.x'),
+    ('insulation', 'Гейзер (под заказ)',   '',              'ins.x'),
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # ТЕПЛА ПІДЛОГА (underfloor_heating) uf
+    # ══════════════════════════════════════════════════════════════════════════
+    ('underfloor_heating', 'RAFTEC',       '',              'uf.r'),
+    ('underfloor_heating', 'KAN-Therm',    '',              'uf.k'),
+    ('underfloor_heating', 'HERZ',         '',              'uf.h'),
+    ('underfloor_heating', 'Danfoss',      '',              'uf.d'),
+    ('underfloor_heating', 'DEVI',         '',              'uf.de'),
+    ('underfloor_heating', 'PROFI THERM',  'Eko',           'uf.pt'),
+    ('underfloor_heating', 'ICMA',         '',              'uf.ic'),
+    ('underfloor_heating', 'RAUTHERM S',   '',              'uf.rt'),
+    ('underfloor_heating', 'Коллектора FADO','',            'uf.c.f'),
+    ('underfloor_heating', 'Коллектора GROSS','',           'uf.c.g'),
+    ('underfloor_heating', 'Коллектора Luxor','',           'uf.c.l'),
+    ('underfloor_heating', 'Коллектора Прочие','',          'uf.c'),
+    ('underfloor_heating', 'Плити',        'Плівка',        'uf.s.p'),
+    ('underfloor_heating', 'Мати',         '',              'uf.m'),
+    ('underfloor_heating', 'Скобы',        '',              'uf.x'),
+    ('underfloor_heating', 'Манометры',    '',              'uf.x'),
+    ('underfloor_heating', 'Аксессуары',   '',              'uf.x'),
+    ('underfloor_heating', 'Теплый пол',   '',              'uf.x'),
+    ('underfloor_heating', 'Прочее',       '',              'uf.x'),
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # ФІЛЬТРАЦІЯ (filtration) fl
+    # ══════════════════════════════════════════════════════════════════════════
+    ('filtration', r'r:ECOSOFT Систем',    '',              'fl.e'),
+    ('filtration', 'Комплектующие для систем ECOSOFT','',   'fl.e.x'),
+    ('filtration', r'r:ECOSOFT.*пом',      '',              'fl.e'),
+    ('filtration', r'r:Filtrons',          '',              'fl.f'),
+    ('filtration', r'r:Голова для колба',  '',              'fl.h'),
+    ('filtration', r'r:Магістральний фільтр', '',           'fl.m'),
+    ('filtration', r'r:Kолбa',             '',              'fl.m'),
+    ('filtration', 'BWT (под заказ)',      '',              'fl.b'),
+    ('filtration', r'r:Картриджи Bio',     '',              'fl.c'),
+    ('filtration', r'r:Картриджі для питних', '',           'fl.c'),
+    ('filtration', r'r:Картриджі для.*механич', '',         'fl.c'),
+    ('filtration', r'r:Фільтри механічної', '',             'fl.m'),
+    ('filtration', r'r:Система зворотнього осмосу', '',     'fl.o'),
+    ('filtration', r'r:Фільтри\(глечики\)', '',             'fl.g'),
+    ('filtration', r'r:Сольовий бак',      '',              'fl.e'),
+    ('filtration', r'r:Фільтри до водонагр', '',            'fl.x'),
+    ('filtration', 'Organic',              '',              'fl.x'),
+    ('filtration', 'РАСПРОДАЖА',           '',              'fl.x'),
+    ('filtration', 'Прочее',               '',              'fl.x'),
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # ЛІЧИЛЬНИКИ (water_meters) wm
+    # ══════════════════════════════════════════════════════════════════════════
+    ('water_meters', 'ECOSTAR',            '',              'wm.e'),
+    ('water_meters', 'GIDROTEK',           '',              'wm.g'),
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # ШЛАНГИ (hoses) hs
+    # ══════════════════════════════════════════════════════════════════════════
+    ('hoses', 'ГАЗ СТАНДАРТ',             '',              'hs.g.s'),
+    ('hoses', 'ГАЗ СУПЕР',                '',              'hs.g.u'),
+    ('hoses', 'ГАЗ ЕВРО',                 '',              'hs.g.e'),
+    ('hoses', r'r:Шланг рез.*ГАЗ',        '',              'hs.g'),
+    ('hoses', 'ВОДА СТАНДАРТ',            '',              'hs.w.s'),
+    ('hoses', 'ВОДА СУПЕР',               '',              'hs.w.u'),
+    ('hoses', 'MATEU В НЕРЖАВЕЮЩЕЙ ОПЛЕТКЕ','',            'hs.w.m'),
+    ('hoses', 'MATEU В ПОЛИАМИДНОЙ ОПЛЕТКЕ','',            'hs.w.m'),
+    ('hoses', 'Raftec Rhein (GERMANY)',    '',              'hs.w.r'),
+    ('hoses', 'Raftec Rhein в полиамидной оплетке (GERMANY)','','hs.w.r'),
+    ('hoses', 'HLV flex',                 '',              'hs.w.h'),
+    ('hoses', 'FAS Flex',                 '',              'hs.w.f'),
+    ('hoses', 'ДТМ Flex',                 '',              'hs.w.d'),
+    ('hoses', 'BD',                        '',              'hs.w.b'),
+    ('hoses', 'Никифоров',                 '',              'hs.w.n'),
+    ('hoses', 'ШЛАНГИ',                    'ASG нерж',      'hs.w.a'),
+    ('hoses', 'ШЛАНГИ',                    '',              'hs.w'),
+    ('hoses', 'Для Конвекторов',           '',              'hs.k'),
+    ('hoses', 'Шланги для стир.маш.',      '',              'hs.x'),
+    ('hoses', 'Інструмент',               'Металлорукав и комплектующие', 'hs.x'),
+    ('hoses', 'Под заказ',                '',              'hs.x'),
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # ЗАПОБІЖНІ КЛАПАНИ (safety_valves) sav
+    # ══════════════════════════════════════════════════════════════════════════
+    ('safety_valves', 'Редуктора давления','Caleffi',       'sav.r.c'),
+    ('safety_valves', 'HERZ',              '',              'sav.h'),
+    ('safety_valves', 'RAFTEC',            '',              'sav.r'),
+    ('safety_valves', 'AFRISO',            '',              'sav.a'),
+    ('safety_valves', 'Flamco',            '',              'sav.f'),
+    ('safety_valves', 'ICMA',              '',              'sav.i'),
+    ('safety_valves', 'PLM',               '',              'sav.p'),
+    ('safety_valves', 'BUGATTI',           '',              'sav.b'),
+    ('safety_valves', 'GIACOMINI',         '',              'sav.g'),
+    ('safety_valves', 'ASG',               '',              'sav.s'),
+    ('safety_valves', 'ЭКО',               '',              'sav.e'),
+    ('safety_valves', 'Дешевые',           '',              'sav.x'),
+    ('safety_valves', 'Прочие',            '',              'sav.x'),
+    ('safety_valves', 'Прочее',            '',              'sav.x'),
+    ('safety_valves', 'Разное',            '',              'sav.x'),
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # РУШНИКОСУШКИ (towel_warmers) tw
+    # ══════════════════════════════════════════════════════════════════════════
+    ('towel_warmers', 'ЛАРИС',             'Водяные',       'tw.w.l'),
+    ('towel_warmers', 'ВAVARIA',           '',              'tw.w.b'),
+    ('towel_warmers', 'Genesis Aqua',      '',              'tw.w.g'),
+    ('towel_warmers', 'TRINNITY',          'Водяні',        'tw.w.t'),
+    ('towel_warmers', 'Авангард',          '',              'tw.w.a'),
+    ('towel_warmers', 'ТЕРМА',             '',              'tw.w.x'),
+    ('towel_warmers', 'Блюз',              '',              'tw.w.x'),
+    ('towel_warmers', 'Камелия',           '',              'tw.w.x'),
+    ('towel_warmers', 'Омега',             '',              'tw.w.x'),
+    ('towel_warmers', r'r:HLV_Стандарт',  '',              'tw.w.h'),
+    ('towel_warmers', 'Электрические',     '',              'tw.e'),
+    ('towel_warmers', 'Електричні',        '',              'tw.e'),
+    ('towel_warmers', 'Sunny',             '',              'tw.e.s'),
+    ('towel_warmers', 'Sunny (нержавіюча сталь)','',        'tw.e.s'),
+    ('towel_warmers', 'Sora (нержавіюча сталь)','',         'tw.e.x'),
+    ('towel_warmers', 'Optima (нержавіюча сталь)','',       'tw.e.x'),
+    ('towel_warmers', 'ТЭНы',              '',              'tw.z'),
+    ('towel_warmers', r'r:Комплект прихованого підключення','','tw.k'),
+    ('towel_warmers', 'Під замовлення',    '',              'tw.x'),
+    ('towel_warmers', 'МАРИО (остатки)',   '',              'tw.x'),
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # ЗМІШУВАЧІ (mixers_faucets) mx
+    # ══════════════════════════════════════════════════════════════════════════
+    ('mixers_faucets', 'Душ',              '',              'mx.sh'),
+    ('mixers_faucets', 'Умывальник',       '',              'mx.um'),
+    ('mixers_faucets', 'Умивальник',       '',              'mx.um'),
+    ('mixers_faucets', 'Кухня',            '',              'mx.ki'),
+    ('mixers_faucets', 'Ванна',            '',              'mx.bt'),
+    ('mixers_faucets', 'VOLLE',            '',              'mx.vo'),
+    ('mixers_faucets', 'Q-Tab / Lidz',     '',              'mx.ql'),
+    ('mixers_faucets', 'Globus Lux',       '',              'mx.gl'),
+    ('mixers_faucets', 'Paffoni',          '',              'mx.pa'),
+    ('mixers_faucets', 'Kludi',            '',              'mx.kl'),
+    ('mixers_faucets', 'Franke',           '',              'mx.fr'),
+    ('mixers_faucets', 'Ravak',            '',              'mx.ra'),
+    ('mixers_faucets', 'Grohe',            '',              'mx.gr'),
+    ('mixers_faucets', r'r:Лейки для душа', '',             'mx.sh'),
+    ('mixers_faucets', 'Набор',            '',              'mx.nb'),
+    ('mixers_faucets', 'Наборы',           '',              'mx.nb'),
+    ('mixers_faucets', 'Душ. системы',     '',              'mx.sh'),
+    ('mixers_faucets', 'Термостат/Аксессуары','',           'mx.x'),
+    ('mixers_faucets', 'Комплектующие',    '',              'mx.x'),
+    ('mixers_faucets', 'Прочее',           '',              'mx.x'),
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # СИФОНИ (siphons_fittings) sf
+    # ══════════════════════════════════════════════════════════════════════════
+    ('siphons_fittings', 'Трапы',          '',              'sf.t'),
+    ('siphons_fittings', 'ТРАПЫ/ВОДОСТОЧНЫЕ ЖЕЛОБА','',     'sf.t'),
+    ('siphons_fittings', 'Epelli',         '',              'sf.e'),
+    ('siphons_fittings', 'VOLLE',          '',              'sf.vo'),
+    ('siphons_fittings', 'ASG',            '',              'sf.a'),
+    ('siphons_fittings', r'r:Сифони Koller', '',            'sf.s'),
+    ('siphons_fittings', r'r:Сифоны Geberit','',            'sf.g'),
+    ('siphons_fittings', 'Viega (под заказ)','',            'sf.v'),
+    ('siphons_fittings', r'r:RSB\d',       '',              'sf.s'),
+    ('siphons_fittings', 'СИФОНЫ',         '',              'sf.s'),
+    ('siphons_fittings', 'СИФОНИ ТА АРМАТУРА','Арматура',   'sf.ar'),
+    ('siphons_fittings', r'r:ГОФРОСИФОНИ', '',              'sf.g'),
+    ('siphons_fittings', 'Гибкие и фановые трубы','',       'sf.p'),
+    ('siphons_fittings', 'Водосливы',      '',              'sf.x'),
+    ('siphons_fittings', 'Умывальник',     '',              'sf.um'),
+    ('siphons_fittings', 'Ванна',          '',              'sf.bt'),
+    ('siphons_fittings', 'АРМАТУРА АНИ-ПЛАСТ','',           'sf.ar'),
+    ('siphons_fittings', 'KK Poll (Польша)','Комплектуючі', 'sf.x'),
+    ('siphons_fittings', 'Комплектуючі',   '',              'sf.x'),
+    ('siphons_fittings', 'ПОД ЗАКАЗ',      '',              'sf.x'),
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # САНТЕХНІКА (sanitary_ware) sw
+    # ══════════════════════════════════════════════════════════════════════════
+    ('sanitary_ware', 'Умывальники',       '',              'sw.um'),
+    ('sanitary_ware', 'Умивальник',        '',              'sw.um'),
+    ('sanitary_ware', 'MIRAGGIO умывальники','',            'sw.um.m'),
+    ('sanitary_ware', 'FANCY MARBLE умывальники','',        'sw.um.f'),
+    ('sanitary_ware', 'Liberta',           '',              'sw.li'),
+    ('sanitary_ware', 'LIDZ / QTAB',       '',              'sw.lq'),
+    ('sanitary_ware', 'LIDZ / QTAP',       '',              'sw.lq'),
+    ('sanitary_ware', 'Мойдодыр',          '',              'sw.md'),
+    ('sanitary_ware', 'Унитазы подвесные', '',              'sw.to.h'),
+    ('sanitary_ware', r'r:Поддон душевой', '',              'sw.sh'),
+    ('sanitary_ware', 'Walk IN',           '',              'sw.sh'),
+    ('sanitary_ware', 'SIGMA',             'Під замовлення','sw.x'),
+    ('sanitary_ware', 'FRANKE',            '',              'sw.fr'),
+    ('sanitary_ware', 'GROHE',             '',              'sw.gr'),
+    ('sanitary_ware', 'BESCO',             '',              'sw.be'),
+    ('sanitary_ware', 'Хасека',            '',              'sw.x'),
+    ('sanitary_ware', 'WESTON',            'Калькулятор',   'sw.x'),
+    ('sanitary_ware', r'r:Зеркала Liberta','',              'sw.mi'),
+    ('sanitary_ware', 'Тумба + умывальник','',              'sw.tu'),
+    ('sanitary_ware', r'r:Ванна',          '',              'sw.bt'),
+    ('sanitary_ware', r'r:Підвісний умивальник','',         'sw.um'),
+    ('sanitary_ware', 'Прочее',            '',              'sw.x'),
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # АВТОМАТИКА (automation) at
+    # ══════════════════════════════════════════════════════════════════════════
+    ('automation', 'TERVIX',               '',              'at.tv'),
+    ('automation', 'TERVIX',               'Комплекты',     'at.tv'),
+    ('automation', 'SALUS/ ENGO',          '',              'at.sl'),
+    ('automation', 'AJAX',                 '',              'at.aj'),
+    ('automation', 'MEIBES',               '',              'at.mb'),
+    ('automation', 'COMPUTHERM',           '',              'at.ct'),
+    ('automation', 'DANFOSS',              '',              'at.df'),
+    ('automation', 'REHAU',                '',              'at.rh'),
+    ('automation', 'PROFI THERM',          '',              'at.pt'),
+    ('automation', 'GIDROLOCK',            '',              'at.gl'),
+    ('automation', 'Стабилизаторы',        '',              'at.st'),
+    ('automation', 'ИБП',                  '',              'at.ups'),
+    ('automation', 'Контроллеры/Хабы',     '',              'at.hub'),
+    ('automation', 'Для систем отопления', '',              'at.ht'),
+    ('automation', 'Водяна тепла підлога', 'Остатки',       'at.uf'),
+    ('automation', r'r:Вентилятор',        '',              'at.vn'),
+    ('automation', r'r:Програматор',       '',              'at.pg'),
+    ('automation', r'r:Датчик контролю',   '',              'at.sc'),
+    ('automation', r'r:MASTINO',           '',              'at.sc'),
+
+    # ─── heating залишки ──────────────────────────────────────────────────────
+    ('heating', 'TERVIX',                  '',              'ht.a.t'),
+    ('heating', 'ICMA (все)',              '',              'ht.v.i'),
+    ('heating', r'r:Клапани запорные RLV', '',              'ht.v.x'),
+    ('heating', r'r:Термоголовк',          '',              'ht.v.x'),
+    ('heating', r'r:Змішувальний',         '',              'ht.v.t'),
+    ('heating', r'r:Сепаратор',            '',              'ht.v.x'),
+    ('heating', r'r:Регулятор тиску',      '',              'ht.v.x'),
+    ('heating', r'r:Вентиль',              '',              'ht.v.x'),
+
+    # ─── radiators залишки ────────────────────────────────────────────────────
+    ('radiators_radiatorsvalve', '20 тип (п/з)',  '',       'rd.s.20'),
+    ('radiators_radiatorsvalve', 'Арматура нижнего подключения стали','','rd.v'),
+    ('radiators_radiatorsvalve', r'r:\*Rens',     '',       'rd.s'),
+    ('radiators_radiatorsvalve', r'r:Rens/TERRA', '',       'rd.s'),
+    ('radiators_radiatorsvalve', r'r:Кронштейн',  '',       'rd.f'),
+    ('radiators_radiatorsvalve', r'r:Вентиль.*радіат','',   'rd.v'),
+
+    # ─── boilers залишки ──────────────────────────────────────────────────────
+    ('boilers', r'r:Твердопаливн',         '',              'bl.s'),
+    ('boilers', 'Житомир',                 '',              'bl.s'),
+    ('boilers', 'BIASI',                   '',              'bl.g.x'),
+    ('boilers', r'r:Газовий котел',        '',              'bl.g'),
+    ('boilers', r'r:Електричний котел',    '',              'bl.e'),
+
+    # ─── water_heaters залишки ────────────────────────────────────────────────
+    ('water_heaters', r'r:NovaTeс',        '',              'wh.c'),
+    ('water_heaters', r'r:Thermo Alliance','',              'wh.e.x'),
+    ('water_heaters', 'прочее',            '',              'wh.x'),
+
+    # ─── pumps залишки ────────────────────────────────────────────────────────
+    ('pumps', r'r:JET-\d',                 '',              'pm.x'),
+    ('pumps', r'r:З/П',                    '',              'pm.x'),
+    ('pumps', r'r:Мембран',                '',              'pm.g'),
+
+    # ─── underfloor_heating залишки ───────────────────────────────────────────
+    ('underfloor_heating', r'r:SF\d',      '',              'uf.x'),
+    ('underfloor_heating', r'r:Коллектора AW','',           'uf.c'),
+    ('underfloor_heating', r'r:Кабель анти','',             'uf.de'),
+    ('underfloor_heating', r'r:Терморегулят','',            'uf.d'),
+    ('underfloor_heating', r'r:Розподільч',  '',            'uf.c'),
+
+    # ─── filtration залишки ───────────────────────────────────────────────────
+    ('filtration', r'r:З/ч для магістр',   '',              'fl.x'),
+    ('filtration', r'r:Eco Filters',       '',              'fl.x'),
+    ('filtration', r'r:Фільтр магістр',    '',              'fl.m'),
+    ('filtration', r'r:Canature',          '',              'fl.m'),
+
+    # ─── hoses залишки ────────────────────────────────────────────────────────
+    ('hoses', r'r:Шланг рез',              '',              'hs.w'),
+    ('hoses', 'ВОДА Д/СМЕСИТЕЛЯ',         '',              'hs.w'),
+
+    # ─── towel_warmers залишки ────────────────────────────────────────────────
+    ('towel_warmers', r'r:Sirius',         '',              'tw.e.x'),
+    ('towel_warmers', r'r:Ava \(',         '',              'tw.e.x'),
+    ('towel_warmers', 'Водяні',            '',              'tw.w.x'),
+    ('towel_warmers', r'r:ZEHNDER',        '',              'tw.w.z'),
+
+    # ─── mixers залишки ───────────────────────────────────────────────────────
+    ('mixers_faucets', 'Ванна коротка',    '',              'mx.bt'),
+    ('mixers_faucets', 'Ванна длинная',    '',              'mx.bt'),
+    ('mixers_faucets', r'r:HANSGROHE',     '',              'mx.hg'),
+    ('mixers_faucets', r'r:RAVAK',         '',              'mx.ra'),
+    ('mixers_faucets', r'r:Лійка',         '',              'mx.sh'),
+
+    # ─── siphons залишки ──────────────────────────────────────────────────────
+    ('siphons_fittings', r'r:Сифоны Koller', '',            'sf.s'),
+    ('siphons_fittings', r'r:ГОФРОСИФОНИ',   '',            'sf.g'),
+    ('siphons_fittings', r'r:ГОФРОСИФОНЫ',   '',            'sf.g'),
+    ('siphons_fittings', 'ТРАПЫ АНИПЛАСТ',   '',            'sf.t'),
+    ('siphons_fittings', r'r:Донний клапан',  '',           'sf.x'),
+
+    # ─── sanitary_ware залишки ────────────────────────────────────────────────
+    ('sanitary_ware', 'Lidz',              '',              'sw.lq'),
+    ('sanitary_ware', r'r:RAVAK',          '',              'sw.ra'),
+    ('sanitary_ware', r'r:Двер',           '',              'sw.sh'),
+    ('sanitary_ware', r'r:Душов',          '',              'sw.sh'),
+    ('sanitary_ware', r'r:Піддон',         '',              'sw.sh'),
+    ('sanitary_ware', r'r:Унітаз',         '',              'sw.to'),
+    ('sanitary_ware', r'r:Інсталяц',       '',              'sw.to'),
+    ('sanitary_ware', r'r:Зеркало',        '',              'sw.mi'),
+    ('sanitary_ware', r'r:Дзеркало',       '',              'sw.mi'),
+    ('sanitary_ware', r'r:Мийка',          '',              'sw.ki'),
+    ('sanitary_ware', r'r:Тумба',          '',              'sw.tu'),
+    ('sanitary_ware', r'r:QTAP',           '',              'sw.lq'),
+    ('sanitary_ware', r'r:Q-TAB',          '',              'sw.lq'),
+
+    # ─── automation залишки ───────────────────────────────────────────────────
+    ('automation', 'TERMOJET',             '',              'at.ht'),
+    ('automation', 'Для твердопаливних котлів','',           'at.ht'),
+    ('automation', r'r:НЕПТУН',            '',              'at.sc'),
+    ('automation', r'r:Euroster',          '',              'at.pg'),
+
+    # ─── adapters_reducers залишки ────────────────────────────────────────────
+    ('adapters_reducers', 'ASG',           '',              'ar.n.a'),
+    ('adapters_reducers', 'Pattaroni',     '',              'ar.c.p'),
+    ('adapters_reducers', 'Під заказ',     '',              'ar.g'),
+
+    # ─── boilers додатково ───────────────────────────────────────────────────
+    ('boilers', r'r:Теплоакумулят',        '',              'bl.t'),
+    ('boilers', r'r:Теплоаккумулят',       '',              'bl.t'),
+    ('boilers', 'Kospel',                  '',              'bl.e'),
+    ('boilers', 'Protherm',                '',              'bl.g.x'),
+    ('boilers', r'r:ARISTON',              '',              'bl.g.a'),
+    ('boilers', r'r:Vaillant',             '',              'bl.g.x'),
+    ('boilers', r'r:Котел',               '',               'bl.g'),
+    ('boilers', r'r:Дизельний',            '',              'bl.d'),
+    ('boilers', r'r:Пелетний',             '',              'bl.p'),
+
+    # ─── pumps додатково ─────────────────────────────────────────────────────
+    ('pumps', 'Насосы',                    '',              'pm'),
+    ('pumps', 'Водолей',                   '',              'pm.b'),
+    ('pumps', r'r:Під замовлення',         '',              'pm.x'),
+    ('pumps', r'r:Aquasystem',             '',              'pm.g'),
+    ('pumps', r'r:Hidros',                 '',              'pm.c'),
+    ('pumps', r'r:Lider',                  '',              'pm.c'),
+    ('pumps', r'r:Grundfos',               '',              'pm.c'),
+    ('pumps', r'r:Tatra',                  '',              'pm.c'),
+
+    # ─── underfloor_heating додатково ────────────────────────────────────────
+    ('underfloor_heating', 'Гофра',        '',              'uf.x'),
+    ('underfloor_heating', r'r:Nexans',    '',              'uf.de'),
+    ('underfloor_heating', r'r:TXLP',      '',              'uf.de'),
+    ('underfloor_heating', r'r:Коллектора ICMA','',         'uf.c'),
+    ('underfloor_heating', r'r:Нагрівальний мат','',        'uf.m'),
+    ('underfloor_heating', r'r:Кабель обігрів','',          'uf.de'),
+
+    # ─── radiators додатково ─────────────────────────────────────────────────
+    ('radiators_radiatorsvalve', r'r:VARIO TERM','',        'rd.s'),
+    ('radiators_radiatorsvalve', 'Арматура для подключения','','rd.v'),
+    ('radiators_radiatorsvalve', r'r:Радіатор сталевий',   '', 'rd.s'),
+    ('radiators_radiatorsvalve', r'r:HIDROS',    '',        'rd.b'),
+    ('radiators_radiatorsvalve', r'r:MIRADO',    '',        'rd.b'),
+    ('radiators_radiatorsvalve', r'r:біметалічний','',      'rd.bi'),
+    ('radiators_radiatorsvalve', r'r:алюмінієвий','',       'rd.a'),
+
+    # ─── filtration додатково ────────────────────────────────────────────────
+    ('filtration', r'r:ATLAS',             '',              'fl.x'),
+    ('filtration', r'r:Клипса',            '',              'fl.x'),
+    ('filtration', r'r:Колби ВВ',          '',              'fl.m'),
+    ('filtration', r'r:Дозуючий насос',    '',              'fl.x'),
+
+    # ─── towel_warmers додатково ─────────────────────────────────────────────
+    ('towel_warmers', r'r:HLV.*(нерж|вода|дуга|камел)', '', 'tw.w.h'),
+    ('towel_warmers', r'r:Ava\b',          '',              'tw.e.x'),
+
+    # ─── mixers додатково ────────────────────────────────────────────────────
+    ('mixers_faucets', 'Биде',             '',              'mx.bi'),
+    ('mixers_faucets', r'r:IMPRESE',       '',              'mx.im'),
+    ('mixers_faucets', r'r:Набір.*VENTA',  '',              'mx.sh'),
+    ('mixers_faucets', r'r:VENTA',         '',              'mx.sh'),
+
+    # ─── siphons додатково ───────────────────────────────────────────────────
+    ('siphons_fittings', 'Мойка',          '',              'sf.ki'),
+    ('siphons_fittings', r'r:SoloPlast',   '',              'sf.x'),
+    ('siphons_fittings', r'r:SantehPlast', '',              'sf.x'),
+    ('siphons_fittings', r'r:КУХНЯ АНИ',   '',             'sf.ki'),
+
+    # ─── sanitary_ware додатково ─────────────────────────────────────────────
+    ('sanitary_ware', r'r:Измельчитель',   '',              'sw.x'),
+    ('sanitary_ware', r'r:Аквастрім',      '',              'sw.sh'),
+    ('sanitary_ware', r'r:Fancy Marble',   '',              'sw.um.f'),
+    ('sanitary_ware', r'r:SIGMA',          '',              'sw.x'),
+    ('sanitary_ware', r'r:Кабіна',         '',              'sw.sh'),
+    ('sanitary_ware', r'r:Поддон',         '',              'sw.sh'),
+    ('sanitary_ware', r'r:Зливна',         '',              'sw.to'),
+    ('sanitary_ware', r'r:Інсталяційн',    '',              'sw.to'),
+    ('sanitary_ware', r'r:Бачок',          '',              'sw.to'),
+    ('sanitary_ware', r'r:GROHE',          '',              'sw.gr'),
+    ('sanitary_ware', r'r:WESTON',         '',              'sw.x'),
+    ('sanitary_ware', r'r:Меблі',          '',              'sw.tu'),
+    ('sanitary_ware', r'r:Хасека',         '',              'sw.x'),
 
 ]
 
