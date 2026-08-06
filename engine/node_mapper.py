@@ -91,8 +91,7 @@ _RULES: list[tuple] = [
     # Внутрішня — фітинги
     ('sewage', 'Фитинг',                    'ASG',           'kn.u.f.a'),
     ('sewage', 'Фитинг',                    '',              'kn.u.f'),    # фітинги загально
-    ('sewage', 'ASG',                       'Фитинг',        'kn.u.f.a'),  # ASG фітинги
-    ('sewage', 'ASG',                       '',              'kn'),         # ASG загальний
+    ('sewage', 'ASG',                       '',              'kn.u.f.a'),  # ASG фітинги
     ('sewage', 'OSTENDORF',                 '',              'kn.u.f.o'),
     ('sewage', 'VALROM',                    '',              'kn.u.f.v'),
     ('sewage', 'ИНСТАЛПЛАСТ',              '',              'kn.u.f.i'),
@@ -100,15 +99,22 @@ _RULES: list[tuple] = [
     ('sewage', 'Прочее',                    '',              'kn.u.f.x'),
     ('sewage', 'под заказ',                 '',              'kn.u.f.x'),
 
+    # Зовнішня — VALROM (G='*VALROM' в xlsx)
+    ('sewage', '*VALROM',                   '',              'kn.e.f.v'),
+
+    # Внутрішня — Эко (G='Эко' в xlsx)
+    ('sewage', 'Эко',                       '',              'kn.u.f.x'),
+
     # Інше (ємності, лотки)
     ('sewage', 'Гофра в бухтах',            '',              'kn.o.g'),
-    ('sewage', r'Ёмкост',                   '',              'kn.o.t'),
+    ('sewage', r'r:Ёмкост',                 '',              'kn.o.t'),
+    ('sewage', 'Ёмкости (под заказ)',        '',              'kn.o.t'),
     ('sewage', 'Сепараторы и дождеприемники','',             'kn.o.t'),
     ('sewage', 'ERA ПВХ',                   '',              'kn.o.e'),
     ('sewage', 'Канализация ПРОЧЕЕ',        '',              'kn.o.c'),
-    ('sewage', 'Набор подставок',           '',              'kn.o'),
+    ('sewage', r'r:Набор подставок',        '',              'kn.o'),
     ('sewage', 'Фитинг для соединения',     '',              'kn.o'),
-    ('sewage', r'ЛЮК',                      '',              'kn.o.t'),
+    ('sewage', r'r:ЛЮК',                    '',              'kn.o.t'),
     ('sewage', 'КАНАЛІЗАЦІЯ',               '',              'kn.u'),      # fallback внутрішня
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -116,9 +122,10 @@ _RULES: list[tuple] = [
     # Ієрархія: ВИРОБНИК → ТИП ТОВАРУ
     # ══════════════════════════════════════════════════════════════════════════
 
-    # ASG
+    # ASG — реальні G в xlsx: G='ASG', SG='ASG труба' або G='ASG фитинг'
+    ('plastic_ppr', 'ASG',                  'ASG труба',     'pp.a.p'),
     ('plastic_ppr', 'ПЛАСТИК',              'ASG труба',     'pp.a.p'),
-    ('plastic_ppr', 'ПЛАСТИК',              'ASG',           'pp.a.f'),  # SG ASG = зразки
+    ('plastic_ppr', 'ПЛАСТИК',              'ASG',           'pp.a.f'),
     ('plastic_ppr', 'ASG фитинг',           '',              'pp.a.f'),
     ('plastic_ppr', 'WHITE',                '',              'pp.a.w'),
 
@@ -128,6 +135,7 @@ _RULES: list[tuple] = [
 
     # OVI / EVCI
     ('plastic_ppr', 'OVI/EVCI Pipe',        '',              'pp.o.p'),
+    ('plastic_ppr', 'OVI PREMIUM PIPE',     '',              'pp.o.x'),  # реальна G в xlsx
     ('plastic_ppr', 'OVI PREMIUM',          'OVI PREMIUM PIPE', 'pp.o.x'),
     ('plastic_ppr', 'OVI PREMIUM',          '',              'pp.o.x'),
     ('plastic_ppr', 'EVCI',                 '',              'pp.o.p'),
@@ -143,33 +151,37 @@ _RULES: list[tuple] = [
     ('plastic_ppr', 'KAN',                  'Труба KAN',     'pp.k.p'),
     ('plastic_ppr', 'Фитинг KAN',           '',              'pp.k.f'),
 
-    # PLM
+    # PLM — G='PLM', SG='Зразки' або SG='' (фітинг), G='PLM Фитинг'
     ('plastic_ppr', 'PLM',                  'PLM Труба',     'pp.p.p'),
+    ('plastic_ppr', 'PLM',                  'Зразки',        'pp.p.p'),
     ('plastic_ppr', 'PLM Фитинг',           '',              'pp.p.f'),
 
-    # RAFTEC PPR
+    # RAFTEC PPR — індивідуальні товари як G (одиночні зразки без артикулу)
     ('plastic_ppr', 'RAFTEC',               'RAFTEC Труба',  'pp.r.p'),
     ('plastic_ppr', 'RAFTEC Фитинг',        '',              'pp.r.f'),
-    ('plastic_ppr', 'RAFTEC',               '',              'pp.r'),   # загальна RAFTEC група
-    # Індивідуальні raftec группи (коліна, муфти як окремі G)
-    ('plastic_ppr', r'Коліно PPR',          '',              'pp.r.f'),
-    ('plastic_ppr', r'Муфта PPR',           '',              'pp.r.f'),
-    ('plastic_ppr', r'Трійник.*PPR',        '',              'pp.r.f'),
-    ('plastic_ppr', r'Кран.*PPR',           '',              'pp.r.f'),
+    ('plastic_ppr', r'r:Коліно PPR',        '',              'pp.r.f'),
+    ('plastic_ppr', r'r:Муфта PPR',         '',              'pp.r.f'),
+    ('plastic_ppr', r'r:Трійник.*PPR',      '',              'pp.r.f'),
+    ('plastic_ppr', r'r:Кран.*PPR',         '',              'pp.r.f'),
+    ('plastic_ppr', r'r:Муфта PPR МРЗ',     '',              'pp.r.f'),
+    ('plastic_ppr', r'r:Обрезки трубы RAFTEC', '',           'pp.r.p'),
+    ('plastic_ppr', r'r:Комплект зразків.*PPR', '',          'pp.r.p'),
 
-    # ECO PPR (загальна серія)
+    # ECO PPR — G='ECO PPR', або G='Американка PPR...' (одиночний товар як G)
     ('plastic_ppr', 'ECO PPR',              '',              'pp.c.f'),
     ('plastic_ppr', 'Фитинг PPR',           '',              'pp.c.f'),
-    ('plastic_ppr', r'Американка PPR',      '',              'pp.c.f'),
+    ('plastic_ppr', r'r:Американка PPR',    '',              'pp.c.f'),
 
     # Інші фітинги / аксесуари
     ('plastic_ppr', 'ПРОЧЕЕ',               'Blue Ocean',    'pp.b'),
     ('plastic_ppr', 'ПРОЧЕЕ',               'BLUE OCEAN 2 (фитинг)', 'pp.b'),
     ('plastic_ppr', 'Разное',               '',              'pp.b'),
     ('plastic_ppr', 'Образцы',              '',              'pp.b'),
+    ('plastic_ppr', 'ЗРАЗКИ',              '',               'pp.b'),
+    ('plastic_ppr', 'ЗРАЗКИ!',             '',               'pp.b'),
     ('plastic_ppr', 'Аксесcуары',           '',              'pp.x'),
-    ('plastic_ppr', r'Насадка',             '',              'pp.x'),
-    ('plastic_ppr', r'Паяльник',            '',              'pp.x'),
+    ('plastic_ppr', r'r:Насадка',           '',              'pp.x'),
+    ('plastic_ppr', r'r:Паяльник',          '',              'pp.x'),
 
     # ПНТ/ПНД
     ('plastic_ppr', 'ПНТ АКВА (Технічна)',  '',              'pp.n.a'),
@@ -194,9 +206,22 @@ _RULES: list[tuple] = [
     ('plastic_ppr', 'Коннекторы к шлангам', '',              'pp.w.c'),
     ('plastic_ppr', 'Полив',                '',              'pp.w'),
 
-    # Службова номенклатура
+    # ПНТ труби — G='Труба ПНТ ф...' або G='ПНТ трубы' SG='ПНТ AКВА'
+    ('plastic_ppr', r'r:^Труба ПНТ ф',     '',              'pp.n.a'),
+    ('plastic_ppr', 'ПНТ трубы',            'ПНТ AКВА (Технічна)', 'pp.n.a'),
+    ('plastic_ppr', r'r:Заглушка стикова.*FOX', '',         'pp.n.f'),
+
+    # Фітинги загальні / шланги / адаптори — у fallback pp.b
+    ('plastic_ppr', 'Фітинг',              '',               'pp.b'),
+    ('plastic_ppr', 'Фитинг для шланга',   '',               'pp.b'),
+    ('plastic_ppr', 'Образцы Reiger',      '',               'pp.b'),
+    ('plastic_ppr', 'Фланцевий адаптор',   '',               'pp.b'),  # не PPR — misc
+    ('plastic_ppr', r'r:^Шланг арм',       '',               'pp.w.s'),  # шланги
+    ('plastic_ppr', 'AVCI',                '',               'pp.w.s'),
+
+    # Служебна
     ('plastic_ppr', 'Служебная номенклатура','',             'pp.b'),
-    ('plastic_ppr', r'Товар в ассортименте','',              'pp.b'),
+    ('plastic_ppr', r'r:Товар в ассортименте','',            'pp.b'),
 
     # ══════════════════════════════════════════════════════════════════════════
     # PUSH/PEX (push_systems) ps
@@ -205,7 +230,7 @@ _RULES: list[tuple] = [
 
     ('push_systems', 'СИСТЕМЫ  PUSH',       'Aquapex',       'ps.a.g'),
     ('push_systems', 'FADO',                'Натяжной фитинг','ps.f.g'),
-    ('push_systems', 'FADO',                '',              'ps.f.p'),  # труба FADO
+    ('push_systems', 'FADO',                '',              'ps.f.p'),
     ('push_systems', 'Труба',               'КУСКИ',         'ps.e.p'),  # REHAU куски
     ('push_systems', 'Труба',               '',              'ps.f.p'),
     ('push_systems', 'General Fittings',    '',              'ps.g.g'),
@@ -213,15 +238,21 @@ _RULES: list[tuple] = [
     ('push_systems', 'KAN',                 'KAN-Therm PUSH (под заказ)', 'ps.k.p'),
     ('push_systems', 'KAN-Therm ultraLINE (под заказ)','',  'ps.k.u'),
     ('push_systems', 'KAN',                 '',              'ps.k'),
+    # RAFTEC PPSU — G='RAFTEC PPSU PUSH' (напряму в xlsx)
+    ('push_systems', 'RAFTEC PPSU PUSH',    '',              'ps.r.s'),
     ('push_systems', 'RAFTEC',              'RAFTEC PPSU PUSH','ps.r.s'),
     ('push_systems', 'RAFTEC PUSH',         '',              'ps.r.g'),
-    ('push_systems', 'RAFTEC',              '',              'ps.r.g'),  # загальні гільзи RAFTEC
+    ('push_systems', 'RAFTEC',              '',              'ps.r.g'),
     ('push_systems', 'RAFTEC запчасти к инструменту','Механичекий инструмент','ps.r.i'),
     ('push_systems', 'RAFTEC запчасти к инструменту','',    'ps.r.i'),
     ('push_systems', 'Электрический инструмент','',          'ps.r.i'),
     ('push_systems', 'RAFTEC Інструмент PUSH','',            'ps.r.i'),
-    ('push_systems', r'RAFTEC Труба',        '',              'ps.r.p'),
+    ('push_systems', r'r:RAFTEC Труба',     '',              'ps.r.p'),
     ('push_systems', 'Зразки труба',        '',              'ps.r.p'),
+    # REHAU — G='RAUTITAN', G='RAUBASIC', G='КУСКИ' (самостійні groups в xlsx)
+    ('push_systems', 'RAUTITAN',            '',              'ps.e.r'),
+    ('push_systems', 'RAUBASIC',            '',              'ps.e.b'),
+    ('push_systems', 'КУСКИ',               '',              'ps.e.p'),
     ('push_systems', 'REHAU',               'RAUBASIC',      'ps.e.b'),
     ('push_systems', 'REHAU',               'RAUTITAN',      'ps.e.r'),
     ('push_systems', 'RAUPEX',              'RAUTITAN',      'ps.e.r'),
@@ -234,9 +265,10 @@ _RULES: list[tuple] = [
     ('push_systems', 'Прочее',              'Предизолированные трубы AUSTROISOL', 'ps.z.a'),
     ('push_systems', 'Прочее',              'Труба',         'ps.z.a'),
     ('push_systems', 'Фитинг AUSTROISOL',   '',              'ps.z.a'),
-    ('push_systems', r'Предізольовані трубу', '',            'ps.z.t'),
-    ('push_systems', r'ЗРАЗОК! Євроконус',  '',              'ps.z.k'),
-    ('push_systems', r'Коліно настінне',    '',              'ps.g.f'),
+    ('push_systems', r'r:Предізольовані трубу', '',          'ps.z.t'),
+    ('push_systems', r'r:ЗРАЗОК! Євроконус',  '',            'ps.z.k'),
+    ('push_systems', r'r:Коліно настінне',  '',              'ps.g.f'),
+    ('push_systems', r'r:Фитинг \(натяжная гильза\)', '',   'ps.f.g'),
     ('push_systems', 'Прочее',              '',              'ps.z'),
     ('push_systems', 'СИСТЕМЫ  PUSH',       '',              'ps'),
 
@@ -287,157 +319,121 @@ _RULES: list[tuple] = [
 
     # ══════════════════════════════════════════════════════════════════════════
     # ЗАПІРНА АРМАТУРА (shutoff_valves) sv
-    # Ієрархія: ТИП КРАНУ → ВИРОБНИК → СЕРІЯ
+    # Реальна структура xlsx: G = бренд або тип, SG = серія або бренд
     # ══════════════════════════════════════════════════════════════════════════
 
-    # Американки
-    ('shutoff_valves', 'ЗАПІРНА АРМАТУРА',  'ASG',           'sv.a.a'),
-    ('shutoff_valves', 'ЗАПІРНА АРМАТУРА',  'Американки(сгоны)', 'sv.a'),
-    ('shutoff_valves', 'FADO ( под заказ)', '',              'sv.a.f'),
-    ('shutoff_valves', 'Giacomini',         '',              'sv.a.g'),
-    ('shutoff_valves', 'HLV',               '',              'sv.a.h'),
-    ('shutoff_valves', 'LEXLINE',           '',              'sv.a.l'),
-    ('shutoff_valves', 'RAFTEC',            '',              'sv.a.r'),
+    # ─── Крани з американкою ────────────────────────────────────────────────
+    # G є бренд серії; контекст визначається по серії або попередній групі
     ('shutoff_valves', 'ЭКО американки',    '',              'sv.a.e'),
-    ('shutoff_valves', r'Розбірне з.єднання', '',            'sv.a.e'),
+    ('shutoff_valves', 'ЭКО(PN20)',         '',              'sv.k.e'),  # ЕКО кран з американкою
+    ('shutoff_valves', 'ASG',               'ASG (Червоний)','sv.k.a'),  # G=ASG, SG=ASG (Червоний)
+    ('shutoff_valves', 'ASG + (Сірий)',     '',              'sv.k.a'),  # G=ASG + (Сірий)
+    ('shutoff_valves', 'ASG+ (Cірий)',      '',              'sv.k.a'),  # G=ASG+ (Cірий) — інша орфографія
+    ('shutoff_valves', 'ARIZONA',           '',              'sv.k.b'),
+    ('shutoff_valves', 'ARIZONA (PN40)',    '',              'sv.m.b'),  # Bugatti ARIZONA PN40 — кульовий
+    ('shutoff_valves', 'OREGON',            '',              'sv.k.b'),
+    ('shutoff_valves', 'OREGON (PN64)',     '',              'sv.m.b'),  # Bugatti OREGON PN64 — кульовий
+    ('shutoff_valves', 'STRONG',            '',              'sv.k.p'),  # PLM STRONG — кран з американкою
+    ('shutoff_valves', 'ВASE',              '',              'sv.k.p'),  # PLM BASE — кран з американкою
+    ('shutoff_valves', 'RAFTEC GOLD',       '',              'sv.k.r.g'),
+    ('shutoff_valves', 'RAFTEC WHITE',      '',              'sv.k.r.w'),
+    ('shutoff_valves', 'RАFTEC BLACK',      '',              'sv.k.r.b'),  # кирилична А
+    ('shutoff_valves', 'RAFTEC BLACK',      '',              'sv.k.r.b'),  # латинська A
+    ('shutoff_valves', 'RАFTEC RED',        '',              'sv.k.r.d'),  # кирилична А
+    ('shutoff_valves', 'RАFTEC  BLACK',     '',              'sv.k.r.b'),  # подвійний пробіл
 
-    # Засувки/батерфляї
-    ('shutoff_valves', 'Задвижки, батерфляй, вентиля','RAFTEC','sv.b.r'),
-    ('shutoff_valves', 'Задвижки, батерфляй, вентиля','',   'sv.b'),
-    ('shutoff_valves', 'Батерфляй',         '',              'sv.b.b'),
-    ('shutoff_valves', 'Вентиль чугун',     '',              'sv.b.v'),
-    ('shutoff_valves', 'Задвижки латунь',   '',              'sv.b.z'),
-    ('shutoff_valves', 'Задвижки чугунные', '',              'sv.b.z'),
-    ('shutoff_valves', 'Краны фланцевые (под заказ)','Краны Breeze (Под заказ)','sv.fl.b'),
-    ('shutoff_valves', 'Краны фланцевые (под заказ)','',    'sv.fl'),
+    # ─── Фланцеві / під замовлення ──────────────────────────────────────────
+    ('shutoff_valves', 'Краны фланцевые (под заказ)', 'Краны Breeze (Под заказ)', 'sv.fl.b'),
+    ('shutoff_valves', 'Краны фланцевые (под заказ)', '',    'sv.fl'),
     ('shutoff_valves', 'Под заказ',         '',              'sv.fl'),
 
-    # Зворотні клапани
-    ('shutoff_valves', 'Клапана обр.хода воды','ASG',        'sv.z.a'),
+    # ─── Засувки / батерфляї / вентилі ──────────────────────────────────────
+    ('shutoff_valves', 'Батерфляй',         '',              'sv.b.b'),
+    ('shutoff_valves', 'Вентиль чугун',     '',              'sv.b.v'),
+    ('shutoff_valves', 'Задвижки чугунные', '',              'sv.b.z'),
+    ('shutoff_valves', 'Задвижки латунь',   '',              'sv.b.z'),
+
+    # ─── Зворотні клапани ───────────────────────────────────────────────────
     ('shutoff_valves', 'Bugatti',           '',              'sv.z.b'),
-    ('shutoff_valves', 'PLM',               '',              'sv.z.p'),
-    ('shutoff_valves', r'Клапана обр.хода воды','',          'sv.z'),
-    ('shutoff_valves', r'Клапан пелюстков', '',              'sv.z.x'),
-    ('shutoff_valves', r'Лепестковый',      '',              'sv.z.x'),
-    ('shutoff_valves', r'Клапана межфланц', '',              'sv.z.x'),
-    ('shutoff_valves', 'Сетка клапана',     '',              'sv.z'),
     ('shutoff_valves', 'Акционные клапана', '',              'sv.z.x'),
-    ('shutoff_valves', r'ЭКО клапана',      '',              'sv.z.e'),
+    ('shutoff_valves', 'Клапана межфланц (под заказ)', '',   'sv.z.x'),
+    ('shutoff_valves', 'Лепестковый обратный клапан (хлопушка)', '', 'sv.z.x'),
+    ('shutoff_valves', r'r:Клапан пелюстков',  '',           'sv.z.x'),  # regex: Клапан пелюстков*
+    ('shutoff_valves', 'Сетка клапана',     '',              'sv.z'),
+    ('shutoff_valves', 'ЭКО клапана',       '',              'sv.z.e'),
+    # PLM зворотній — нижче конфліктує з кульовим, тому точна SG
+    # (PLM без SG = кульовий, тому зворотній не додаємо без SG)
 
-    # Поливальні
-    ('shutoff_valves', 'Кран поливочный',   'ASG',           'sv.po.a'),
-    ('shutoff_valves', 'Кран поливочный',   'Meibes',        'sv.po.m'),
-    ('shutoff_valves', 'Кран поливочный',   'PLM',           'sv.po.p'),
-    ('shutoff_valves', 'Кран поливочный',   'RAFTEC',        'sv.po.r'),
-    ('shutoff_valves', 'Кран поливочный',   '',              'sv.po'),
+    # ─── Поливальні ─────────────────────────────────────────────────────────
+    ('shutoff_valves', 'Meibes',            '',              'sv.po.m'),
 
-    # Крани з американкою
-    ('shutoff_valves', 'Краны с американкой','ASG',          'sv.k.a'),
-    ('shutoff_valves', 'Краны с американкой','ASG (Червоний)','sv.k.a'),
-    ('shutoff_valves', 'Краны с американкой','ASG + (Сірий)','sv.k.a'),
-    ('shutoff_valves', 'ASG + (Сірий)',     '',              'sv.k.a'),
-    ('shutoff_valves', 'Краны с американкой','ARIZONA',      'sv.k.b'),
-    ('shutoff_valves', 'Краны с американкой','OREGON',       'sv.k.b'),
-    ('shutoff_valves', 'Краны с американкой','Giacomini',    'sv.k.g'),
-    ('shutoff_valves', 'OREGON',            '',              'sv.k.b'),
-    ('shutoff_valves', 'Краны с американкой','PLM',          'sv.k.p'),
-    ('shutoff_valves', 'PLM',               'STRONG',        'sv.k.p'),
-    ('shutoff_valves', 'PLM',               'ВASE',          'sv.k.p'),
-    ('shutoff_valves', 'Краны с американкой','RAFTEC GOLD',  'sv.k.r.g'),
-    ('shutoff_valves', 'RAFTEC WHITE',       '',              'sv.k.r.w'),
-    ('shutoff_valves', 'RАFTEC BLACK',       '',              'sv.k.r.b'),
-    ('shutoff_valves', 'RАFTEC RED',         '',              'sv.k.r.d'),
-    ('shutoff_valves', 'Краны с американкой','',             'sv.k'),
-    ('shutoff_valves', 'ЭКО(PN20)',         '',              'sv.k.e'),
-
-    # Крани з НГ
-    ('shutoff_valves', 'Краны с НГ',        'ASG',           'sv.n.a'),
-    ('shutoff_valves', 'Краны с НГ',        'ASG (Червоний)','sv.n.a'),
-    ('shutoff_valves', 'Краны с НГ',        'ASG+ (Cірий)', 'sv.n.a'),
-    ('shutoff_valves', 'Краны с НГ',        'RAFTEC BLACK',  'sv.n.r'),
-    ('shutoff_valves', 'Краны с НГ',        'RAFTEC GOLD',   'sv.n.r'),
-    ('shutoff_valves', 'Краны с НГ',        '',              'sv.n'),
-
-    # Дренаж
-    ('shutoff_valves', 'Краны с дренажем',  '',              'sv.d'),
-
-    # Триходові
-    ('shutoff_valves', 'Краны трехходовые', '',              'sv.3'),
-
-    # Кульові — ВОДА
-    ('shutoff_valves', 'Краны шаровые',     'ASG',           'sv.m.a'),
-    ('shutoff_valves', 'Краны шаровые',     'ASG (Червоний)','sv.m.a'),
-    ('shutoff_valves', 'Краны шаровые',     'ASG + (Сірий)','sv.m.a'),
-    ('shutoff_valves', 'ASG + (Сірий)',      '',              'sv.m.a'),  # окрема G
-    ('shutoff_valves', 'BUGATTI (Italy)',    'ARIZONA (PN40)','sv.m.b'),
-    ('shutoff_valves', 'BUGATTI (Italy)',    'NEW JERSEY (PN50)','sv.m.b'),
-    ('shutoff_valves', 'BUGATTI (Italy)',    'OREGON (PN64)', 'sv.m.b'),
-    ('shutoff_valves', 'BUGATTI (Italy)',    '',              'sv.m.b'),
-    ('shutoff_valves', 'FADO',              'CLASSIC',       'sv.m.f'),
-    ('shutoff_valves', 'FADO',              'NEW',           'sv.m.f'),
+    # ─── Кульові — ВОДА ─────────────────────────────────────────────────────
+    # Спочатку специфічні бренди+серії, потім загальні
+    ('shutoff_valves', 'ASG',               '',              'sv.m.a'),   # G=ASG (без SG = кульовий вода)
+    ('shutoff_valves', 'BUGATTI',           '',              'sv.m.b'),   # G=BUGATTI
+    ('shutoff_valves', 'CLASSIC',           '',              'sv.m.f'),   # FADO CLASSIC
+    ('shutoff_valves', 'NEW',               '',              'sv.m.f'),   # FADO NEW
+    ('shutoff_valves', 'NEW JERSEY (PN50)', '',              'sv.m.b'),   # Bugatti
+    ('shutoff_valves', 'DADO',              '',              'sv.m.g'),   # Giacomini DADO
     ('shutoff_valves', 'FADO',              '',              'sv.m.f'),
-    ('shutoff_valves', 'GIACOMINI',         'DADO',          'sv.m.g'),
-    ('shutoff_valves', 'GIACOMINI',         '',              'sv.m.g'),
+    ('shutoff_valves', 'Giacomini',         '',              'sv.m.g'),
     ('shutoff_valves', 'HLV (PN40)',        '',              'sv.m.h'),
-    ('shutoff_valves', 'PLM',               'STRONG',        'sv.m.p'),
-    ('shutoff_valves', 'PLM',               'ВASE',          'sv.m.p'),
+    ('shutoff_valves', 'HLV',              '',               'sv.m.h'),
     ('shutoff_valves', 'PLM',               '',              'sv.m.p'),
-    ('shutoff_valves', 'RAFTEC (Germany)',   'RAFTEC GOLD',   'sv.m.r'),
-    ('shutoff_valves', 'RAFTEC (Germany)',   'RАFTEC  BLACK', 'sv.m.r'),
-    ('shutoff_valves', 'RAFTEC (Germany)',   'RАFTEC RED',    'sv.m.r'),
-    ('shutoff_valves', 'RAFTEC (Germany)',   '',              'sv.m.r'),
+    ('shutoff_valves', 'RAFTEC',            'Краны Полотенцесушители LUX', 'sv.pr.r'),
+    ('shutoff_valves', 'RAFTEC',            '',              'sv.m.r'),   # G=RAFTEC (без SG = кульовий)
     ('shutoff_valves', 'Акционные позиции', '',              'sv.m.x'),
-    ('shutoff_valves', 'Краны шаровые',     '',              'sv.m'),
+    ('shutoff_valves', 'Гросс',             '',              'sv.m.x'),
+    ('shutoff_valves', r'r:Кран кульовий Roho', '',          'sv.m.x'),
+    ('shutoff_valves', r'r:кран кульовий R\d+', '',          'sv.m.x'),
+    ('shutoff_valves', r'r:Розбірне з.єднання', '',          'sv.a.e'),
 
-    # Кульові — ГАЗ
-    ('shutoff_valves', 'Газ',               'BUGATTI',       'sv.g.b'),
-    ('shutoff_valves', 'Газ',               'Giacomini',     'sv.g.g'),
-    ('shutoff_valves', 'Газ',               'HLV',           'sv.g.h'),
-    ('shutoff_valves', 'Газ',               'RAFTEC',        'sv.g.r'),
-    ('shutoff_valves', 'Газ',               'ЭКО',           'sv.g.e'),
-    ('shutoff_valves', 'Газ',               '',              'sv.g'),
+    # ─── Кульові — ГАЗ ──────────────────────────────────────────────────────
+    ('shutoff_valves', 'Газовые',           '',              'sv.g.z'),
+    ('shutoff_valves', 'ЭКО',              '',               'sv.g.e'),  # G=ЭКО (газ)
 
-    # Приладові
-    ('shutoff_valves', 'Приборные краны(хромированные)','Albetroni','sv.pr.a'),
-    ('shutoff_valves', 'Приборные краны(хромированные)','ASG','sv.pr.s'),
-    ('shutoff_valves', 'ASG',               '',              'sv.pr.s'),
-    ('shutoff_valves', 'Приборные краны(хромированные)','BUGATTI','sv.pr.b'),
-    ('shutoff_valves', 'Приборные краны(хромированные)','Grohe','sv.pr.g'),
-    ('shutoff_valves', 'Приборные краны(хромированные)','HLV','sv.pr.h'),
-    ('shutoff_valves', 'RAFTEC',            'Краны Полотенцесушители LUX','sv.pr.r'),
-    ('shutoff_valves', 'Приладові з фільтром','',            'sv.pr.r'),
-    ('shutoff_valves', 'Приладові серії Silver','',          'sv.pr.r'),
-    ('shutoff_valves', 'МИНИ',              'BUGATTI',       'sv.pr.m'),
+    # ─── Приладові (хромовані) ───────────────────────────────────────────────
+    ('shutoff_valves', 'Приборные краны(хромированные)', 'Albetroni', 'sv.pr.a'),
+    ('shutoff_valves', 'Приборные краны(хромированные)', 'ASG',       'sv.pr.s'),
+    ('shutoff_valves', 'Приборные краны(хромированные)', 'BUGATTI',   'sv.pr.b'),
+    ('shutoff_valves', 'Приборные краны(хромированные)', 'Grohe',     'sv.pr.g'),
+    ('shutoff_valves', 'Приборные краны(хромированные)', 'HLV',       'sv.pr.h'),
+    ('shutoff_valves', 'Приборные краны(хромированные)', '',          'sv.pr'),
+    ('shutoff_valves', 'Grohe',             '',              'sv.pr.g'),
+    ('shutoff_valves', 'Приладові з фільтром', '',           'sv.pr.r'),
+    ('shutoff_valves', 'Приладові серії Silver', '',         'sv.pr.r'),
     ('shutoff_valves', 'МИНИ разные',       '',              'sv.pr.m'),
-    ('shutoff_valves', 'Приборные краны(хромированные)','',  'sv.pr'),
 
-    # Самопромивні фільтри
-    ('shutoff_valves', 'Самопромывные фильтра','HERZ',       'sv.sf.h'),
-    ('shutoff_valves', 'Самопромывные фильтра','HLV',        'sv.sf.l'),
-    ('shutoff_valves', 'Самопромывные фильтра','HONEYWELL',  'sv.sf.w'),
-    ('shutoff_valves', 'Самопромывные фильтра','RAFTEC',     'sv.sf.r'),
-    ('shutoff_valves', 'Самопромывные фильтра','',           'sv.sf'),
+    # ─── Самопромивні фільтри ────────────────────────────────────────────────
+    ('shutoff_valves', 'Самопромывные фильтра', 'HERZ',      'sv.sf.h'),
+    ('shutoff_valves', 'Самопромывные фильтра', 'HLV',       'sv.sf.l'),
+    ('shutoff_valves', 'Самопромывные фильтра', 'HONEYWELL', 'sv.sf.w'),
+    ('shutoff_valves', 'Самопромывные фильтра', 'RAFTEC',    'sv.sf.r'),
+    ('shutoff_valves', 'Самопромывные фильтра', '',          'sv.sf'),
+    ('shutoff_valves', 'HERZ',              '',              'sv.sf.h'),
+    ('shutoff_valves', 'HONEYWELL',         '',              'sv.sf.w'),
 
-    # Фільтри грубої очистки
-    ('shutoff_valves', 'Фильтра грубой очистки','ASG',       'sv.fg.a'),
-    ('shutoff_valves', 'Фильтра грубой очистки','Bugatti',   'sv.fg.b'),
-    ('shutoff_valves', 'Фильтра грубой очистки','HLV',       'sv.fg.h'),
-    ('shutoff_valves', 'Фильтра грубой очистки','LEXLINE',   'sv.fg.l'),
-    ('shutoff_valves', 'Фильтра грубой очистки','PLM',       'sv.fg.p'),
-    ('shutoff_valves', 'Фильтра грубой очистки','RAFTEC',    'sv.fg.r'),
-    ('shutoff_valves', 'Фильтра грубой очистки','',          'sv.fg'),
-    ('shutoff_valves', 'Газовые',           '',              'sv.fg.z'),
+    # ─── Фільтри грубої очистки ──────────────────────────────────────────────
+    ('shutoff_valves', 'Фильтра грубой очистки', 'ASG',      'sv.fg.a'),
+    ('shutoff_valves', 'Фильтра грубой очистки', 'Bugatti',  'sv.fg.b'),
+    ('shutoff_valves', 'Фильтра грубой очистки', 'HLV',      'sv.fg.h'),
+    ('shutoff_valves', 'Фильтра грубой очистки', 'LEXLINE',  'sv.fg.l'),
+    ('shutoff_valves', 'Фильтра грубой очистки', 'PLM',      'sv.fg.p'),
+    ('shutoff_valves', 'Фильтра грубой очистки', 'RAFTEC',   'sv.fg.r'),
+    ('shutoff_valves', 'Фильтра грубой очистки', '',         'sv.fg'),
     ('shutoff_valves', 'Прочие фильтра',    '',              'sv.fg.z'),
     ('shutoff_valves', 'Фильтра фланцевые', '',              'sv.fg.z'),
     ('shutoff_valves', 'ЭКО фильтра',       '',              'sv.fg.z'),
+    ('shutoff_valves', 'LEXLINE',           '',              'sv.fg.l'),
 
-    # Кран з фільтром
+    # ─── Кран з фільтром / різне ─────────────────────────────────────────────
     ('shutoff_valves', 'Кран с фильтром',   '',              'sv.fg'),
-    ('shutoff_valves', 'Набор образцов General Fittings','', 'sv.m.x'),
-    ('shutoff_valves', 'Прочая ЗП',         '',              'sv.m.x'),
-    ('shutoff_valves', 'Прочая ЗП',         'FADO',          'sv.m.x'),
+    ('shutoff_valves', 'FADO ( под заказ)', '',              'sv.a.f'),
     ('shutoff_valves', 'SOLOMON',           '',              'sv.m.x'),
-    ('shutoff_valves', r'Кран кульовий Roho','',             'sv.m.x'),
+    ('shutoff_valves', 'Краны трехходовые', '',              'sv.3'),
+    ('shutoff_valves', r'r:Набор образцов', '',              'sv.m.x'),
+    ('shutoff_valves', 'Прочая ЗП',         '',              'sv.m.x'),
+    ('shutoff_valves', 'Прочее',            '',              'sv.m.x'),
 
     # ══════════════════════════════════════════════════════════════════════════
     # ПЕРЕХІДНИКИ (adapters_reducers) ar
@@ -504,521 +500,6 @@ _RULES: list[tuple] = [
     ('adapters_reducers', 'Под заказ',      '',              'ar.g'),
     ('adapters_reducers', 'ПЕРЕХОДНИКИ',    '',              'ar.y'),  # fallback жовта
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # ТЕПЛА ПІДЛОГА (underfloor_heating) uf
-    # Реальні групи з xlsx каталогу
-    # ══════════════════════════════════════════════════════════════════════════
-
-    # Колектори
-    ('underfloor_heating', r'Колектор.*RAFTEC',  '',   'uf.c'),
-    ('underfloor_heating', r'Коллектора RAFTEC', '',   'uf.c'),
-    ('underfloor_heating', r'Коллектора.*PLM',   '',   'uf.c'),
-    ('underfloor_heating', r'Колектор.*PLM',     '',   'uf.c'),
-    ('underfloor_heating', r'Коллектора FADO',   '',   'uf.c'),
-    ('underfloor_heating', r'Коллектора GROSS',  '',   'uf.c'),
-    ('underfloor_heating', r'Коллектора ICMA',   '',   'uf.c'),
-    ('underfloor_heating', r'Коллектора Luxor',  '',   'uf.c'),
-    ('underfloor_heating', r'Коллектора',        '',   'uf.c'),   # fallback колектори
-    ('underfloor_heating', r'KAN-Therm',         '',   'uf.c'),
-
-    # Терморегулятори
-    ('underfloor_heating', 'Danfoss',            '',   'uf.r'),
-    ('underfloor_heating', 'DEVI',               '',   'uf.r'),
-    ('underfloor_heating', 'PROFI THERM',        '',   'uf.r'),
-    ('underfloor_heating', r'HERZ',              '',   'uf.r'),
-
-    # Монтажні матеріали (плівка, скоби, такер)
-    ('underfloor_heating', 'Плити',              'Плівка', 'uf.s'),
-    ('underfloor_heating', r'Монтажна стрічка',  '',   'uf.s'),
-    ('underfloor_heating', r'Демпфер',           '',   'uf.s'),
-
-    # RAFTEC аксесуари ТП
-    ('underfloor_heating', 'RAFTEC',             '',   'uf.x'),
-
-    # Шафи колекторні
-    ('underfloor_heating', r'Коллекторные шкафы','',   'uf.sh'),
-    ('underfloor_heating', r'Шафа',              '',   'uf.sh'),
-    ('underfloor_heating', 'Скобы',              '',   'uf.sc'),
-    ('underfloor_heating', 'RAUTHERM S',         '',   'uf.w.t.re'),
-    ('underfloor_heating', 'RAUVITHERM',         '',   'uf.w.t.re'),
-    ('underfloor_heating', 'ICMA',               '',   'uf.w.th'),
-    ('underfloor_heating', r'SF247W25',          '',   'uf.w.3w'),
-    ('underfloor_heating', 'Аксессуары',         '',   'uf.w.c'),
-    ('underfloor_heating', 'Теплый пол',         '',   'uf.w'),
-    ('underfloor_heating', 'Мати',               '',   'uf.mat'),
-    ('underfloor_heating', 'Манометры',          '',   'uf.ma'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # ІЗОЛЯЦІЯ (insulation) ins  — ТИП → ВИРОБНИК
-    # ══════════════════════════════════════════════════════════════════════════
-    ('insulation', 'K-FLEX',                     '',   'ins.k'),
-    ('insulation', 'Утеплювач ф',               '',   'ins.k'),
-    ('insulation', 'Фольгированные цилиндры',    '',   'ins.x'),
-    ('insulation', 'Теплоизол',                  '',   'ins.l.t'),
-    ('insulation', 'SANFLEX',                    '',   'ins.l.s'),
-    ('insulation', 'Thermaflex',                 '',   'ins.x'),
-    ('insulation', 'PLM',                        '',   'ins.l.p'),
-    ('insulation', '*ПОЛОТНО',                   '',   'ins.po'),
-    ('insulation', 'УТЕПЛИТЕЛЬ',                 '',   'ins.s.t'),
-    ('insulation', 'трубный утеплитель',         '',   'ins.x'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # КРІПЛЕННЯ/ГЕРМЕТИКИ (fasteners_sealants) fs  — ТИП → ВИРОБНИК
-    # ══════════════════════════════════════════════════════════════════════════
-    ('fasteners_sealants', 'Walraven',           '',   'fs.k.w'),
-    ('fasteners_sealants', 'Монтажні системи',   '',   'fs.k.x'),
-    ('fasteners_sealants', 'KVADO',              '',   'fs.k.kv'),
-    ('fasteners_sealants', 'хомути RAFTEC',      '',   'fs.k.r'),
-    ('fasteners_sealants', 'хомути ЕCО',         '',   'fs.k.e'),
-    ('fasteners_sealants', 'Хомут авто.',        '',   'fs.au'),
-    ('fasteners_sealants', 'Стрічка HPX',        '',   'fs.t'),
-    ('fasteners_sealants', 'UNIPAK',             '',   'fs.u.u'),
-    ('fasteners_sealants', 'Ущільнювачі',        '',   'fs.u.pr'),
-    ('fasteners_sealants', 'BUDMONSTER',         '',   'fs.u.b'),
-    ('fasteners_sealants', 'Піна, герметики',    '',   'fs.u.g'),
-    ('fasteners_sealants', 'Фум лента',          '',   'fs.u.f'),
-    ('fasteners_sealants', 'Фум,клей,нитка',     '',   'fs.u.f'),
-    ('fasteners_sealants', 'Паста,пакля',        '',   'fs.u.p'),
-    ('fasteners_sealants', 'Силікон',            '',   'fs.u.s'),
-    ('fasteners_sealants', 'PLM',                '',   'fs.k.p'),
-    ('fasteners_sealants', 'Під замовлення',     '',   'fs.k.x'),
-    ('fasteners_sealants', 'Прочие',             '',   'fs.k.x'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # ЗАПІРНА АРМАТУРА (shutoff_valves) sv  — ТИП → БРЕНД → СЕРІЯ
-    # ══════════════════════════════════════════════════════════════════════════
-    ('shutoff_valves', 'Кран с фильтром',        '',   'sv.fg'),
-    ('shutoff_valves', 'Краны фланцевые (под заказ)', '', 'sv.fl.b'),
-    ('shutoff_valves', 'Задвижки чугунные',      '',   'sv.b.z'),
-    ('shutoff_valves', 'Батерфляй',              '',   'sv.b.b'),
-    ('shutoff_valves', 'ASG + (Сірий)',          '',   'sv.k.a'),
-    ('shutoff_valves', 'ASG',                    'ASG (Червоний)', 'sv.k.a'),
-    ('shutoff_valves', 'ЭКО(PN20)',              '',   'sv.k.e'),
-    ('shutoff_valves', 'ЭКО',                    '',   'sv.k.e'),
-    ('shutoff_valves', 'RАFTEC RED',             '',   'sv.k.r.d'),
-    ('shutoff_valves', 'RАFTEC  BLACK',          '',   'sv.k.r.b'),
-    ('shutoff_valves', 'STRONG',                 '',   'sv.k.p'),
-    ('shutoff_valves', 'ВASE',                   '',   'sv.k.p'),
-    ('shutoff_valves', 'Приладові серії Silver', '',   'sv.pr.r'),
-    ('shutoff_valves', 'ASG',                    '',   'sv.pr.s'),
-    ('shutoff_valves', 'RAFTEC',                 '',   'sv.a.r'),
-    ('shutoff_valves', 'HLV',                    '',   'sv.a.h'),
-    ('shutoff_valves', 'LEXLINE',                '',   'sv.a.l'),
-    ('shutoff_valves', 'BUGATTI',                '',   'sv.z.b'),
-    ('shutoff_valves', 'Кран кульовий Roho 1/2"','',   'sv.m.x'),
-    ('shutoff_valves', 'Под заказ',              '',   'sv.fl'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # ОПАЛЕННЯ (heating) ht  — ТИП → БРЕНД
-    # ══════════════════════════════════════════════════════════════════════════
-    ('heating', 'ESBE',                          '',   'ht.v.e'),
-    ('heating', 'CALEFFI',                       '',   'ht.v.c'),
-    ('heating', 'HONEYWELL',                     '',   'ht.v.hw'),
-    ('heating', 'Термоэлектрические приводы',    '',   'ht.v.d'),
-    ('heating', 'DANFOSS',                       '',   'ht.v.d'),
-    ('heating', 'Herz (все)',                    '',   'ht.h'),
-    ('heating', 'AFRISO',                        '',   'ht.m'),
-    ('heating', 'Измерительные приборы',         '',   'ht.m'),
-    ('heating', 'Насосные группы',               '',   'ht.col.tj'),
-    ('heating', 'TERMOJET',                      '',   'ht.col.tj'),
-    ('heating', 'Коллектор в теплоизоляции',     '',   'ht.col'),
-    ('heating', 'Коллектора',                    '',   'ht.col'),
-    ('heating', 'AW',                            '',   'ht.col.g'),
-    ('heating', 'OLE-PRO',                       '',   'ht.v.o'),
-    ('heating', 'Теплый пол',                    '',   'ht.uf'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # РАДІАТОРИ (radiators_radiatorsvalve) rd  — ТИП → БРЕНД
-    # ══════════════════════════════════════════════════════════════════════════
-    ('radiators_radiatorsvalve', 'Радіатор сталевий, тип 11', '', 'rd.s.hi'),
-    ('radiators_radiatorsvalve', 'Радіатор сталевий, тип 22', '', 'rd.s.hi'),
-    ('radiators_radiatorsvalve', 'Радіатор сталевий, тип 33', '', 'rd.s.hi'),
-    ('radiators_radiatorsvalve', '11 тип',       '',   'rd.s.hi'),
-    ('radiators_radiatorsvalve', '11 тип ( п/з)','',   'rd.s.hi'),
-    ('radiators_radiatorsvalve', '22 тип',       '',   'rd.s.hi'),
-    ('radiators_radiatorsvalve', '33 тип',       '',   'rd.s.hi'),
-    ('radiators_radiatorsvalve', '33 тип (п/з)', '',   'rd.s.hi'),
-    ('radiators_radiatorsvalve', '**СТАЛЬ',      '',   'rd.s'),
-    ('radiators_radiatorsvalve', 'PURMO',        '',   'rd.s.ke'),
-    ('radiators_radiatorsvalve', 'KORAD',        '',   'rd.s.ke'),
-    ('radiators_radiatorsvalve', 'KORADO',       '',   'rd.s.ke'),
-    ('radiators_radiatorsvalve', 'IDEALE',       '',   'rd.s.x'),
-    ('radiators_radiatorsvalve', 'IDMAR',        '',   'rd.s.id'),
-    ('radiators_radiatorsvalve', 'MIRADO',       '',   'rd.b.mi'),
-    ('radiators_radiatorsvalve', 'АЛЮМИНИЙ',     '',   'rd.al'),
-    ('radiators_radiatorsvalve', 'Алюминий',     '',   'rd.al'),
-    ('radiators_radiatorsvalve', 'Консоль',      '',   'rd.ac'),
-    ('radiators_radiatorsvalve', 'Арматура',     '',   'rd.v'),
-    ('radiators_radiatorsvalve', 'HERZ',         '',   'rd.v.h'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # НАСОСИ (pumps) pm  — ТИП → БРЕНД
-    # ══════════════════════════════════════════════════════════════════════════
-    ('pumps', 'WILO',                            '',   'pm.c.l'),
-    ('pumps', 'Циркуляционные насосы',           '',   'pm.c'),
-    ('pumps', 'Циркуляционные Lider',            '',   'pm.c.r'),
-    ('pumps', 'Насос циркуляційний',             '',   'pm.c'),
-    ('pumps', 'Насос підвищення тиску',          '',   'pm.pv.l'),
-    ('pumps', 'Насосные станции',                '',   'pm.st'),
-    ('pumps', 'Поверхностные насосы',            '',   'pm.s'),
-    ('pumps', 'Насосы',                          '',   'pm.s'),
-    ('pumps', 'Sprut-NPO',                       '',   'pm.s.x'),
-    ('pumps', 'IMERA',                           '',   'pm.s.x'),
-    ('pumps', 'Свердловинні насоси Pedrollo',    '',   'pm.sc.p'),
-    ('pumps', 'Свердловинні насоси',             '',   'pm.sc'),
-    ('pumps', 'Дренажные насосы',                '',   'pm.dr'),
-    ('pumps', 'SOLOLIFT',                        '',   'pm.dr.kn'),
-    ('pumps', 'Reflex баки',                     '',   'pm.b.op'),
-    ('pumps', 'ZILMET',                          '',   'pm.h.p'),
-    ('pumps', 'Комплектующие',                   '',   'pm.ac'),
-    ('pumps', 'Аксесуари до насосної техніки',   '',   'pm.ac'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # ФІЛЬТРАЦІЯ (filtration) fl  — БРЕНД → ТИП
-    # ══════════════════════════════════════════════════════════════════════════
-    ('filtration', 'Комплектующие для систем ECOSOFT', '', 'fl.ec.a'),
-    ('filtration', 'Filtrons',                   '',   'fl.ec.f'),
-    ('filtration', 'ECOSOFT',                    '',   'fl.ec.s'),
-    ('filtration', 'BWT',                        '',   'fl.bw'),
-    ('filtration', 'Картриджи Bio+',             '',   'fl.ec.c'),
-    ('filtration', 'Картриджі для питних',       '',   'fl.ec.c'),
-    ('filtration', 'Картриджі для  механичної',  '',   'fl.ef.c'),
-    ('filtration', 'Магістральний фільтр',       '',   'fl.x'),
-    ('filtration', 'Фільтри механічної очистки', '',   'fl.ef'),
-    ('filtration', 'Kолба',                      '',   'fl.ef'),
-    ('filtration', 'Голова для колба',           '',   'fl.ef'),
-    ('filtration', 'Система зворотнього осмосу', '',   'fl.ec.m'),
-    ('filtration', 'Organic',                    '',   'fl.or'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # МЕТАЛОПЛАСТИК (metal_plastic) mp  — ТИП → БРЕНД
-    # ══════════════════════════════════════════════════════════════════════════
-    ('metal_plastic', 'KAN-Therm Press',         '',   'mp.p.k'),
-    ('metal_plastic', 'TWEETOP',                 '',   'mp.p.r'),
-    ('metal_plastic', 'FADO Пресс фитинг',       '',   'mp.p.f'),
-    ('metal_plastic', 'VALTEC пресс',            '',   'mp.p.r'),
-    ('metal_plastic', 'HERZ',                    '',   'mp.p.h'),
-    ('metal_plastic', 'Rifeng',                  '',   'mp.p.r'),
-    ('metal_plastic', 'М/П Пресс-фитинг',        '',   'mp.p.b'),
-    ('metal_plastic', 'HLV/ICMA пресс фитинг',  '',   'mp.p.i'),
-    ('metal_plastic', 'FADO',                    '',   'mp.f.f'),
-    ('metal_plastic', 'RAFTEC',                  '',   'mp.f.r'),
-    ('metal_plastic', 'VALTEC',                  '',   'mp.f.v'),
-    ('metal_plastic', 'Giacomini',               '',   'mp.f.g'),
-    ('metal_plastic', 'GROSS',                   '',   'mp.f.o'),
-    ('metal_plastic', 'LTM',                     '',   'mp.f.m'),
-    ('metal_plastic', 'HLV',                     '',   'mp.c.h'),
-    ('metal_plastic', 'Труба ЭКО',               '',   'mp.t.x'),
-    ('metal_plastic', 'Труба прочее',            '',   'mp.t.x'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # PUSH СИСТЕМИ (push_systems) ps  — БРЕНД → ТИП
-    # REHAU і RAFTEC обов'язково
-    # ══════════════════════════════════════════════════════════════════════════
-    ('push_systems', 'RAUTITAN',                 '',   'ps.e.r'),
-    ('push_systems', 'RAUBASIC',                 '',   'ps.e.b'),
-    ('push_systems', 'RAUTHERM S',               '',   'ps.e.p'),
-    ('push_systems', 'RAUVITHERM',               '',   'ps.e.v'),
-    ('push_systems', 'RAFTEC PUSH',              '',   'ps.r.g'),
-    ('push_systems', 'RAFTEC PPSU PUSH',         '',   'ps.r.s'),
-    ('push_systems', 'RAFTEC Труба',             '',   'ps.r.p'),   # RAFTEC труба PEX
-    ('push_systems', 'RAFTEC запчасти к инструменту', '', 'ps.r.i'),
-    ('push_systems', 'Электрический инструмент', '',   'ps.r.i'),
-    ('push_systems', 'FADO',                     'Натяжной фитинг', 'ps.f.g'),
-    ('push_systems', 'FADO',                     '',   'ps.f.g'),
-    ('push_systems', 'Труба',                    '',   'ps.f.p'),
-    ('push_systems', 'Зразки труба',             '',   'ps.f.p'),
-    ('push_systems', 'KAN',                      'KAN-Therm PUSH (под заказ)', 'ps.k.p'),
-    ('push_systems', 'KAN-Therm ultraLINE',      '',   'ps.k.u'),
-    ('push_systems', 'Uponor',                   '',   'ps.u.f'),
-    ('push_systems', 'HEAT-PEX',                 '',   'ps.h.g'),
-    ('push_systems', 'TECE',                     '',   'ps.t.f'),
-    ('push_systems', 'СИСТЕМЫ  PUSH',            '',   'ps.a.g'),
-    ('push_systems', 'Фитинг AUSTROISOL',        '',   'ps.z.a'),
-    ('push_systems', 'Предізольовані трубу Термоізол', '', 'ps.z.t'),
-    ('push_systems', 'General Fittings',         '',   'ps.g.g'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # АВТОМАТИКА (automation) at  — СФЕРА → БРЕНД
-    # ══════════════════════════════════════════════════════════════════════════
-    ('automation', 'AJAX',                       '',   'at.ap.a'),
-    ('automation', '*MASTINO',                   '',   'at.ap.m'),
-    ('automation', 'GIDROLOCK',                  '',   'at.ap.g'),
-    ('automation', 'TERVIX',                     '',   'at.k.te'),
-    ('automation', 'SALUS/ ENGO',               '',   'at.k.su'),
-    ('automation', 'DANFOSS',                    '',   'at.tf.d'),
-    ('automation', 'REHAU',                      '',   'at.tf.re'),
-    ('automation', 'MEIBES',                     '',   'at.k.m'),
-    ('automation', 'COMPUTHERM',                 '',   'at.pr.c'),
-    ('automation', 'Стабилизаторы',              '',   'at.rv.s'),
-    ('automation', 'ИБП',                        '',   'at.rv.i'),
-    ('automation', 'PROFI THERM',                '',   'at.el.pt'),
-    ('automation', 'Водяна тепла підлога',       '',   'at.tf'),
-    ('automation', 'Для систем отопления',       '',   'at.k'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # АРМАТУРА БЕЗПЕКИ (safety_valves) sav  — ТИП → БРЕНД
-    # ══════════════════════════════════════════════════════════════════════════
-    ('safety_valves', 'Редуктора давления',      'Caleffi', 'sav.rd.c'),
-    ('safety_valves', 'Редуктора давления',      '',        'sav.rd'),
-    ('safety_valves', 'HERZ',                    '',        'sav.kp.h'),
-    ('safety_valves', 'RAFTEC',                  '',        'sav.kp.r'),
-    ('safety_valves', 'Flamco',                  '',        'sav.kp.f'),
-    ('safety_valves', 'AFRISO',                  '',        'sav.m'),
-    ('safety_valves', 'BUGATTI',                 '',        'sav.kp.b'),
-    ('safety_valves', 'GIACOMINI',               '',        'sav.v.g'),
-    ('safety_valves', 'PLM',                     '',        'sav.pk.p'),
-    ('safety_valves', 'ICMA',                    '',        'sav.kp.x'),
-    ('safety_valves', 'Дешевые',                 '',        'sav.pk.e'),
-    ('safety_valves', 'ASG',                     '',        'sav.v.a'),
-    ('safety_valves', 'Raftec',                  '',        'sav.kp.r'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # РУШНИКОСУШКИ (towel_warmers) tw  — ТИП → СЕРІЯ
-    # ══════════════════════════════════════════════════════════════════════════
-    ('towel_warmers', 'Электрические',           '',   'tw.e'),
-    ('towel_warmers', 'Електричні',              '',   'tw.e'),
-    ('towel_warmers', 'ЛАРИС',                   '',   'tw.w.la'),
-    ('towel_warmers', 'ВAVARIA',                 '',   'tw.w.pw'),
-    ('towel_warmers', 'Genesis Aqua',            '',   'tw.ac.d'),
-    ('towel_warmers', 'ТЭНы',                   '',   'tw.ten'),
-    ('towel_warmers', 'HLV',                     '',   'tw.w.hl'),
-    ('towel_warmers', 'TRINNITY',                '',   'tw.w.tr'),
-    ('towel_warmers', 'МАРИО',                   '',   'tw.e.ma'),
-    ('towel_warmers', 'Sunny',                   '',   'tw.w.ar'),
-    ('towel_warmers', 'Авангард',                '',   'tw.w.nv'),
-    ('towel_warmers', 'Блюз',                    '',   'tw.w.nv'),
-    ('towel_warmers', 'Камелия',                 '',   'tw.e.nv'),
-    ('towel_warmers', 'Омега',                   '',   'tw.w.nv'),
-    ('towel_warmers', 'Optima',                  '',   'tw.w.ar'),
-    ('towel_warmers', 'Sora',                    '',   'tw.w.ar'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # ШЛАНГИ (hoses) hs  — ТИП РІДИНИ → БРЕНД
-    # ══════════════════════════════════════════════════════════════════════════
-    ('hoses', 'MATEU В НЕРЖАВЕЮЩЕЙ ОПЛЕТКЕ',    '',   'hs.w.m'),
-    ('hoses', 'MATEU В ПОЛИАМИДНОЙ ОПЛЕТКЕ',    '',   'hs.w.m'),
-    ('hoses', 'Raftec Rhein',                    '',   'hs.w.r'),
-    ('hoses', 'FAS Flex',                        '',   'hs.w.fa'),
-    ('hoses', 'HLV flex',                        '',   'hs.w.o'),
-    ('hoses', 'ДТМ Flex',                        '',   'hs.w.o'),
-    ('hoses', 'ШЛАНГИ',                          '',   'hs.w'),
-    ('hoses', 'ВОДА СТАНДАРТ',                   '',   'hs.w.o'),
-    ('hoses', 'ВОДА СУПЕР',                      '',   'hs.w.o'),
-    ('hoses', 'ГАЗ СТАНДАРТ',                    '',   'hs.g.r'),
-    ('hoses', 'ГАЗ СУПЕР',                       '',   'hs.g.r'),
-    ('hoses', 'ГАЗ ЕВРО',                        '',   'hs.g.e'),
-    ('hoses', 'Никифоров',                       '',   'hs.g.r'),
-    ('hoses', 'Шланги для стир.маш.',            '',   'hs.sm'),
-    ('hoses', 'Для Конвекторов',                 '',   'hs.e'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # ВОДОМІРИ (water_meters) wm
-    # ══════════════════════════════════════════════════════════════════════════
-    ('water_meters', 'ECOSTAR',                  '',   'wm.e'),
-    ('water_meters', 'GIDROTEK',                 '',   'wm.g'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # СИФОНИ (siphons_fittings) sf  — БРЕНД → ТИП
-    # ══════════════════════════════════════════════════════════════════════════
-    ('siphons_fittings', 'АРМАТУРА АНИ-ПЛАСТ',  '',   'sf.an.a'),
-    ('siphons_fittings', 'Трапы',                '',   'sf.an.t'),
-    ('siphons_fittings', 'ТРАПЫ/ВОДОСТОЧНЫЕ',    '',   'sf.an.t'),
-    ('siphons_fittings', 'ГОФРОСИФОНЫ',          '',   'sf.an.g'),
-    ('siphons_fittings', 'Гибкие и фановые',     '',   'sf.an.g'),
-    ('siphons_fittings', 'Ванна',                '',   'sf.an.v'),
-    ('siphons_fittings', 'Умывальник',           '',   'sf.an.u'),
-    ('siphons_fittings', 'VOLLE',                '',   'sf.vn'),
-    ('siphons_fittings', 'KK Poll',              '',   'sf.kk'),
-    ('siphons_fittings', 'ASG',                  '',   'sf.sp.a'),
-    ('siphons_fittings', 'СИФОНЫ',               '',   'sf.an'),
-    # ══════════════════════════════════════════════════════════════════════════
-    # КОТЛИ (boilers) bl  — ТИП ПАЛИВА → БРЕНД
-    # ══════════════════════════════════════════════════════════════════════════
-    # Димоходи — найбільша група
-    ('boilers', 'Труба для димаря',              '',   'bl.d.t'),
-    ('boilers', 'Труба с термоизоляцией',        '',   'bl.d.t'),
-    ('boilers', 'Труба без термоизоляции',       '',   'bl.d.t'),
-    ('boilers', 'Труба',                         '',   'bl.d.t'),
-    ('boilers', 'Тройник',                       '',   'bl.d.r'),
-    ('boilers', 'Колено',                        '',   'bl.d.k'),
-    ('boilers', 'Переход',                       '',   'bl.d.k'),
-    ('boilers', 'Конус',                         '',   'bl.d.g'),
-    ('boilers', 'Хомут',                         '',   'bl.d.t'),
-    ('boilers', 'Дымоходы',                      '',   'bl.d'),
-    # Тверде паливо
-    ('boilers', 'Feniks',                        '',   'bl.t.f'),
-    ('boilers', 'ALTEP',                         '',   'bl.t.a'),
-    ('boilers', 'Kalvis',                        '',   'bl.t.k'),
-    # Газові
-    ('boilers', 'BAXI',                          '',   'bl.g.bx'),
-    ('boilers', 'BOSCH',                         '',   'bl.g.bs'),
-    ('boilers', 'Vaillant',                      '',   'bl.g.va'),
-    ('boilers', 'Viessmann',                     '',   'bl.g.vi'),
-    # Автоматика ТТК
-    ('boilers', 'Блок керування',                '',   'bl.c'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # ВОДОНАГРІВАЧІ (water_heaters) wh  — ТИП → БРЕНД
-    # ══════════════════════════════════════════════════════════════════════════
-    ('water_heaters', 'Електричні накопичувальні','',  'wh.e'),
-    ('water_heaters', 'Сухой тен',               '',   'wh.e'),
-    ('water_heaters', 'Мокрый тен',              '',   'wh.e'),
-    ('water_heaters', 'GORENJE',                 '',   'wh.e.go'),
-    ('water_heaters', 'ARISTON',                 '',   'wh.e.ar'),
-    ('water_heaters', 'BOSCH',                   '',   'wh.e.bs'),
-    ('water_heaters', 'MIDEA',                   '',   'wh.e.md'),
-    ('water_heaters', 'Hi-therm',                '',   'wh.e.ht'),
-    ('water_heaters', 'RENS',                    '',   'wh.e.re'),
-    ('water_heaters', 'Косвенные',               '',   'wh.k'),
-    ('water_heaters', 'Теплоаккумуляторы',       '',   'wh.k'),
-    ('water_heaters', 'Комбинированные',         '',   'wh.k'),
-    ('water_heaters', 'Тены Drazice',            '',   'wh.x'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # ЗМІШУВАЧІ (mixers_faucets) mx  — БРЕНД → ТИП
-    # ══════════════════════════════════════════════════════════════════════════
-    ('mixers_faucets', 'VOLLE',                  '',   'mx.kl'),
-    ('mixers_faucets', 'Q-Tab / Lidz',           '',   'mx.kl'),
-    ('mixers_faucets', 'Globus Lux',             '',   'mx.kl'),
-    ('mixers_faucets', 'Paffoni',                '',   'mx.kl'),
-    ('mixers_faucets', 'Kludi',                  '',   'mx.kl'),
-    ('mixers_faucets', 'Franke',                 '',   'mx.kl'),
-    ('mixers_faucets', 'Grohe',                  '',   'mx.gr'),
-    ('mixers_faucets', 'Душ',                    '',   'mx.g.d'),
-    ('mixers_faucets', 'Умывальник',             '',   'mx.g.u'),
-    ('mixers_faucets', 'Кухня',                  '',   'mx.g.k'),
-    ('mixers_faucets', 'Ванна',                  '',   'mx.g.v'),
-    ('mixers_faucets', 'Умивальник',             '',   'mx.g.u'),
-    ('mixers_faucets', 'Набор',                  '',   'mx.c'),
-    ('mixers_faucets', 'Наборы',                 '',   'mx.c'),
-    ('mixers_faucets', 'Лейки для душа Venta',   '',   'mx.vn.ac'),
-    ('mixers_faucets', 'Комплектующие',          '',   'mx.c'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # САНФАЯНС (sanitary_ware) sw  — ТИП → БРЕНД
-    # ══════════════════════════════════════════════════════════════════════════
-    ('sanitary_ware', 'Умывальники',             '',   'sw.ker'),
-    ('sanitary_ware', 'MIRAGGIO умывальники',    '',   'sw.ker.mr'),
-    ('sanitary_ware', 'FANCY MARBLE умывальники','',   'sw.ker.fm'),
-    ('sanitary_ware', 'Унитазы подвесные',       '',   'sw.ker'),
-    ('sanitary_ware', 'Поддон душевой стальной', '',   'sw.dc.pd'),
-    ('sanitary_ware', 'LIDZ / QTAP',             '',   'sw.ker.qt'),
-    ('sanitary_ware', 'Walk IN',                 '',   'sw.dc'),
-    ('sanitary_ware', 'BESCO',                   '',   'sw.va.ac.bs'),
-    ('sanitary_ware', 'Liberta',                 '',   'sw.dc.lb'),
-    ('sanitary_ware', 'Мойдодыр',               '',   'sw.me'),
-    ('sanitary_ware', 'Тумба + умывальник',      '',   'sw.me'),
-    ('sanitary_ware', 'Зеркала Liberta',         '',   'sw.me'),
-    ('sanitary_ware', 'FRANKE',                  '',   'sw.mo.fr'),
-    ('sanitary_ware', 'Хасека',                  '',   'sw.ker'),
-    ('sanitary_ware', 'SIGMA',                   '',   'sw.in'),
-    ('sanitary_ware', 'GROHE',                   '',   'sw.ker.gr'),
-    ('sanitary_ware', 'RAVAK',                   '',   'sw.dc.rv'),
-    ('sanitary_ware', 'WESTON',                  '',   'sw.dc'),
-    ('sanitary_ware', 'Liberta',                 '',   'sw.dc.lb'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # КОТЛИ (boilers) bl  — димоходи і комплектуючі
-    # ══════════════════════════════════════════════════════════════════════════
-    ('boilers', 'Труба для димаря',              '',   'bl.d.t'),
-    ('boilers', 'Труба с термоизоляцией',        '',   'bl.d.t'),
-    ('boilers', 'Труба без термоизоляции',       '',   'bl.d.t'),
-    ('boilers', 'Тройник',                       '',   'bl.d.r'),
-    ('boilers', 'Колено',                        '',   'bl.d.k'),
-    ('boilers', 'Переход',                       '',   'bl.d.k'),
-    ('boilers', 'Конус',                         '',   'bl.d.g'),
-    ('boilers', 'Хомут',                         '',   'bl.d.t'),
-    ('boilers', 'Дымоходы',                      '',   'bl.d'),
-    ('boilers', 'Feniks',                        '',   'bl.t.f'),
-    ('boilers', 'ALTEP',                         '',   'bl.t.a'),
-    ('boilers', 'Kalvis',                        '',   'bl.t.k'),
-    ('boilers', 'Термобар',                      '',   'bl.g.at'),
-    ('boilers', 'Житомир',                       '',   'bl.g.at'),
-    ('boilers', 'BAXI',                          '',   'bl.g.bx'),
-    ('boilers', 'BOSCH',                         '',   'bl.g.bs'),
-    ('boilers', 'BIASI',                         '',   'bl.g.bi'),
-    ('boilers', 'Vaillant',                      '',   'bl.g.va'),
-    ('boilers', 'Viessmann',                     '',   'bl.g.vi'),
-    ('boilers', 'Блок керування',                '',   'bl.c'),
-    ('boilers', 'Комплектующие',                 '',   'bl.c'),
-    ('boilers', 'Теплоаккумулятор',              '',   'bl.ld'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # ВОДОНАГРІВАЧІ (water_heaters) wh
-    # ══════════════════════════════════════════════════════════════════════════
-    ('water_heaters', 'Електричні накопичувальні','',  'wh.e'),
-    ('water_heaters', 'Сухой тен',               '',   'wh.e'),
-    ('water_heaters', 'Мокрый тен',              '',   'wh.e'),
-    ('water_heaters', 'GORENJE',                 '',   'wh.e.go'),
-    ('water_heaters', 'ARISTON',                 '',   'wh.e.ar'),
-    ('water_heaters', 'BOSCH',                   '',   'wh.e.bs'),
-    ('water_heaters', 'MIDEA',                   '',   'wh.e.md'),
-    ('water_heaters', 'Hi-therm',                '',   'wh.e.ht'),
-    ('water_heaters', 'RENS',                    '',   'wh.e.re'),
-    ('water_heaters', 'KOSPEL',                  '',   'wh.p.ks'),
-    ('water_heaters', 'ELDOM',                   '',   'wh.k.el'),
-    ('water_heaters', 'NovaTeс',                 '',   'wh.e.nt'),
-    ('water_heaters', 'Thermo Alliance',         '',   'wh.g.th'),
-    ('water_heaters', 'Косвенные',               '',   'wh.k'),
-    ('water_heaters', 'Теплоаккумуляторы',       '',   'wh.k'),
-    ('water_heaters', 'Комбинированные',         '',   'wh.k'),
-    ('water_heaters', 'Запчастини',              '',   'wh.x'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # РАДІАТОРИ — додаткові підвузли
-    # ══════════════════════════════════════════════════════════════════════════
-    ('radiators_radiatorsvalve', 'Прочее ПОД заказ',  '', 'rd.s.x'),
-    ('radiators_radiatorsvalve', '20 тип (п/з)',       '', 'rd.s.hi'),
-    ('radiators_radiatorsvalve', '21 тип (п/з)',       '', 'rd.s.hi'),
-    ('radiators_radiatorsvalve', '*Rens/TERRA Teknik', '', 'rd.s.re'),
-    ('radiators_radiatorsvalve', 'VARIO TERM',         '', 'rd.s.x'),
-    ('radiators_radiatorsvalve', 'АКСЕССУАРЫ',         '', 'rd.ac'),
-    ('radiators_radiatorsvalve', 'Стінове кріплення',  '', 'rd.ac'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # РУШНИКОСУШКИ — під замовлення і серії
-    # ══════════════════════════════════════════════════════════════════════════
-    ('towel_warmers', 'Комплект прихованого підключення', '', 'tw.ac'),
-    ('towel_warmers', 'Під замовлення',          '',   'tw.pz'),
-    ('towel_warmers', 'ТЕРМА',                   '',   'tw.w'),
-    ('towel_warmers', 'Sirius',                  '',   'tw.w.ar'),
-    ('towel_warmers', 'Ava',                     '',   'tw.w.ar'),
-    ('towel_warmers', 'Largo',                   '',   'tw.w.nv'),
-    ('towel_warmers', 'Водяні',                  '',   'tw.w'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # ЗМІШУВАЧІ (mixers_faucets) mx
-    # ══════════════════════════════════════════════════════════════════════════
-    ('mixers_faucets', 'VOLLE',                  '',   'mx.kl'),
-    ('mixers_faucets', 'Q-Tab / Lidz',           '',   'mx.kl'),
-    ('mixers_faucets', 'Globus Lux',             '',   'mx.kl'),
-    ('mixers_faucets', 'Paffoni',                '',   'mx.kl'),
-    ('mixers_faucets', 'Kludi',                  '',   'mx.kl'),
-    ('mixers_faucets', 'Franke',                 '',   'mx.kl'),
-    ('mixers_faucets', 'GROHE',                  '',   'mx.gr'),
-    ('mixers_faucets', 'Grohe',                  '',   'mx.gr'),
-    ('mixers_faucets', 'WESTON',                 '',   'mx.kl'),
-    ('mixers_faucets', 'RAVAK',                  '',   'mx.kl'),
-    ('mixers_faucets', 'Lidz',                   '',   'mx.kl'),
-    ('mixers_faucets', 'Душ',                    '',   'mx.g.d'),
-    ('mixers_faucets', 'Умывальник',             '',   'mx.g.u'),
-    ('mixers_faucets', 'Умивальник',             '',   'mx.g.u'),
-    ('mixers_faucets', 'Кухня',                  '',   'mx.g.k'),
-    ('mixers_faucets', 'Ванна',                  '',   'mx.g.v'),
-    ('mixers_faucets', 'Набор',                  '',   'mx.c'),
-    ('mixers_faucets', 'Наборы',                 '',   'mx.c'),
-    ('mixers_faucets', 'Лейки для душа Venta',   '',   'mx.vn.ac'),
-    ('mixers_faucets', 'Комплектующие',          '',   'mx.c'),
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # СИФОНИ — додаткові
-    # ══════════════════════════════════════════════════════════════════════════
-    ('siphons_fittings', 'Viega',                '',   'sf.rv'),
-    ('siphons_fittings', 'Комплектуючі',         '',   'sf.pl.k'),
-    ('siphons_fittings', 'Водосливы',            '',   'sf.an'),
-    ('siphons_fittings', 'Мойка',                '',   'sf.an.k'),
-
 ]
 
 
@@ -1058,13 +539,14 @@ def assign_node_id(category: str, group: str, subgroup: str) -> str:
     for cat, gp, sp, nid in _COMPILED:
         if cat != category:
             continue
-        # Перевірка group: None=будь-який, regex=re.search, str=підрядок (in)
+        # Перевірка group: None=будь-який, regex=re.search, str=точне порівняння (==)
+        # Точне == запобігає помилці: 'raftec' in 'raftec труба' = True
         if gp is None:
             g_ok = True
         elif isinstance(gp, re.Pattern):
             g_ok = bool(gp.search(group))
         else:
-            g_ok = (gp in g_lower)   # підрядок: 'ekoplastik' in 'ekoplastik труба'
+            g_ok = (gp == g_lower)
         if not g_ok:
             continue
         # Перевірка subgroup: аналогічно
@@ -1073,7 +555,7 @@ def assign_node_id(category: str, group: str, subgroup: str) -> str:
         elif isinstance(sp, re.Pattern):
             s_ok = bool(sp.search(subgroup))
         else:
-            s_ok = (sp in s_lower)   # підрядок: 'труба' in 'ekoplastik труба'
+            s_ok = (sp == s_lower)
         if not s_ok:
             continue
         return nid
