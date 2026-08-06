@@ -1073,6 +1073,16 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
         # '_global' = м'яка підказка (бренд без категорії від менеджера)
         _global_brand = brand_map.get('_global')  # може бути None
 
+        # ── Бренд за замовчуванням по вузлу ──────────────────────────────────
+        # Якщо менеджер не вказав бренд і вузол = kn.u.f / kn.u.p (без бренду)
+        # → ASG є першим пріоритетом для внутрішньої каналізації
+        # Це запобігає ситуації коли Voyage вибирає Ostendorf з кращим score
+        _node_default_brand = None
+        _cur_node = пос.get('_node_id', '')
+        if not manager_brand and not _global_brand:
+            if category == 'sewage' and _cur_node in ('kn.u.f', 'kn.u.p', 'kn.u', 'kn'):
+                _node_default_brand = BRAND_TOKENS.get('asg')   # ['asg', 'ASG']
+
         # РІВЕНЬ 1.5: виробник у самому рядку майстра (Wilo, Bonomi, Herz...)
         line_brand = None
         _orig_lc   = original.lower()
@@ -1083,7 +1093,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
 
         # hard_brand = жорстке обмеження пошуку (тільки цей виробник)
         # manager_brand — ТІЛЬКИ якщо категорія явно вказана менеджером
-        hard_brand = manager_brand or line_brand
+        hard_brand = manager_brand or line_brand or _node_default_brand
 
         # ⚡ _global_brand стає жорстким тільки якщо виробник актуальний для цієї категорії
         # "пайка екопластик" → жорстко для PPR, але НЕ для каналізації!
@@ -1177,7 +1187,12 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
             кандидати = smart_search(пос, top_n=12, brand_tokens=hard_brand)
             if кандидати:
                 required_brand = hard_brand[0]
-                джерело = '👨 менеджер' if manager_brand else '📝 з рядка'
+                if manager_brand:
+                    джерело = '👨 менеджер'
+                elif _node_default_brand and hard_brand == _node_default_brand:
+                    джерело = '⚙️ дефолт'
+                else:
+                    джерело = '📝 з рядка'
             else:
                 # Виробник не знайдений — спробуємо дефолтні бренди категорії
                 brand_list = DEFAULT_BRAND_PRIORITY.get(category, [])
