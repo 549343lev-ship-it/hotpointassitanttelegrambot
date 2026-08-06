@@ -126,13 +126,13 @@ TREE: list[tuple] = [
                               r'|ostendorf.*(ф\d{2,3}|труба)'],
                             ['OSTENDORF', 'Ostendorf']),
 
-    ('kn.u.p.c', 'sewage',  [r'труба.*valrom|valrom.*труба'],
+    ('kn.u.p.v', 'sewage',  [r'труба.*valrom|valrom.*труба'],
                             ['*Valrom внутренняя', 'VALROM']),
 
     ('kn.u.p.d', 'sewage',  [r'труба.*канал.*plm|plm.*труба.*канал'],
                             ['PLM']),
 
-    ('kn.u.p.e', 'sewage',  [r'труба.*канал.*raftec|raftec.*труба.*канал'],
+    ('kn.u.p.g', 'sewage',  [r'труба.*канал.*raftec|raftec.*труба.*канал'],
                             ['Raftec (Germany)']),
 
     # Внутрішня — труби (без бренду)
@@ -141,12 +141,12 @@ TREE: list[tuple] = [
 
     # Внутрішня (загально)
     ('kn.u',     'sewage',  [r'внутр\w*\s+канал|канал.*внутр|ф\s*\d{2,3}.*канал'
-                              r'|ф50\b|ф110\b|ф32\b|ф40\b|ревізія\b|трап\b'],
+                              r'|ф50\b|ф110\b|ф32\b|ф40\b|ревізія\b'],
                             ['*Внутренняя', 'Внутрішня', 'Труба серая (внутренняя)']),
 
     # Каналізація загально — ВИДАЛЕНО ostendorf з паттерну щоб не захоплював загальний пул
     ('kn',       'sewage',  [r'канал|каналіз|sewage|htr\b|ht\s?safe'
-                              r'|ревізія|трап\b|хрестовин'],
+                              r'|ревізія|хрестовин'],
                             []),
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -162,14 +162,14 @@ TREE: list[tuple] = [
                                  'ПНТ PLM', 'ПНТ VALROM']),
 
     # Труби → виробники
-    ('pp.p.a',   'plastic_ppr', [r'труба\s+(ппр|ppr).*asg|asg.*труба\s+(ппр|ppr)'],
+    ('pp.a.p',   'plastic_ppr', [r'труба\s+(ппр|ppr).*asg|asg.*труба\s+(ппр|ppr)'],
                                 ['ASG труба', 'ASG']),
 
-    ('pp.p.b',   'plastic_ppr', [r'труба\s+(ппр|ppr).*(ekoplastik|екопластик|eco|eko)'
+    ('pp.e.p',   'plastic_ppr', [r'труба\s+(ппр|ppr).*(ekoplastik|екопластик|eco|eko)'
                                   r'|(ekoplastik|eco\s+ppr).*труба'],
                                 ['ECO PPR', 'Ekoplastik', 'OVI/EVCI Pipe', 'WHITE']),
 
-    ('pp.p.c',   'plastic_ppr', [r'труба\s+(ппр|ppr).*raftec|raftec.*труба\s+(ппр|ppr)'],
+    ('pp.r.p',   'plastic_ppr', [r'труба\s+(ппр|ppr).*raftec|raftec.*труба\s+(ппр|ppr)'],
                                 ['RAFTEC', 'Raftec']),
 
     # Труби PPR (без бренду)
@@ -177,12 +177,12 @@ TREE: list[tuple] = [
                                 ['ASG труба', 'ECO PPR', 'OVI/EVCI Pipe', 'WHITE']),
 
     # Фітинги → тип
-    ('pp.f.m',   'plastic_ppr', [r'муфта\s+(ппр|ppr)|муфта.*(мрз|мрв|рн\b|рз\b|рв\b)'
+    ('pp.f',   'plastic_ppr', [r'муфта\s+(ппр|ppr)|муфта.*(мрз|мрв|рн\b|рз\b|рв\b)'
                                   r'|(мрз|мрв|рн|рз|рв).*муфта'],
                                 ['ASG фитинг', 'Фитинг PPR']),
 
     # Коліно PPR — НЕ настінне push коліно
-    ('pp.f.k',   'plastic_ppr', [r'коліно\s+(ппр|ppr)'
+    ('pp.f',   'plastic_ppr', [r'коліно\s+(ппр|ppr)'
                                   r'|коліно.*(рв|рз|рн|вз|нг).*(ппр|ppr)'
                                   r'|(ппр|ppr).*коліно.*(рв|рз|рн|вз|нг)'
                                   r'|настінн\w+\s+коліно.*(ппр|ppr)'],
@@ -191,7 +191,7 @@ TREE: list[tuple] = [
     ('pp.f.t',   'plastic_ppr', [r'трійник\s+(ппр|ppr)|(ппр|ppr).*трійник'],
                                 ['ASG фитинг', 'Фитинг PPR']),
 
-    ('pp.f.z',   'plastic_ppr', [r'заглушка\s+(ппр|ppr)|(ппр|ppr).*заглушка'],
+    ('pp.f',   'plastic_ppr', [r'заглушка\s+(ппр|ppr)|(ппр|ppr).*заглушка'],
                                 ['ASG фитинг', 'Фитинг PPR']),
 
     # Фітинги PPR (загально)
@@ -215,13 +215,13 @@ TREE: list[tuple] = [
                                 ['General Fittings', 'RAFTEC']),
 
     # Труби PEX → виробники
-    ('ps.p.a',  'push_systems', [r'труба.*rautitan|труба.*raubasic|rautitan.*труба|rehau.*труба.*pex'],
+    ('ps.e.r',  'push_systems', [r'труба.*rautitan|труба.*raubasic|rautitan.*труба|rehau.*труба.*pex'],
                                 ['REHAU', 'Rautitan', 'Raubasic']),
 
-    ('ps.p.b',  'push_systems', [r'труба.*aquapex|aquapex.*труба'],
+    ('ps.e',  'push_systems', [r'труба.*aquapex|aquapex.*труба'],
                                 ['Aquapex', 'AQUAPEX']),
 
-    ('ps.p.c',  'push_systems', [r'труба.*heat.?pex|heat.?pex.*труба'],
+    ('ps.h.g',  'push_systems', [r'труба.*heat.?pex|heat.?pex.*труба'],
                                 ['HEAT-PEX']),
 
     # RAFTEC труби PEX-A — широкий паттерн (silver/evoh/pex-a без "push")
@@ -231,7 +231,7 @@ TREE: list[tuple] = [
                                 ['RAFTEC', 'RAFTEC SILVER', 'RPXA']),
 
     # Труби PEX загально
-    ('ps.p',    'push_systems', [r'труба.*(pex|пекс|push|пуш)|pex.*труба'],
+    ('ps.e',    'push_systems', [r'труба.*(pex|пекс|push|пуш)|pex.*труба'],
                                 ['Труба']),
 
     # PPSU фітинги RAFTEC — окремо від звичайних PUSH (містять ppsu в назві)
@@ -249,11 +249,11 @@ TREE: list[tuple] = [
                                 ['RAFTEC PUSH', 'RAFTEC']),
 
     # Фітинги PUSH → виробники
-    ('ps.f.a',  'push_systems', [r'(муфта|коліно|трійник|фітинг).*(rehau|general.fitting)'
+    ('ps.e',  'push_systems', [r'(муфта|коліно|трійник|фітинг).*(rehau|general.fitting)'
                                   r'|(rehau|general.?fitting).*(муфта|коліно|трійник|фітинг)'],
                                 ['REHAU', 'General Fittings']),
 
-    ('ps.f.b',  'push_systems', [r'(муфта|коліно|трійник|фітинг).*kan\b|(kan).*(муфта|коліно|трійник)'],
+    ('ps.k',  'push_systems', [r'(муфта|коліно|трійник|фітинг).*kan\b|(kan).*(муфта|коліно|трійник)'],
                                 ['KAN', 'KAN-Therm PUSH']),
 
     ('ps.f.g',  'push_systems', [r'(муфта|коліно|трійник|фітинг).*fado'
@@ -279,7 +279,7 @@ TREE: list[tuple] = [
     ('mp.f.a',  'metal_plastic', [r'(прес.?фіт|пресс.?фіт|муфта|коліно|трійник).*fado|fado.*(фіт|муфта|коліно)'],
                                  ['FADO', 'М/П всё']),
 
-    ('mp.f.b',  'metal_plastic', [r'(прес.?фіт|муфта|коліно|трійник).*raftec|raftec.*(фіт|муфта|коліно|прес)'],
+    ('mp.f.r',  'metal_plastic', [r'(прес.?фіт|муфта|коліно|трійник).*raftec|raftec.*(фіт|муфта|коліно|прес)'],
                                  ['RAFTEС', 'RAFTEC']),
 
     ('mp.f',    'metal_plastic', [r'прес.?фіт|пресс.?фіт|м/?п.*(муфта|коліно|трійник|фіт)'
@@ -356,7 +356,7 @@ TREE: list[tuple] = [
                                      ['LEXLINE желтая', 'LEXLINE']),
 
     # Жовта латунь загально
-    ('ar.l',    'adapters_reducers', [r'жовт.?латун|raftec.?gold|lexline'
+    ('ar.y',    'adapters_reducers', [r'жовт.?латун|raftec.?gold|lexline'
                                        r'|коліно.*(латун|вв|вз|зз|зв).*(dn|1\/2|3\/4)'
                                        r'|кут.*(латун|вв|вз).*(dn|1\/2|3\/4)'
                                        r'|футорк.*латун|згін.*латун|американка.*латун'
@@ -374,14 +374,14 @@ TREE: list[tuple] = [
     # РАДІАТОРИ (rd)
     # ─────────────────────────────────────────────────────────────────────────
 
-    ('rd.t10',  'radiators_radiatorsvalve', [r'тип\s*10\b|тип10'],   ['тип 10', 'тип10']),
-    ('rd.t11',  'radiators_radiatorsvalve', [r'тип\s*11\b|тип11'],   ['тип 11', 'тип11']),
-    ('rd.t21',  'radiators_radiatorsvalve', [r'тип\s*21\b|тип21'],   ['21', 'тип 21']),
-    ('rd.t22',  'radiators_radiatorsvalve', [r'тип\s*22\b|22\s*тип'], ['22 тип', 'тип 22']),
-    ('rd.vk',   'radiators_radiatorsvalve', [r'\bvk\b|нижн.*підключ'], ['VK', 'vk']),
-    ('rd.bm',   'radiators_radiatorsvalve', [r'біметал|bi.vulcan|алюмін.*радіат'],
+    ('rd.s',  'radiators_radiatorsvalve', [r'тип\s*10\b|тип10'],   ['тип 10', 'тип10']),
+    ('rd.s.11',  'radiators_radiatorsvalve', [r'тип\s*11\b|тип11'],   ['тип 11', 'тип11']),
+    ('rd.s',  'radiators_radiatorsvalve', [r'тип\s*21\b|тип21'],   ['21', 'тип 21']),
+    ('rd.s.22',  'radiators_radiatorsvalve', [r'тип\s*22\b|22\s*тип'], ['22 тип', 'тип 22']),
+    ('rd.s',   'radiators_radiatorsvalve', [r'\bvk\b|нижн.*підключ'], ['VK', 'vk']),
+    ('rd.bi',   'radiators_radiatorsvalve', [r'біметал|bi.vulcan|алюмін.*радіат'],
                                             ['біметал', 'алюміній']),
-    ('rd.th',   'radiators_radiatorsvalve', [r'термоголовк|термостат.*радіат|термокомплект'],
+    ('rd.v',   'radiators_radiatorsvalve', [r'термоголовк|термостат.*радіат|термокомплект'],
                                             ['Термоголовки', 'Термостат']),
 
     ('rd',      'radiators_radiatorsvalve', [r'радіатор|батарея\s+(опален|сталев)|термоголовк|термостат'],
@@ -416,7 +416,7 @@ TREE: list[tuple] = [
     ('pm.c',    'pumps', [r'циркуляц|цирк.*насос'],  ['Wilo', 'Grundfos', 'циркул']),
     ('pm.s',    'pumps', [r'станц.*насос|насосн.?станц|New Wave|нью вейв'],
                          ['New Wave', 'Станция']),
-    ('pm.h',    'pumps', [r'гідроакумул|бак.*мембран|мембран.*бак'],
+    ('pm.g',    'pumps', [r'гідроакумул|бак.*мембран|мембран.*бак'],
                          ['Гідроакумулятор', 'бак']),
 
     ('pm',      'pumps', [r'насос|насосн|помпа'], []),
@@ -441,7 +441,7 @@ TREE: list[tuple] = [
     # ОПАЛЕННЯ (ht)
     # ─────────────────────────────────────────────────────────────────────────
 
-    ('ht.h',    'heating', [r'herz.*клапан|клапан.*herz|термозмішув'],    ['Herz', 'HERZ']),
+    ('ht.v.h',    'heating', [r'herz.*клапан|клапан.*herz|термозмішув'],    ['Herz', 'HERZ']),
     ('ht.c',    'heating', [r'колектор\s+(опален|1\')|колектор.*opalen'],  ['Коллектора - теплый пол']),
 
     ('ht',      'heating', [r'опален|радіатор.*(підключ|кутов|прям)'
@@ -451,10 +451,10 @@ TREE: list[tuple] = [
     # АВТОМАТИКА (at)
     # ─────────────────────────────────────────────────────────────────────────
 
-    ('at.m',    'automation', [r'насосн.?груп|змішувальн.?вузол|гідравліч.?стрілк'],
+    ('at.ht',    'automation', [r'насосн.?груп|змішувальн.?вузол|гідравліч.?стрілк'],
                               ['Насосні групи', 'Змішувальні вузли']),
 
-    ('at.r',    'automation', [r'погодн.?регул|регул.*sur03|lsg.?16|pcnr'],
+    ('at.pg',    'automation', [r'погодн.?регул|регул.*sur03|lsg.?16|pcnr'],
                               ['Регулятор']),
 
     ('at',      'automation', [r'насосн.?груп|змішувальн.?вузол|гідравліч.?стрілк'
@@ -474,9 +474,9 @@ TREE: list[tuple] = [
     ('fs',      'fasteners_sealants',[r'хомут|скоб.*(монтаж|кріпл)|дюбель|шпилька'
                                        r'|льон\b|тефлон|фум\b|пакля|прокладк|ущільн'
                                        r'|glidex|глідекс|герметик|мастило|силікон'], []),
+    ('sf',      'siphons_fittings',  [r'сифон|злив.?арматур|арматур.?унітаз|заповнюв.?клапан|трап\b'], []),
     ('sw',      'sanitary_ware',     [r'унітаз|раковин|умивальник\s+(кераміч|фаянс)'
                                        r'|інсталяц|душов.*(піддон|кабін)|ванн.*(акрил|чавун)'], []),
-    ('sf',      'siphons_fittings',  [r'сифон|злив.?арматур|арматур.?унітаз|заповнюв.?клапан|трап\b'], []),
     ('sav',     'safety_valves',     [r'запобіжн.?клапан|клапан.*безпек|клапан.*запобіжн'
                                        r'|safety.?valve|скидн.?клапан'], []),
 ]
