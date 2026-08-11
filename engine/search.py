@@ -94,6 +94,7 @@ BRAND_TOKENS = {    # словник: що пише менеджер → офі�
     # ── Фільтри/Очистка ──────────────────────────────────────────────────────
     'ecosoft':     ['ecosoft', 'Ecosoft'],
     'екософт':     ['ecosoft', 'Ecosoft'],
+    # ── Лічильники води ──────────────────────────────────────────────────────
     'ecostar':     ['ecostar', 'Ecostar', 'ECOSTAR'],
     'екостар':     ['ecostar', 'Ecostar', 'ECOSTAR'],
     # ── Ізоляція ─────────────────────────────────────────────────────────────
@@ -175,7 +176,7 @@ CATEGORY_ALIASES = {    # словник: що пише менеджер у пі
     'утепл': 'insulation', 'ізоляц': 'insulation', 'мірелон': 'insulation',
     'фільтр колба': 'filtration', 'колба': 'filtration', 'картридж': 'filtration',
     'фільтр груб': 'shutoff_valves', 'груб очист': 'shutoff_valves',
-    'фільтр': 'filtration', 'очист': 'filtration',
+    'фільтр': 'shutoff_valves', 'груб очист': 'shutoff_valves',
     'металопласт': 'metal_plastic', 'мп': 'metal_plastic',
     'котел': 'boilers', 'котли': 'boilers',
     'бойлер': 'water_heaters', 'водонагрів': 'water_heaters',
@@ -206,21 +207,6 @@ DEFAULT_BRAND_PRIORITY = {  # якщо менеджер не вказав вир
     'water_meters':            [['ecostar', 'Ecostar', 'ECOSTAR']],
 }
 
-SIMILAR_CATS = {    # суміжні категорії: якщо не знайшли в основній — шукаємо тут (Gemini міг помилитись категорією)
-    'plastic_ppr':       ['adapters_reducers', 'heating'],
-    'adapters_reducers': ['plastic_ppr', 'shutoff_valves', 'heating'],
-    'heating':           ['plastic_ppr', 'shutoff_valves', 'adapters_reducers'],
-    'push_systems':      ['metal_plastic', 'plastic_ppr'],
-    'metal_plastic':     ['push_systems', 'adapters_reducers'],
-    'sewage':            ['siphons_fittings'],
-    'siphons_fittings':  ['sewage'],
-    'shutoff_valves':    ['adapters_reducers', 'safety_valves', 'filtration'],
-    'filtration':        [],              # самопромивні фільтри НЕ шукаємо в shutoff_valves
-    'underfloor_heating':['metal_plastic', 'push_systems'],
-    'insulation':        ['fasteners_sealants'],
-    'fasteners_sealants':['insulation'],
-    'boilers':           ['heating', 'shutoff_valves'],
-}
 
 # ─── Типи та атрибути ────────────────────────────────────────────────────────
 
