@@ -9,11 +9,11 @@ KNOWLEDGE = """
 ## ⚠️ ГОЛОВНЕ ПРАВИЛО — ВИРОБНИК З ЗАМОВЛЕННЯ ІГНОРУЄТЬСЯ
 Майстер може написати будь-якого виробника: Wavin, Valtec, Herz, KFA, Giacomini...
 МИ ПЕРЕБИВАЄМО НА СВОГО ВИРОБНИКА — тому виробника з рядка майстра НЕ додавай в normalized.
-Виробника визначає ТІЛЬКИ підказка менеджера перед фото (наприклад "каналізація остендорф").
+Виробника визначає ТІЛЬКИ підказка менеджера
 
 ВИНЯТОК — зберігай виробника якщо це наш асортимент і він у підказці:
-  RAFTEC, Ekoplastik, ASG, OSTENDORF, PLM, Giacomini, Danfoss, Herz, Hidros, Idmar,
-  Termojet, Tatra, Ecosoft, Biasi, Wilo, Grundfos, Bonomi, Ajax
+  RAFTEC, Ekoplastik, ASG, OSTENDORF, PLM, Giacomini,Rehau, Hidros, Idmar,
+  Termojet, Tatra, Ecosoft, Biasi, Wilo, Grundfos, Ajax
 
 Приклади:
   "Труба 32/1000 Wavin" → normalized: "Труба вн. канал. ф32 L=1м"  (Wavin прибрати)
