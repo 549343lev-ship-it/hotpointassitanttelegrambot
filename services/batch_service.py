@@ -20,7 +20,7 @@ def _qty_num(qty_str) -> float:
 def expand_push_marker(позиції: list[dict]) -> list[dict]:
     """Якщо в списку є 'гільзи' — переводить PPR/metal_plastic у push_systems."""
     has_sleeve = any(
-        'гільз' in (п.get('original', '') + п.get('normalized', '')).lower()
+        'гільз' in ((п.get('original') or '') + (п.get('normalized') or '')).lower()
         for п in позиції
     )
     if not has_sleeve:
@@ -28,7 +28,7 @@ def expand_push_marker(позиції: list[dict]) -> list[dict]:
     for п in позиції:
         if п.get('category') in ('plastic_ppr', 'metal_plastic', 'other'):
             п['category'] = 'push_systems'
-            n = п.get('normalized', '')
+            n = п.get('normalized') or ''
             if 'push' not in n.lower() and 'натяжн' not in n.lower():
                 п['normalized'] = (n + ' натяжний PUSH').strip()
     return позиції
