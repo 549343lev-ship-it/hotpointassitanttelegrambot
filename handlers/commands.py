@@ -87,17 +87,23 @@ def _do_stop(chat_id: int, bot, state: dict):
     """Зупиняє всі активні сесії для чату."""
     from engine.brand_selector import cancel as bs_cancel
 
-    state['stop_flags'][chat_id] = True
+    # stop_flag — сигнал для process_service щоб перервав обробку
+    state.setdefault('stop_flags', {})[chat_id] = True
 
-    if chat_id in state['user_batches']:
-        t = state['user_batches'][chat_id].get('timer')
+    # Скасовуємо таймер батчу фото
+    batches = state.get('user_batches', {})
+    if chat_id in batches:
+        t = batches[chat_id].get('timer')
         if t:
-            t.cancel()
-        state['user_batches'].pop(chat_id, None)
+            try: t.cancel()
+            except Exception: pass
+        batches.pop(chat_id, None)
 
-    state.get('_order_setup', {}).pop(chat_id, None)
-    state.get('_pre_batch',   {}).pop(chat_id, None)
-    state.get('_learn_state', {}).pop(chat_id, None)
-    state.get('_manual_wait', {}).pop(chat_id, None)
-    state.get('pending_hints',{}).pop(chat_id, None)
+    # Очищаємо всі стани цього користувача
+    for key in ('_order_setup', '_pre_batch', '_learn_state',
+                '_manual_wait', 'pending_hints', '_fix_state',
+                '_training_state', '_rule_state'):
+        state.get(key, {}).pop(chat_id, None)
+
+    # Скасовуємо вибір виробника
     bs_cancel(chat_id)
