@@ -25,6 +25,8 @@ DATA_DIR    = os.environ.get("DATA_DIR") or ("/var/data" if os.path.isdir("/var/
 CLIENTS_DIR = os.path.join(DATA_DIR, "clients")
 INDEX_FILE  = os.path.join(CLIENTS_DIR, "index.json")
 
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
+
 _active_clients: dict = {}  # chat_id → slug
 
 _KNOWN_BRANDS = ['raftec', 'ekoplastik', 'asg', 'ostendorf', 'plm', 'hidros',
@@ -68,7 +70,7 @@ def _jaccard(a: str, b: str) -> float:     # нечіткий збіг двох 
 
 # ─── CRUD клієнтів ───────────────────────────────────────────────────────────
 
-def create_client(name: str, notes: str = "") -> tuple[bool, str]:  # створює клієнта; повертає (успіх, slug або повідомлення)
+def create_client(name: str, notes: str = "", owner_id: int = 0) -> tuple[bool, str]:  # створює клієнта; повертає (успіх, slug або повідомлення)
     slug = _slugify(name)
     if not slug:
         return False, "Невалідне ім'я клієнта"
@@ -86,6 +88,7 @@ def create_client(name: str, notes: str = "") -> tuple[bool, str]:  # створ
         "created":      time.strftime("%Y-%m-%d %H:%M"),
         "orders_count": 0,
         "examples_count": 0,
+        "owner_id":     owner_id,   # chat_id менеджера що створив
     }
     with open(os.path.join(client_dir, "profile.json"), "w", encoding="utf-8") as f:
         json.dump(profile, f, ensure_ascii=False, indent=2)
@@ -143,8 +146,52 @@ def add_note(slug: str, note: str) -> bool:
     return True
 
 
-def list_clients() -> dict:
-    return _load_index()
+def list_clients(owner_id: int = 0) -> dict:
+    """Повертає клієнтів: адмін бачить всіх, менеджер — тільки своїх."""
+    index = _load_index()
+    if owner_id == ADMIN_ID or owner_id == 0:
+        return index
+    result = {}
+    for slug, name in index.items():
+        profile = get_profile(slug)
+        if not profile:
+            continue
+        pid = profile.get('owner_id', 0)
+        if pid == owner_id or pid == 0:
+            result[slug] = name
+    return result
+
+
+def list_profiles(owner_id: int = 0) -> list[dict]:
+    """Повертає список профілів клієнтів для даного менеджера (або всіх для адміна)."""
+    filtered = list_clients(owner_id=owner_id)
+    result = []
+    for slug in filtered:
+        p = get_profile(slug)
+        if p:
+            p['slug'] = slug
+            result.append(p)
+    return sorted(result, key=lambda x: x.get('name', ''))
+
+
+def create_profile(slug: str, name: str, owner_id: int = 0):
+    """Створює профіль клієнта (спрощений виклик для client_handler)."""
+    client_dir = os.path.join(CLIENTS_DIR, slug)
+    os.makedirs(os.path.join(client_dir, "history"),  exist_ok=True)
+    os.makedirs(os.path.join(client_dir, "examples"), exist_ok=True)
+    profile = {
+        "name":           name,
+        "notes":          [],
+        "created":        time.strftime("%Y-%m-%d %H:%M"),
+        "orders_count":   0,
+        "examples_count": 0,
+        "owner_id":       owner_id,
+    }
+    with open(os.path.join(client_dir, "profile.json"), "w", encoding="utf-8") as f:
+        json.dump(profile, f, ensure_ascii=False, indent=2)
+    index = _load_index()
+    index[slug] = name
+    _save_index(index)
 
 
 # ─── Активний клієнт ─────────────────────────────────────────────────────────
