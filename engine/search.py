@@ -25,7 +25,8 @@ from engine.router import (route_batch, get_prefix, CAT_PREFIX,
 from engine.voyage_search import (voyage_find_one, voyage_search,
                                    rebuild_if_needed, is_ready as voyage_ready,
                                    make_routing_path,
-                                   THRESHOLD_AUTO, THRESHOLD_MIN)  # векторний пошук Voyage AI
+                                   THRESHOLD_AUTO, THRESHOLD_MIN,
+                                   SIMILAR_CATS)  # векторний пошук Voyage AI
 
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_KEY", "")
 claude        = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
@@ -206,21 +207,6 @@ DEFAULT_BRAND_PRIORITY = {  # якщо менеджер не вказав вир
     'water_meters':            [['ecostar', 'Ecostar', 'ECOSTAR']],
 }
 
-SIMILAR_CATS = {    # суміжні категорії: якщо не знайшли в основній — шукаємо тут (Gemini міг помилитись категорією)
-    'plastic_ppr':       ['adapters_reducers', 'heating'],
-    'adapters_reducers': ['plastic_ppr', 'shutoff_valves', 'heating'],
-    'heating':           ['plastic_ppr', 'shutoff_valves', 'adapters_reducers'],
-    'push_systems':      ['metal_plastic', 'plastic_ppr'],
-    'metal_plastic':     ['push_systems', 'adapters_reducers'],
-    'sewage':            ['siphons_fittings'],
-    'siphons_fittings':  ['sewage'],
-    'shutoff_valves':    ['adapters_reducers', 'safety_valves', 'filtration'],
-    'filtration':        [],              # самопромивні фільтри НЕ шукаємо в shutoff_valves
-    'underfloor_heating':['metal_plastic', 'push_systems'],
-    'insulation':        ['fasteners_sealants'],
-    'fasteners_sealants':['insulation'],
-    'boilers':           ['heating', 'shutoff_valves'],
-}
 
 # ─── Типи та атрибути ────────────────────────────────────────────────────────
 
@@ -1432,6 +1418,10 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                 # Claude вибір — відправляємо на підтвердження адміну
                 pending_add(пос['original'], пос['brand_map'], пос['normalized'],
                             found['name'], пос['category'], conf, source='claude')
+                # Зберігаємо в загальний кеш якщо confidence >= 95
+                if conf >= 95 and not пос.get('brand_warning'):
+                    cache_save(пос['original'], пос['brand_map'], пос['normalized'],
+                               found['name'], пос['category'], conf)
                 if пос.get('client_slug'):
                     clients.client_cache_save(пос['client_slug'], пос['original'],
                                               found['name'], пос['category'], conf)
