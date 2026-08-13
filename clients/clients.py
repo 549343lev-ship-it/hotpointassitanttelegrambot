@@ -25,7 +25,10 @@ DATA_DIR    = os.environ.get("DATA_DIR") or ("/var/data" if os.path.isdir("/var/
 CLIENTS_DIR = os.path.join(DATA_DIR, "clients")
 INDEX_FILE  = os.path.join(CLIENTS_DIR, "index.json")
 
-ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
+try:
+    from config.settings import ADMIN_ID
+except ImportError:
+    ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 
 _active_clients: dict = {}  # chat_id → slug
 
@@ -495,7 +498,18 @@ def get_client_cache(slug: str) -> dict:    # повертає весь кеш �
         return {}
 
 
-def get_client_cache_stats(slug: str) -> dict:  # статистика кешу клієнта: total/auto/confirmed/banned
+def get_order_count(slug: str) -> int:
+    profile = get_profile(slug)
+    return profile.get('orders_count', 0) if profile else 0
+
+
+def clear_client_cache(slug: str, mode: str = 'all') -> int:
+    """mode: 'all' | 'auto' | 'confirmed' | 'banned'"""
+    status_filter = None if mode == 'all' else mode
+    return client_cache_clear(slug, status_filter)
+
+
+  # статистика кешу клієнта: total/auto/confirmed/banned
     cache     = get_client_cache(slug)
     confirmed = sum(1 for v in cache.values() if v.get('status') == 'confirmed')
     banned    = sum(1 for v in cache.values() if v.get('status') == 'banned')
