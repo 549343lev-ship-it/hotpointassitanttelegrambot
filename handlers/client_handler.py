@@ -114,38 +114,48 @@ def register(bot, state: dict):
         new_page  = page - 1 if direction == 'prev' else page + 1
         _show_client_cache(call.message.chat.id, slug, new_page, bot)
 
-    @bot.callback_query_handler(func=lambda c: c.data.startswith('cck_'))
+    @bot.callback_query_handler(func=lambda c: c.data.startswith('cck|'))
     def cb_client_cache_action(call):
-        from clients.cache import cache_set_status
         bot.answer_callback_query(call.id)
-        parts = call.data.split('_')
-        action = parts[1]  # ok / no / all
-        idx    = int(parts[2]) if len(parts) > 2 else 0
-        slug   = clients.get_active(call.message.chat.id)
-        if not slug:
-            return
-        cache_items = clients.get_client_cache(slug)
-        keys        = list(cache_items.keys())
-        if idx >= len(keys):
-            return
-        key  = keys[idx]
-        data = cache_items[key]
-        if action == 'ok':
-            clients.client_cache_set_status(slug, key, data.get('name', ''), 'confirmed')
-            bot.edit_message_text(f"✅ Підтверджено: {key}",
-                                  call.message.chat.id, call.message.message_id)
-        elif action == 'no':
-            clients.client_cache_set_status(slug, key, data.get('name', ''), 'banned')
-            bot.edit_message_text(f"🚫 Заборонено: {key}",
-                                  call.message.chat.id, call.message.message_id)
-        elif action == 'all':
+        # формат: cck|ok|slug|key  або  cck|all|slug
+        parts  = call.data.split('|', 3)
+        action = parts[1]   # ok / no / all
+
+        if action == 'all':
+            slug = parts[2]
+            cache_items = clients.get_client_cache(slug)
             n = 0
             for k, d in cache_items.items():
                 if d.get('status') == 'auto':
-                    clients.client_cache_set_status(slug, k, d.get('name',''), 'confirmed')
+                    clients.client_cache_set_status(slug, k, d.get('catalog_name', d.get('name', '')), 'confirmed')
                     n += 1
             bot.edit_message_text(f"✅ Підтверджено {n} авто-записів.",
                                   call.message.chat.id, call.message.message_id)
+            return
+
+        # ok / no: parts[2]=slug, parts[3]=key
+        slug = parts[2]
+        key  = parts[3] if len(parts) > 3 else ''
+        if not slug or not key:
+            return
+        cache_items = clients.get_client_cache(slug)
+        # Шукаємо запис по початку ключа (key обрізаний до 60 символів)
+        real_key = next((k for k in cache_items if k.startswith(key) or k == key), None)
+        if not real_key:
+            bot.edit_message_text("⚠️ Запис не знайдено (можливо вже оброблений).",
+                                  call.message.chat.id, call.message.message_id); return
+        data = cache_items[real_key]
+        catalog_name = data.get('catalog_name', data.get('name', ''))
+        if action == 'ok':
+            clients.client_cache_set_status(slug, real_key, catalog_name, 'confirmed')
+            bot.edit_message_text(f"✅ Підтверджено:\n`{real_key[:50]}`",
+                                  call.message.chat.id, call.message.message_id,
+                                  parse_mode='Markdown')
+        elif action == 'no':
+            clients.client_cache_set_status(slug, real_key, catalog_name, 'banned')
+            bot.edit_message_text(f"🚫 Заблоковано:\n`{real_key[:50]}`",
+                                  call.message.chat.id, call.message.message_id,
+                                  parse_mode='Markdown')
 
     @bot.callback_query_handler(func=lambda c: c.data.startswith('ccl__'))
     def cb_cache_clear(call):
@@ -218,16 +228,15 @@ def _show_client_cache(chat_id: int, slug: str, page: int, bot):
 
     cache_items = clients.get_client_cache(slug)
     if not cache_items:
-        bot.send_message(chat_id, "📭 Кеш клієнта порожній."); return
+        bot.send_message(chat_id, '📭 Кеш клієнта порожній.'); return
 
-    # Показуємо тільки auto — confirmed і banned вже оброблені
     keys = [k for k, v in cache_items.items() if v.get('status', 'auto') == 'auto']
     if not keys:
-        total = len(cache_items)
+        total     = len(cache_items)
         confirmed = sum(1 for v in cache_items.values() if v.get('status') == 'confirmed')
         banned    = sum(1 for v in cache_items.values() if v.get('status') == 'banned')
         bot.send_message(chat_id,
-            f"✅ Всі записи оброблені ({total} всього: {confirmed} підтверджено, {banned} заблоковано).")
+            f'✅ Всі записи оброблені ({total} всього: {confirmed} підтверджено, {banned} заблоковано).')
         return
     total_pages = max(1, (len(keys) + PAGE_SIZE - 1) // PAGE_SIZE)
     page        = max(0, min(page, total_pages - 1))
