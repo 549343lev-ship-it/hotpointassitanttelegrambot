@@ -119,41 +119,40 @@ def register(bot, state: dict):
         bot.answer_callback_query(call.id)
         # формат: cck|ok|slug|key  або  cck|all|slug
         parts  = call.data.split('|', 3)
-        action = parts[1]   # ok / no / all
-
+        action = parts[1]
         if action == 'all':
             slug = parts[2]
             cache_items = clients.get_client_cache(slug)
             n = 0
             for k, d in cache_items.items():
                 if d.get('status') == 'auto':
-                    clients.client_cache_set_status(slug, k, d.get('catalog_name', d.get('name', '')), 'confirmed')
+                    clients.client_cache_set_status(slug, k, '', 'confirmed')
                     n += 1
-            bot.edit_message_text(f"✅ Підтверджено {n} авто-записів.",
+            bot.edit_message_text(f'✅ Підтверджено {n} авто-записів.',
                                   call.message.chat.id, call.message.message_id)
             return
-
-        # ok / no: parts[2]=slug, parts[3]=key
-        slug = parts[2]
-        key  = parts[3] if len(parts) > 3 else ''
-        if not slug or not key:
+        # ok / no: parts[2]=slug, parts[3]=key (може містити |)
+        slug    = parts[2]
+        key_pfx = parts[3] if len(parts) > 3 else ''
+        if not slug or not key_pfx:
             return
         cache_items = clients.get_client_cache(slug)
-        # Шукаємо запис по початку ключа (key обрізаний до 60 символів)
-        real_key = next((k for k in cache_items if k.startswith(key) or k == key), None)
+        # Шукаємо запис: точний збіг або починається з key_pfx
+        real_key = cache_items.get(key_pfx) and key_pfx
         if not real_key:
-            bot.edit_message_text("⚠️ Запис не знайдено (можливо вже оброблений).",
+            real_key = next((k for k in cache_items if k == key_pfx or k.startswith(key_pfx)), None)
+        if not real_key:
+            bot.edit_message_text('⚠️ Запис не знайдено (можливо вже оброблений).',
                                   call.message.chat.id, call.message.message_id); return
-        data = cache_items[real_key]
-        catalog_name = data.get('catalog_name', data.get('name', ''))
+        # Передаємо catalog_name='' щоб client_cache_set_status завжди спрацьовував по ключу
         if action == 'ok':
-            clients.client_cache_set_status(slug, real_key, catalog_name, 'confirmed')
-            bot.edit_message_text(f"✅ Підтверджено:\n`{real_key[:50]}`",
+            clients.client_cache_set_status(slug, real_key, '', 'confirmed')
+            bot.edit_message_text(f'✅ Підтверджено: `{real_key[:50]}`',
                                   call.message.chat.id, call.message.message_id,
                                   parse_mode='Markdown')
         elif action == 'no':
-            clients.client_cache_set_status(slug, real_key, catalog_name, 'banned')
-            bot.edit_message_text(f"🚫 Заблоковано:\n`{real_key[:50]}`",
+            clients.client_cache_set_status(slug, real_key, '', 'banned')
+            bot.edit_message_text(f'🚫 Заблоковано: `{real_key[:50]}`',
                                   call.message.chat.id, call.message.message_id,
                                   parse_mode='Markdown')
 
@@ -232,11 +231,11 @@ def _show_client_cache(chat_id: int, slug: str, page: int, bot):
 
     keys = [k for k, v in cache_items.items() if v.get('status', 'auto') == 'auto']
     if not keys:
-        total     = len(cache_items)
         confirmed = sum(1 for v in cache_items.values() if v.get('status') == 'confirmed')
         banned    = sum(1 for v in cache_items.values() if v.get('status') == 'banned')
         bot.send_message(chat_id,
-            f'✅ Всі записи оброблені ({total} всього: {confirmed} підтверджено, {banned} заблоковано).')
+            f'✅ Всі {len(cache_items)} записів оброблено '
+            f'({confirmed} підтверджено, {banned} заблоковано).')
         return
     total_pages = max(1, (len(keys) + PAGE_SIZE - 1) // PAGE_SIZE)
     page        = max(0, min(page, total_pages - 1))
