@@ -58,7 +58,7 @@ def apply_fix(fix: dict) -> None:
         if slug:
             _clients.client_cache_set_status(slug, original, old, 'banned')
     if new:
-        cache_confirm(original, {}, fix.get('normalized', original), new, cat)
+        cache_confirm(original, {}, fix.get('normalized', original), new, cat, source="training")
         if slug:
             _clients.client_cache_save(slug, original, new, cat, 100)
             _clients.client_cache_set_status(slug, original, new, 'confirmed')
