@@ -192,13 +192,15 @@ def cache_save(original: str, brand_map: dict, normalized: str,
         "category":     category,
         "confidence":   confidence,
         "status":       "auto",
+        "source":       "auto",
         "saved_at":     _today(),
     }
     _save_cache()
 
 
 def cache_confirm(original: str, brand_map: dict, normalized: str,
-                  catalog_name: str, category: str):    # зберігає підтверджений адміном або навчанням запис (confidence=100, без TTL)
+                  catalog_name: str, category: str,
+                  source: str = "confirmed"):   # зберігає підтверджений запис; source: confirmed/training/client
     key = _cache_key(original, brand_map)
     _CACHE[key] = {
         "normalized":   normalized,
@@ -206,6 +208,7 @@ def cache_confirm(original: str, brand_map: dict, normalized: str,
         "category":     category,
         "confidence":   100,
         "status":       "confirmed",
+        "source":       source,
         "saved_at":     _today(),
     }
     _save_cache()
