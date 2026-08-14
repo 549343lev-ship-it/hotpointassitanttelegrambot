@@ -13,7 +13,6 @@ def main_keyboard(uid: int) -> ReplyKeyboardMarkup:
     )
     kb.add(
         KeyboardButton("👥 Кеш клієнта"),
-        KeyboardButton("📚 Навчання"),
         KeyboardButton("📋 Правило"),
         KeyboardButton("🛑 Стоп"),
     )
@@ -26,5 +25,8 @@ def main_keyboard(uid: int) -> ReplyKeyboardMarkup:
         kb.add(
             KeyboardButton("👑 Правила на розгляд"),
             KeyboardButton("👑 Перевір кеш"),
+        )
+        kb.add(
+            KeyboardButton("📖 Словник"),
         )
     return kb
