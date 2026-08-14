@@ -12,6 +12,7 @@ def register(bot, state: dict):
     from clients.pending_cache import (pending_count, pending_get_batch, pending_confirm,
                                        pending_reject, pending_confirm_all_batch,
                                        pending_reject_all_batch, pending_clear_all)
+    from synonym_export import build_synonym_excel
 
     def _admin(uid): return uid == ADMIN_ID
 
@@ -93,6 +94,27 @@ def register(bot, state: dict):
                     n += 1
             bot.answer_callback_query(call.id, f"Видалено {n} авто-записів")
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id)
+
+    # ── Словник синонімів ──────────────────────────────────────────────────────
+    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() == "словник")
+    def kb_synonym_export(message):
+        if not _admin(message.from_user.id): return
+        tmp = os.path.join(DATA_DIR, "synonym_export.xlsx")
+        try:
+            count = build_synonym_excel(tmp)
+            if count == 0:
+                bot.reply_to(message, "📋 Кеш порожній — словник пустий."); return
+            with open(tmp, 'rb') as f:
+                bot.send_document(
+                    message.chat.id, f,
+                    caption=(f"📖 *Словник синонімів*: {count} записів\n"
+                             f"✅ підтверджені · 🤖 авто · 🚫 заблоковані"),
+                    visible_file_name=f"словник_{time.strftime('%Y%m%d')}.xlsx",
+                    parse_mode="Markdown")
+        except Exception as e:
+            bot.reply_to(message, f"❌ {e}")
+        finally:
+            if os.path.exists(tmp): os.remove(tmp)
 
     # ── Pending кеш ────────────────────────────────────────────────────────────
     @bot.message_handler(func=lambda m: m.text and (
