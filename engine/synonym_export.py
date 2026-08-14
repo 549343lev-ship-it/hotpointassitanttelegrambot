@@ -18,8 +18,8 @@ import time
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from config.settings import DATA_DIR
 
-DATA_DIR   = os.environ.get("DATA_DIR") or ("/var/data" if os.path.isdir("/var/data") else ".")
 CACHE_FILE = os.path.join(DATA_DIR, "normalization_cache.json")
 
 STATUS_ICON = {
