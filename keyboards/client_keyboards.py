@@ -17,10 +17,10 @@ def client_cache_page_keyboard(slug: str, page: int, total_pages: int) -> Inline
     mk = InlineKeyboardMarkup(row_width=3)
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("◀️", callback_data=f"ccp_prev_{slug}_{page}"))
-    nav.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="ccp_noop"))
+        nav.append(InlineKeyboardButton("◀️", callback_data=f"ccp|prev|{slug}|{page}"))
+    nav.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="ccp|noop"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton("▶️", callback_data=f"ccp_next_{slug}_{page}"))
+        nav.append(InlineKeyboardButton("▶️", callback_data=f"ccp|next|{slug}|{page}"))
     if nav:
         mk.add(*nav)
     return mk
