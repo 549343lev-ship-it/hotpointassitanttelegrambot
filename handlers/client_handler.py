@@ -41,8 +41,8 @@ def register(bot, state: dict):
             bot.reply_to(message, "👤 Клієнта скинуто."); return
 
         index = clients.list_clients()
-        matches = [(slug, name) for slug, name in index.items()
-                   if rest.lower() in name.lower() or rest.lower() == slug]
+        matches = [(s, n) for s, n in index.items()
+                   if rest.lower() in n.lower() or rest.lower() == s]
         if not matches:
             bot.reply_to(message, f"❓ Клієнта '{rest}' не знайдено.\n"
                                    f"`новий клієнт {rest}` — щоб створити.",
@@ -52,9 +52,9 @@ def register(bot, state: dict):
         else:
             from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
             mk = InlineKeyboardMarkup(row_width=1)
-            for slug, name in matches:
-                mk.add(InlineKeyboardButton(f'👤 {name}', callback_data=f'cl_use_{slug}'))
-            bot.reply_to(message, "Оберіть клієнта:", reply_markup=mk)
+            for s, n in matches:
+                mk.add(InlineKeyboardButton(f'👤 {n}', callback_data=f'cl_use_{s}'))
+            bot.reply_to(message, 'Оберіть клієнта:', reply_markup=mk)
 
     @bot.callback_query_handler(func=lambda c: c.data.startswith('sel_client_'))
     def cb_select_client(call):
@@ -102,14 +102,14 @@ def register(bot, state: dict):
         state.setdefault('_manual_wait', {})[call.message.chat.id] = {'mode': 'new_client'}
         bot.send_message(call.message.chat.id, "👤 Введи ім'я нового клієнта:")
 
-    @bot.callback_query_handler(func=lambda c: c.data.startswith('ccp_'))
+    @bot.callback_query_handler(func=lambda c: c.data.startswith('ccp|'))
     def cb_client_cache_page(call):
         bot.answer_callback_query(call.id)
-        parts = call.data.split('_')
-        if len(parts) < 4:
+        parts = call.data.split('|')
+        if len(parts) < 4 or parts[1] == 'noop':
             return
-        direction = parts[1]  # prev / next
-        slug      = parts[2]
+        direction = parts[1]   # prev / next
+        slug      = parts[2]   # slug може містити _ — тому розділяємо по |
         page      = int(parts[3])
         new_page  = page - 1 if direction == 'prev' else page + 1
         _show_client_cache(call.message.chat.id, slug, new_page, bot)
