@@ -133,9 +133,9 @@ def register(bot, state: dict):
                 if old_name:
                     cache_ban_pair(original, old_name, cat)
                     if cslug: clients.client_cache_set_status(cslug,original,old_name,'banned')
-                cache_confirm(save_orig, {}, r.get('normalized', save_orig), new_name, cat)
+                cache_confirm(save_orig, {}, r.get('normalized', save_orig), new_name, cat, source="training")
                 if save_orig != original:
-                    cache_confirm(original, {}, save_orig, new_name, cat)
+                    cache_confirm(original, {}, save_orig, new_name, cat, source="training")
                 if cslug:
                     clients.client_cache_save(cslug, save_orig, new_name, cat, 100)
                     clients.client_cache_set_status(cslug, save_orig, new_name, 'confirmed')
@@ -235,7 +235,7 @@ def register(bot, state: dict):
                          parse_mode='Markdown'); return
         if _adm(message.from_user.id):
             if not cache_set_status(original, назва, 'confirmed'):
-                cache_confirm(original, {}, r.get('normalized', original), назва, cat)
+                cache_confirm(original, {}, r.get('normalized', original), назва, cat, source="training")
             if last.get('client_slug'):
                 clients.client_cache_save(last['client_slug'], original, назва, cat, 100)
                 clients.client_cache_set_status(last['client_slug'], original, назва, 'confirmed')
@@ -334,7 +334,7 @@ def register(bot, state: dict):
             if old_name:
                 cache_ban_pair(original, old_name, cat)
                 if cslug: clients.client_cache_set_status(cslug, original, old_name, 'banned')
-            cache_confirm(original, {}, r.get('normalized', original), new_name, cat)
+            cache_confirm(original, {}, r.get('normalized', original), new_name, cat, source="training")
             if cslug:
                 clients.client_cache_save(cslug, original, new_name, cat, 100)
                 clients.client_cache_set_status(cslug, original, new_name, 'confirmed')
