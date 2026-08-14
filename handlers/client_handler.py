@@ -108,8 +108,8 @@ def register(bot, state: dict):
         parts = call.data.split('|')
         if len(parts) < 4 or parts[1] == 'noop':
             return
-        direction = parts[1]   # prev / next
-        slug      = parts[2]   # slug може містити _ — тому розділяємо по |
+        direction = parts[1]
+        slug      = parts[2]
         page      = int(parts[3])
         new_page  = page - 1 if direction == 'prev' else page + 1
         _show_client_cache(call.message.chat.id, slug, new_page, bot)
@@ -220,7 +220,15 @@ def _show_client_cache(chat_id: int, slug: str, page: int, bot):
     if not cache_items:
         bot.send_message(chat_id, "📭 Кеш клієнта порожній."); return
 
-    keys       = list(cache_items.keys())
+    # Показуємо тільки auto — confirmed і banned вже оброблені
+    keys = [k for k, v in cache_items.items() if v.get('status', 'auto') == 'auto']
+    if not keys:
+        total = len(cache_items)
+        confirmed = sum(1 for v in cache_items.values() if v.get('status') == 'confirmed')
+        banned    = sum(1 for v in cache_items.values() if v.get('status') == 'banned')
+        bot.send_message(chat_id,
+            f"✅ Всі записи оброблені ({total} всього: {confirmed} підтверджено, {banned} заблоковано).")
+        return
     total_pages = max(1, (len(keys) + PAGE_SIZE - 1) // PAGE_SIZE)
     page        = max(0, min(page, total_pages - 1))
     start       = page * PAGE_SIZE
