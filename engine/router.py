@@ -1,300 +1,727 @@
-"""handlers/learn_handler.py — Навчання бота на парах фото+рахунок клієнта."""
-import os
+"""
+router.py — Ієрархічний маршрутизатор категорій.
+
+КОНЦЕПЦІЯ (адресна система):
+  Кожна "папка" каталогу має унікальний ID з інкрементних літер.
+  Кожен рівень вкладеності додає літери до батьківського ID.
+
+  Приклади:
+    kn          → Каналізація (sewage)
+    kn.u        → Внутрішня каналізація
+    kn.u.p      → Труби внутрішньої каналізації
+    kn.u.p.a    → ASG труби (внутрішня)
+    kn.u.p.b    → Ostendorf труби (внутрішня)
+    kn.u.f      → Фітинги внутрішньої каналізації
+    kn.e        → Зовнішня каналізація
+    kn.s        → Безшумна (S-LINE)
+    pp          → PPR пластик
+    pp.p        → PPR труби
+    pp.p.a      → ASG труби PPR
+    pp.f        → PPR фітинги
+    pp.f.m      → Муфти PPR
+
+ЛОГІКА ПОШУКУ:
+  1. route() → повертає node_id (наприклад 'kn.u.p.a')
+  2. Пошук фільтрує: item['node_id'].startswith(node_id)
+     → знаходить усі товари у вузлі і всіх підвузлах
+
+СТРУКТУРА ВУЗЛА (NODE):
+  id:        str   — унікальний ієрархічний ID ('kn.u.p.a')
+  category:  str   — назва категорії в каталозі ('sewage')
+  patterns:  list  — regex-паттерни що потрапляють у цей вузол
+  groups:    list  — рядки що шукаємо в полі group товару (для sub-фільтрації)
+  brands:    list  — ключові слова виробника (для sub-фільтрації)
+
+ЗВОРОТНЯ СУМІСНІСТЬ:
+  CAT_PREFIX, PREFIX_CAT, get_prefix(), route_batch(), label() — збережено.
+  route() тепер повертає category_code (як раніше), але також додає _node_id.
+"""
+
 import re
-import threading
-import json
-
-from config.settings import BATCH_TIMEOUT
+from typing import Optional
 
 
-def register(bot, state: dict):
-    from clients import clients
+# ─── Рівень 1: Кореневі вузли (=категорії каталогу) ─────────────────────────
+# id → category_code.  Збігається з ключами CATALOG_FILES.
 
-    _learn_state       = state.setdefault('_learn_state', {})
-    _learn_photo_batch  = {}
-    _learn_photo_timers = {}
+ROOT_NODES: dict[str, str] = {   # node_id → category_code
+    'pp':  'plastic_ppr',
+    'kn':  'sewage',
+    'ps':  'push_systems',
+    'sv':  'shutoff_valves',
+    'ar':  'adapters_reducers',
+    'ht':  'heating',
+    'bl':  'boilers',
+    'wh':  'water_heaters',
+    'pm':  'pumps',
+    'rd':  'radiators_radiatorsvalve',
+    'mp':  'metal_plastic',
+    'fl':  'filtration',
+    'ins': 'insulation',
+    'uf':  'underfloor_heating',
+    'wm':  'water_meters',
+    'mx':  'mixers_faucets',
+    'tw':  'towel_warmers',
+    'fs':  'fasteners_sealants',
+    'sw':  'sanitary_ware',
+    'sf':  'siphons_fittings',
+    'hs':  'hoses',
+    'at':  'automation',
+    'sav': 'safety_valves',
+}
 
-    # ── Запуск навчання ───────────────────────────────────────────────────────
-
-    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('навчання', '📚 навчання'))
-    def handle_learn_start(message):
-        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-        slug = clients.get_active(message.chat.id)
-        if not slug:
-            index = clients.list_clients()
-            if not index:
-                bot.reply_to(message,
-                    "⚠️ Немає жодного клієнта.\nСпочатку створи: `новий клієнт Ім'я`",
-                    parse_mode="Markdown"); return
-            mk = InlineKeyboardMarkup(row_width=1)
-            for s, cname in sorted(index.items(), key=lambda x: x[1])[:10]:
-                mk.add(InlineKeyboardButton(f"👤 {cname}", callback_data=f"lrn_{s}"))
-            bot.reply_to(message, "📚 Кого навчаємо? Обери клієнта:", reply_markup=mk)
-            return
-        _start_learn_session(message.chat.id, slug, reply_to=message)
-
-    # ── Вибір клієнта для навчання ────────────────────────────────────────────
-
-    @bot.callback_query_handler(func=lambda c: c.data.startswith('lrn_') and c.data != 'lrn_photos_done')
-    def cb_learn_pick_client(call):
-        slug = call.data[4:]
-        p    = clients.get_profile(slug)
-        if not p:
-            bot.answer_callback_query(call.id, "Клієнта не знайдено"); return
-        clients.set_active(call.message.chat.id, slug)
-        bot.edit_message_text(
-            f"👤 Обрано: *{p['name']}*",
-            call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-        bot.answer_callback_query(call.id)
-        _start_learn_session(call.message.chat.id, slug)
-
-    # ── Ініціалізація сесії ───────────────────────────────────────────────────
-
-    def _start_learn_session(chat_id: int, slug: str, reply_to=None):
-        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-        p       = clients.get_profile(slug)
-        _, ex_n = clients.get_next_example_dir(slug)
-        _learn_state[chat_id] = {
-            'slug':            slug,
-            'example_n':       ex_n,
-            'stage':           'photos',
-            'photo_paths':     [],
-            'photo_count':     0,
-            'invoice_received': False,
-        }
-        text = (
-            f"📚 Навчання клієнта *{p['name'] if p else slug}*\n"
-            f"Приклад #{ex_n}\n\n"
-            f"Крок 1️⃣: Кидай фото замовлення від майстра\n"
-            f"_(можна кілька — коли всі кинув, натисни_ *Готово* _або одразу кидай рахунок)_"
-        )
-        mk = InlineKeyboardMarkup()
-        mk.add(InlineKeyboardButton("✅ Фото готові — кидай рахунок", callback_data="lrn_photos_done"))
-        if reply_to:
-            bot.reply_to(reply_to, text, parse_mode="Markdown", reply_markup=mk)
-        else:
-            bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=mk)
-
-    # ── Прийом фото ───────────────────────────────────────────────────────────
-
-    @bot.message_handler(content_types=['photo'],
-                         func=lambda m: m.chat.id in state.get('_learn_state', {})
-                         and state['_learn_state'][m.chat.id].get('stage') in ('photos', 'invoice')
-                         and not state['_learn_state'][m.chat.id].get('invoice_received'))
-    def handle_learn_photo(message):
-        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-        st = _learn_state.get(message.chat.id)
-        if not st or st.get('invoice_received'):
-            return
-        st['stage'] = 'photos'
-
-        chat_id = message.chat.id
-        ex_n    = st['example_n']
-
-        file_info = bot.get_file(message.photo[-1].file_id)
-        file_data = bot.download_file(file_info.file_path)
-        ext       = (file_info.file_path.split('.')[-1] or 'jpg').lower()
-        _learn_photo_batch.setdefault(chat_id, []).append((file_data, ext))
-
-        if chat_id in _learn_photo_timers:
-            _learn_photo_timers[chat_id].cancel()
-
-        def _flush(cid):
-            batch  = _learn_photo_batch.pop(cid, [])
-            _learn_photo_timers.pop(cid, None)
-            lstate = _learn_state.get(cid)
-            if not lstate:
-                return
-            count_before = lstate.get('photo_count', 0)
-            for i, (fdata, fext) in enumerate(batch, start=count_before + 1):
-                fpath = os.path.join(
-                    clients.CLIENTS_DIR, lstate['slug'], "examples",
-                    f"приклад_{lstate['example_n']}", f"photo_{i}.{fext}"
-                )
-                os.makedirs(os.path.dirname(fpath), exist_ok=True)
-                with open(fpath, 'wb') as f:
-                    f.write(fdata)
-                lstate.setdefault('photo_paths', []).append(fpath)
-            lstate['photo_count'] = count_before + len(batch)
-            total = lstate['photo_count']
-            mk = InlineKeyboardMarkup()
-            mk.add(InlineKeyboardButton("✅ Фото готові — кидай рахунок",
-                                        callback_data="lrn_photos_done"))
-            bot.send_message(cid,
-                f"✅ Збережено фото: *{total}* шт.\nКидай ще або натисни кнопку і кидай рахунок.",
-                parse_mode="Markdown", reply_markup=mk)
-
-        t = threading.Timer(BATCH_TIMEOUT, _flush, args=[chat_id])
-        t.daemon = True
-        t.start()
-        _learn_photo_timers[chat_id] = t
-
-    # ── Кнопка "фото готові" ──────────────────────────────────────────────────
-
-    @bot.callback_query_handler(func=lambda c: c.data == 'lrn_photos_done')
-    def cb_learn_photos_done(call):
-        st = _learn_state.get(call.message.chat.id)
-        if not st:
-            bot.answer_callback_query(call.id, "Сесія завершена"); return
-        if st.get('photo_count', 0) == 0:
-            bot.answer_callback_query(call.id, "⚠️ Спочатку кинь хоча б одне фото!"); return
-        st['stage'] = 'invoice'
-        bot.edit_message_text(
-            f"✅ Фото збережено: {st['photo_count']} шт.\n\n"
-            f"Крок 2️⃣: Кидай файл рахунку (.xls або .xlsx)",
-            call.message.chat.id, call.message.message_id)
-        bot.answer_callback_query(call.id)
-
-    # ── Прийом рахунку ────────────────────────────────────────────────────────
-
-    @bot.message_handler(content_types=['document'],
-                         func=lambda m: m.chat.id in state.get('_learn_state', {})
-                         and state['_learn_state'][m.chat.id].get('stage') == 'invoice')
-    def handle_learn_invoice(message):
-        st   = _learn_state.get(message.chat.id)
-        slug = st['slug']
-        ex_n = st['example_n']
-
-        fname = message.document.file_name or ''
-        ext   = fname.rsplit('.', 1)[-1].lower() if '.' in fname else 'xlsx'
-        if ext not in ('xls', 'xlsx'):
-            bot.reply_to(message, "⚠️ Потрібен файл .xls або .xlsx"); return
-
-        file_info    = bot.get_file(message.document.file_id)
-        file_data    = bot.download_file(file_info.file_path)
-        invoice_path = clients.save_example_invoice(slug, ex_n, file_data, ext)
-
-        st['stage']            = 'invoice'
-        st['invoice_received'] = True
-
-        status_msg = bot.reply_to(message, "⏳ Зіставляю фото з рахунком через Gemini...")
-
-        invoice_items = clients.parse_invoice(invoice_path)
-        print(f"📄 parse_invoice: {len(invoice_items)} позицій з {invoice_path}", flush=True)
-        if not invoice_items:
-            bot.edit_message_text(
-                "❌ Не вдалося прочитати рахунок. Перевір формат файлу.",
-                message.chat.id, status_msg.message_id); return
-
-        photo_paths = st.get('photo_paths', [])
-        print(f"📸 Фото для навчання: {photo_paths}", flush=True)
-        if not photo_paths:
-            bot.edit_message_text(
-                "❌ Фото не знайдено. Почни навчання знову: `навчання`",
-                message.chat.id, status_msg.message_id, parse_mode="Markdown"); return
-
-        photos_bytes = []
-        for pp in photo_paths:
-            if os.path.exists(pp):
-                with open(pp, 'rb') as f:
-                    photos_bytes.append(f.read())
-                print(f"  ✅ {pp} ({os.path.getsize(pp)} байт)", flush=True)
-            else:
-                print(f"  ❌ Не знайдено: {pp}", flush=True)
-
-        if not photos_bytes:
-            bot.edit_message_text("❌ Файли фото не читаються. Спробуй знову.",
-                                  message.chat.id, status_msg.message_id); return
-
-        bot.edit_message_text(
-            f"⏳ Gemini аналізує {len(photos_bytes)} фото та {len(invoice_items)} позицій...",
-            message.chat.id, status_msg.message_id)
-
-        try:
-            pairs, raw_response = _gemini_match(photos_bytes, invoice_items)
-            print(f"🤖 Gemini (перші 500):\n{raw_response[:500]}", flush=True)
-        except Exception as e:
-            import traceback
-            print(f"❌ Gemini exception:\n{traceback.format_exc()}", flush=True)
-            bot.edit_message_text(
-                f"❌ Помилка Gemini:\n`{str(e)[:200]}`",
-                message.chat.id, status_msg.message_id, parse_mode="Markdown"); return
-
-        if not pairs:
-            bot.edit_message_text(
-                f"⚠️ Gemini не знайшов збігів між фото і рахунком.\n\n"
-                f"Можливі причини:\n"
-                f"• Фото і рахунок від різних замовлень\n"
-                f"• Фото нечітке або погано освітлене\n"
-                f"• Gemini не зміг розібрати почерк\n\n"
-                f"_Відповідь Gemini:_\n`{raw_response[:300]}`",
-                message.chat.id, status_msg.message_id, parse_mode="Markdown"); return
-
-        saved = clients.learn_from_example(slug, ex_n, pairs)
-        _learn_state.pop(message.chat.id, None)
-        print(f"✅ Навчання: збережено {saved}/{len(pairs)} пар", flush=True)
-
-        p = clients.get_profile(slug)
-        bot.edit_message_text(
-            f"✅ Навчання завершено!\n"
-            f"👤 Клієнт: *{p['name'] if p else slug}*\n"
-            f"📚 Приклад #{ex_n}\n"
-            f"📸 Фото: {len(photos_bytes)} шт.\n"
-            f"🔗 Знайдено збігів: *{len(pairs)}*\n"
-            f"💾 Збережено в кеш: *{saved}*\n\n"
-            f"Для ще одного прикладу: натисни *📚 Навчання*",
-            message.chat.id, status_msg.message_id, parse_mode="Markdown")
+CAT_NODE: dict[str, str] = {v: k for k, v in ROOT_NODES.items()}   # category_code → root node_id
 
 
-# ── Gemini зіставлення ────────────────────────────────────────────────────────
+# ─── Дерево вузлів ───────────────────────────────────────────────────────────
+# Кожен запис: (node_id, category_code, [regex_patterns], [group_keywords])
+# Паттерни: перевіряються на normalized.lower()+' '+original.lower()
+# group_keywords: перевіряються в полі 'group' + 'subgroup' товару при sub-фільтрації
+#
+# ВАЖЛИВО: порядок має значення — перший збіг перемагає.
+# Специфічніші правила — вище!
 
-def _gemini_match(photos_bytes: list[bytes],
-                  invoice_items: list[str]) -> tuple[list[dict], str]:
-    from google import genai as _genai
-    from google.genai import types as _gtypes
+TREE: list[tuple] = [
+    # ─────────────────────────────────────────────────────────────────────────
+    # КАНАЛІЗАЦІЯ (kn)
+    # ─────────────────────────────────────────────────────────────────────────
 
-    GEMINI_KEY   = os.environ.get("GEMINI_KEY", "")
-    client       = _genai.Client(api_key=GEMINI_KEY)
-    invoice_text = "\n".join(f"{i+1}. {name}" for i, name in enumerate(invoice_items))
+    # Зовнішня каналізація
+    ('kn.e',     'sewage',  [r'зовн\w*\s+канал|наруж\w*\s+канал|канал.*зовн|труба.*\bø\b.*нар|ф160|ф200|sn\d'],
+                            ['*Наружная', 'зовн', 'Зовнішня']),
 
-    prompt = f"""Ти — експерт з читання рукописних замовлень сантехніки українською мовою.
+    # Безшумна (S-LINE / Ostendorf бесшумная / Valrom бесшумная)
+    ('kn.s',     'sewage',  [r'безшум|s[\.\-]?line|sline|silent|raupiano'],
+                            ['безшум', 'бесшум', 'OSTENDORF бесшумная', 'Valrom бесшумная',
+                             'ASG безшумна', 'HTsafe', 'Rehau Raupiano']),
 
-На фото — рукописний список замовлення від майстра-сантехніка (може бути кілька сторінок).
-Нижче — рахунок з правильними назвами товарів з бази.
+    # Внутрішня — фітинги → виробники (ПЕРЕД трубами — специфічніші)
+    # Guard: виключаємо латунь/нікель/хром — це перехідники ar, не каналізація
+    ('kn.u.f.a', 'sewage',  [r'(коліно|муфта|трійник|заглушка|редукц|перехід|хрестовина|манжета).*(канал|°|\bф\d{2,3}).*asg(?!.*латун|.*нікел)'
+                              r'|asg.*(коліно|трійник|муфта|заглушка|редукц|перехід|манжета).*(канал|°|\bф\d{2,3})'],
+                            ['ASG', 'Фитинг']),
 
-РАХУНОК (товари з бази, {len(invoice_items)} позицій):
-{invoice_text}
+    # ВАЖЛИВО: kn.u.f.o — має збігатися з node_mapper (не kn.u.f.b!)
+    ('kn.u.f.o', 'sewage',  [r'(коліно|муфта|трійник|заглушка|редукц|перехід|хрестовина|манжета|хомут|мастило).*(канал|°|\bф\d{2,3}).*ostendorf'
+                              r'|ostendorf.*(коліно|трійник|муфта|заглушка|редукц|перехід|манжета|хомут|мастило)'
+                              r'|kg2000|ht\s?safe.*(коліно|трійник|муфта|заглушка|перехід|хомут|мастило)'],
+                            ['OSTENDORF', 'Ostendorf', 'KG2000']),
 
-ЗАВДАННЯ:
-1. Прочитай кожен рядок з фото (скорочення, абревіатури, каракулі — все читай)
-2. Знайди найближчий товар з рахунку
-3. Якщо рядок з фото точно відповідає товару з рахунку — включай в результат
+    # Внутрішня — фітинги (без бренду)
+    ('kn.u.f',   'sewage',  [r'(коліно|муфта|трійник|заглушка|хрестовина|ревізія).*(канал|каналіз)'
+                              r'|канал.*(коліно|муфта|трійник|заглушка|хрестовина)'
+                              r'|фітинг.*канал'
+                              r'|(коліно|трійник).*\d{2,3}°'
+                              r'|редукц.*канал|перехід.*канал'],
+                            ['Фитинг', '*Внутренняя']),
 
-ПРАВИЛА зіставлення:
-- "Труба ф25" на фото → "Труба PPR..." в рахунку ✓
-- "Трійник ф25" → "Трійник однозначний рівний PPR ф 25..." ✓
-- "Кол ф25 90" → "Коліно PPR 90° ф 25..." ✓
-- Скорочення: "Тр" = Трійник, "Кол/Кут" = Коліно, "Тр-ба" = Труба
-- Ігноруй кількість (шт, м) — вона не є назвою товару
-- Якщо немає відповідника — НЕ включай
+    # Внутрішня — труби → виробники
+    ('kn.u.p.a', 'sewage',  [r'труба.*asg|asg.*труба'
+                              r'|htr\b.*asg|asg.*htr\b'],
+                            ['*ASG', 'ASG', 'Труба серая (внутренняя)']),
 
-Поверни ТІЛЬКИ JSON масив (без пояснень, без markdown):
-[
-  {{"original": "що написано на фото", "catalog_name": "точна назва з рахунку", "category": "категорія"}},
-  ...
+    # ВАЖЛИВО: kn.u.p.o — має збігатися з node_mapper (не kn.u.p.b!)
+    ('kn.u.p.o', 'sewage',  [r'труба.*ostendorf|ostendorf.*труба'
+                              r'|ht\s?safe.*ostendorf|ostendorf.*ht\s?safe'
+                              r'|ostendorf.*(ф\d{2,3}|труба)'],
+                            ['OSTENDORF', 'Ostendorf']),
+
+    ('kn.u.p.v', 'sewage',  [r'труба.*valrom|valrom.*труба'],
+                            ['*Valrom внутренняя', 'VALROM']),
+
+    ('kn.u.p.d', 'sewage',  [r'труба.*канал.*plm|plm.*труба.*канал'],
+                            ['PLM']),
+
+    ('kn.u.p.g', 'sewage',  [r'труба.*канал.*raftec|raftec.*труба.*канал'],
+                            ['Raftec (Germany)']),
+
+    # Внутрішня — труби (без бренду)
+    ('kn.u.p',   'sewage',  [r'труба\s+канал|труба.*вн.*канал|труба.*(ф\d{2,3}).*канал'],
+                            ['Труба', '*Внутренняя', 'Труба серая (внутренняя)']),
+
+    # Внутрішня (загально)
+    ('kn.u',     'sewage',  [r'внутр\w*\s+канал|канал.*внутр|ф\s*\d{2,3}.*канал'
+                              r'|ф50\b|ф110\b|ф32\b|ф40\b|ревізія\b'],
+                            ['*Внутренняя', 'Внутрішня', 'Труба серая (внутренняя)']),
+
+    # Каналізація загально — ВИДАЛЕНО ostendorf з паттерну щоб не захоплював загальний пул
+    ('kn',       'sewage',  [r'канал|каналіз|sewage|htr\b|ht\s?safe'
+                              r'|ревізія|хрестовин'],
+                            []),
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # PPR ПЛАСТИК (pp)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # ПНТ/ПНД труба — перед PPR щоб не потрапила в pp загально
+    # ВИКЛЮЧАЄМО pex/push — вони йдуть в ps
+    ('pp.n',    'plastic_ppr', [r'труба\s+пнт|пнт.*труба|труба\s+пнд|пнд.*труба'
+                                 r'|труба\s+pe\b(?!x)|(?<!pe)pe(?!x).*труба'
+                                 r'|поліетилен.*труба|труба.*поліетилен'],
+                                ['ПНТ трубы', 'ПНТ BLUE LABEL', 'ПНТ GREEN LABEL',
+                                 'ПНТ PLM', 'ПНТ VALROM']),
+
+    # Труби → виробники
+    ('pp.a.p',   'plastic_ppr', [r'труба\s+(ппр|ppr).*asg|asg.*труба\s+(ппр|ppr)'],
+                                ['ASG труба', 'ASG']),
+
+    ('pp.e.p',   'plastic_ppr', [r'труба\s+(ппр|ppr).*(ekoplastik|екопластик|eco|eko)'
+                                  r'|(ekoplastik|eco\s+ppr).*труба'],
+                                ['ECO PPR', 'Ekoplastik', 'OVI/EVCI Pipe', 'WHITE']),
+
+    ('pp.r.p',   'plastic_ppr', [r'труба\s+(ппр|ppr).*raftec|raftec.*труба\s+(ппр|ppr)'],
+                                ['RAFTEC', 'Raftec']),
+
+    # Труби PPR (без бренду)
+    ('pp.p',     'plastic_ppr', [r'труба\s+(ппр|ppr)|труба\s+поліпропіл|(ппр|ppr).*труба'],
+                                ['ASG труба', 'ECO PPR', 'OVI/EVCI Pipe', 'WHITE']),
+
+    # Фітинги → тип
+    ('pp.f',   'plastic_ppr', [r'муфта\s+(ппр|ppr)|муфта.*(мрз|мрв|рн\b|рз\b|рв\b)'
+                                  r'|(мрз|мрв|рн|рз|рв).*муфта'],
+                                ['ASG фитинг', 'Фитинг PPR']),
+
+    # Коліно PPR — НЕ настінне push коліно
+    ('pp.f',   'plastic_ppr', [r'коліно\s+(ппр|ppr)'
+                                  r'|коліно.*(рв|рз|рн|вз|нг).*(ппр|ppr)'
+                                  r'|(ппр|ppr).*коліно.*(рв|рз|рн|вз|нг)'
+                                  r'|настінн\w+\s+коліно.*(ппр|ppr)'],
+                                ['ASG фитинг', 'Фитинг PPR']),
+
+    ('pp.f.t',   'plastic_ppr', [r'трійник\s+(ппр|ppr)|(ппр|ppr).*трійник'],
+                                ['ASG фитинг', 'Фитинг PPR']),
+
+    ('pp.f',   'plastic_ppr', [r'заглушка\s+(ппр|ppr)|(ппр|ppr).*заглушка'],
+                                ['ASG фитинг', 'Фитинг PPR']),
+
+    # Фітинги PPR (загально)
+    ('pp.f',     'plastic_ppr', [r'(муфта|коліно|трійник|заглушка|перехід|американка)\s+(ппр|ppr)'
+                                  r'|(ппр|ppr).*(муфта|коліно|трійник|заглушка|фітинг)'],
+                                ['ASG фитинг', 'Фитинг PPR']),
+
+    # PPR загально — НЕ натяжні (push), НЕ латунні коліна ВВ
+    ('pp',       'plastic_ppr', [r'ппр|ppr|поліпропіл|ekoplastik|екопластик'
+                                  r'|evo\b|fiber\b|faser\b|stabi'],
+                                []),
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # PUSH / PEX (ps)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # Коліно настінне (монтажне) — PUSH фітинг з різьбою до стіни — перед трубами!
+    ('ps.g.f',  'push_systems', [r'коліно\s+настінн|настінн\w*\s+коліно'
+                                  r'|монтажн\w*\s+коліно|коліно\s+монтажн'
+                                  r'|водорозетка|water.?box'],
+                                ['General Fittings', 'RAFTEC']),
+
+    # Труби PEX → виробники
+    ('ps.e.r',  'push_systems', [r'труба.*rautitan|труба.*raubasic|rautitan.*труба|rehau.*труба.*pex'],
+                                ['REHAU', 'Rautitan', 'Raubasic']),
+
+    ('ps.e',  'push_systems', [r'труба.*aquapex|aquapex.*труба'],
+                                ['Aquapex', 'AQUAPEX']),
+
+    ('ps.h.g',  'push_systems', [r'труба.*heat.?pex|heat.?pex.*труба'],
+                                ['HEAT-PEX']),
+
+    # RAFTEC труби PEX-A — широкий паттерн (silver/evoh/pex-a без "push")
+    ('ps.r.p',  'push_systems', [r'труба.*raftec|raftec.*труба'
+                                  r'|труба.*(pex.?a|silver|evoh)'
+                                  r'|(pex.?a|silver|evoh).*труба'],
+                                ['RAFTEC', 'RAFTEC SILVER', 'RPXA']),
+
+    # Труби PEX загально
+    ('ps.e',    'push_systems', [r'труба.*(pex|пекс|push|пуш)|pex.*труба'],
+                                ['Труба']),
+
+    # PPSU фітинги RAFTEC — окремо від звичайних PUSH (містять ppsu в назві)
+    ('ps.r.s',  'push_systems', [r'ppsu.*(муфта|трійник|фітинг|коліно|натяжн)'
+                                  r'|(муфта|трійник|фітинг|коліно).*ppsu'
+                                  r'|raftec.*ppsu|ppsu.*raftec'],
+                                ['RAFTEC PPSU PUSH']),
+
+    # Натяжні МРЗ/МРВ PUSH RAFTEC (не PPR!) — перед загальним ps.r.g
+    ('ps.r.g',  'push_systems', [r'(муфта|коліно|трійник).*(натяжн|push|пуш).*(мрз|мрв|рв|рз|різьб)'
+                                  r'|(натяжн|push|пуш).*(муфта|коліно|трійник).*(мрз|мрв|рв|рз)'
+                                  r'|(мрз|мрв).*(натяжн|push|пуш)'
+                                  r'|(муфта|коліно|трійник).*raftec'
+                                  r'|raftec.*(муфта|коліно|трійник|фітинг|натяжн)'],
+                                ['RAFTEC PUSH', 'RAFTEC']),
+
+    # Фітинги PUSH → виробники
+    ('ps.e',  'push_systems', [r'(муфта|коліно|трійник|фітинг).*(rehau|general.fitting)'
+                                  r'|(rehau|general.?fitting).*(муфта|коліно|трійник|фітинг)'],
+                                ['REHAU', 'General Fittings']),
+
+    ('ps.k',  'push_systems', [r'(муфта|коліно|трійник|фітинг).*kan\b|(kan).*(муфта|коліно|трійник)'],
+                                ['KAN', 'KAN-Therm PUSH']),
+
+    ('ps.f.g',  'push_systems', [r'(муфта|коліно|трійник|фітинг).*fado'
+                                  r'|fado.*(муфта|коліно|трійник|фітинг|натяжн)'],
+                                ['FADO']),
+
+    # Гільзи / кільця
+    ('ps.g',    'push_systems', [r'гільза.*(push|pex)|кільце.*(push|pex)|(push|pex).*(гільза|кільце)'
+                                  r'|гільза натяжна|гільза ф\s*\d{2}'],
+                                ['RAFTEC', 'REHAU']),
+
+    # PUSH загально (фітинги без виробника + загальне)
+    ('ps',      'push_systems', [r'push|пуш|pex|пекс|натяжн|гільза|євроконус|rautitan|raubasic'
+                                  r'|aquapex|heat.?pex|general.fitting'
+                                  r'|(муфта|коліно|трійник|фітинг).*(push|пуш|pex|пекс)'
+                                  r'|(push|пуш).*(муфта|коліно|трійник|фітинг)'],
+                                []),
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # МЕТАЛОПЛАСТИК (mp)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    ('mp.f.a',  'metal_plastic', [r'(прес.?фіт|пресс.?фіт|муфта|коліно|трійник).*fado|fado.*(фіт|муфта|коліно)'],
+                                 ['FADO', 'М/П всё']),
+
+    ('mp.f.r',  'metal_plastic', [r'(прес.?фіт|муфта|коліно|трійник).*raftec|raftec.*(фіт|муфта|коліно|прес)'],
+                                 ['RAFTEС', 'RAFTEC']),
+
+    ('mp.f',    'metal_plastic', [r'прес.?фіт|пресс.?фіт|м/?п.*(муфта|коліно|трійник|фіт)'
+                                   r'|(муфта|коліно|трійник).*(м/?п|металопласт)'],
+                                 ['М/П всё']),
+
+    ('mp',      'metal_plastic', [r'металопласт|м\/п|м\.п\.|mp\b|пресс.?фіт|прес.?фіт'],
+                                 []),
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ЗАПІРНА АРМАТУРА (sv)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    ('sv.k',    'shutoff_valves', [r'кран.*(кульов|шаров|куль)|кульовий.?кран'],
+                                  ['ASG', 'RAFTEC', 'Giacomini', 'HLV', 'LEXLINE']),
+
+    # Зворотний клапан — окремо від кульових кранів
+    ('sv.z',    'shutoff_valves', [r'зворотн\w*\s*клапан|клапан\s*зворотн\w*'
+                                   r'|обратн\w*\s*клапан|клапан\s*обратн\w*'],
+                                  ['зворот', 'Зворот']),
+
+    # Фільтр грубої очистки — sv.fg (не sv.f — такого вузла немає)
+    ('sv.fg',   'shutoff_valves', [r'фільтр.?(груб|сітч|y.тип)|грубої.?очистки|фільтр.*латун'],
+                                  ['Фільтр', 'сетчат']),
+
+    ('sv.b',    'shutoff_valves', [r'батерфляй|засувк|затвор.?диск'],
+                                  ['батерфляй']),
+
+    ('sv',      'shutoff_valves', [r'кран\s+(кульов|вв|вз|зв|dn|1_2|3_4)|засувк|затвор'
+                                    r'|кран.?кульов|кульовий.?кран|запірн|вентиль'],
+                                  []),
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ПЕРЕХІДНИКИ / АДАПТЕРИ (ar)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    ('ar.n',    'adapters_reducers', [r'ніпел.+радіатор|радіаторн.+ніпел'],
+                                     ['НІПЕЛЬ РАДІАТОРНИЙ']),
+
+    # Нікель — ar.n
+    ('ar.n',    'adapters_reducers', [r'нікел.*(подовж|ніпел|перех|кут|коліно|футорк|згін|різьб)'
+                                       r'|(подовж|ніпел|перех|кут|коліно).*нікел'],
+                                     ['Никель', 'ASG', 'RAFTEC никель']),
+
+    # Хром RAFTEC — ar.c.r (подовжувач 1/2 → RAFTEC хром)
+    ('ar.c.r',  'adapters_reducers', [r'raftec.*(хром|подовж|ніпел|перех|кут|згін)'
+                                       r'|хром.*raftec'
+                                       r'|(подовж|ніпел|перех|кут|згін).*raftec.*хром'
+                                       r'|(подовж|ніпел|перех|кут|згін).*хром.*raftec'],
+                                     ['RAFTEC хром']),
+
+    # Хром Pattaroni — ar.c.p (подовжувач 3/4)
+    ('ar.c.p',  'adapters_reducers', [r'pattaroni|паттароні'],
+                                     ['Pattaroni', 'PATTARONI']),
+
+    # Хром SOLOMON — ar.c.s
+    ('ar.c.s',  'adapters_reducers', [r'solomon.*хром|хром.*solomon|sd.*хром'],
+                                     ['SOLOMON', 'SD']),
+
+    # Хром загальний — ar.c
+    ('ar.c',    'adapters_reducers', [r'хром.*(подовж|ніпел|перех|кут|коліно|футорк|згін)'
+                                       r'|(подовж|ніпел|перех|кут|коліно).*хром'
+                                       r'|подовжувач.*(зз|зв|вз|вв).*(1_2|1\/2|dn15|3_4|dn20)'
+                                       r'|подовжувач.*dn\d{2}'],
+                                     ['Хром', 'RAFTEC хром', 'HLV хром']),
+
+    # Жовта латунь — ar.y (RAFTEC GOLD, LEXLINE, УЗКМ жовта)
+    ('ar.y.r',  'adapters_reducers', [r'raftec.?gold.*(кут|коліно|угол|футорк|американка|розбірне|ніпел|подовж)'
+                                       r'|(кут|коліно|угол|футорк|американка|розбірне).*raftec.?gold'],
+                                     ['RAFTEC GOLD']),
+
+    ('ar.y.l',  'adapters_reducers', [r'lexline.*(кут|коліно|подовж|футорк|ніпел)'
+                                       r'|(кут|коліно|подовж|футорк|ніпел).*lexline'],
+                                     ['LEXLINE желтая', 'LEXLINE']),
+
+    # Жовта латунь загально
+    ('ar.y',    'adapters_reducers', [r'жовт.?латун|raftec.?gold|lexline'
+                                       r'|коліно.*(латун|вв|вз|зз|зв).*(dn|1\/2|3\/4)'
+                                       r'|кут.*(латун|вв|вз).*(dn|1\/2|3\/4)'
+                                       r'|футорк.*латун|згін.*латун|американка.*латун'
+                                       r'|розбірне.*з.єднання'],
+                                     ['LEXLINE желтая', 'RAFTEC GOLD', 'УЗКМ жовта']),
+
+    ('ar',      'adapters_reducers', [r'перехідн|редукц|футорк|ніпел|штуцер|подовжувач'
+                                       r'|бочон|напівзгін|згін\b|gebo|жебо|затискн.?муфт'
+                                       r'|компресійн.?з.єднан'
+                                       r'|коліно.*(латун|вв|вз|зз).*(dn\d|1\/2|3\/4)'
+                                       r'|кут.*(латун|вв|вз|зз)'],
+                                     []),
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # РАДІАТОРИ (rd)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    ('rd.s',  'radiators_radiatorsvalve', [r'тип\s*10\b|тип10'],   ['тип 10', 'тип10']),
+    ('rd.s.11',  'radiators_radiatorsvalve', [r'тип\s*11\b|тип11'],   ['тип 11', 'тип11']),
+    ('rd.s',  'radiators_radiatorsvalve', [r'тип\s*21\b|тип21'],   ['21', 'тип 21']),
+    ('rd.s.22',  'radiators_radiatorsvalve', [r'тип\s*22\b|22\s*тип'], ['22 тип', 'тип 22']),
+    ('rd.s',   'radiators_radiatorsvalve', [r'\bvk\b|нижн.*підключ'], ['VK', 'vk']),
+    ('rd.bi',   'radiators_radiatorsvalve', [r'біметал|bi.vulcan|алюмін.*радіат'],
+                                            ['біметал', 'алюміній']),
+    ('rd.v',   'radiators_radiatorsvalve', [r'термоголовк|термостат.*радіат|термокомплект'],
+                                            ['Термоголовки', 'Термостат']),
+
+    ('rd',      'radiators_radiatorsvalve', [r'радіатор|батарея\s+(опален|сталев)|термоголовк|термостат'],
+                                            []),
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ТЕПЛА ПІДЛОГА (uf)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    ('uf.c',    'underfloor_heating', [r'колектор.*(тп|підлог|uf)|гребінка.?(тп|uf)'
+                                       r'|гребінка.*(plm|raftec|латун|steel|4.*вих|6.*вих|8.*вих|12.*вих)'
+                                       r'|(plm|raftec).*(гребінк|колектор)'],
+                                      ['Коллектора RAFTEC', 'Коллектора ASG', 'RAFTEC Brass',
+                                       'RAFTEC Stainless']),
+
+    ('uf.r',    'underfloor_heating', [r'терморегул.*(підлог|тп|tp)|терморегулятор\s+tp'],
+                                      ['Терморегулятор']),
+
+    ('uf.s',    'underfloor_heating', [r'монтажн.?стрічк|демпфер|якірн.?скоб|такер'
+                                       r'|плівк.?(розміт|фольг|рулон)|металіз.*плівк'],
+                                      ['Монтажна стрічка', 'Плівка']),
+
+    ('uf',      'underfloor_heating', [r'тепл.?підлог|теплопідлог|колектор.*(тп|підлог)'
+                                        r'|терморегул.*(підлог|tp)|монтажн.?стрічк|демпфер'
+                                        r'|демферн|якірн.?скоб|такер|плівк.?розміт'],
+                                      []),
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # НАСОСИ (pm)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    ('pm.c',    'pumps', [r'циркуляц|цирк.*насос'],  ['Wilo', 'Grundfos', 'циркул']),
+    ('pm.s',    'pumps', [r'станц.*насос|насосн.?станц|New Wave|нью вейв'],
+                         ['New Wave', 'Станция']),
+    ('pm.g',    'pumps', [r'гідроакумул|бак.*мембран|мембран.*бак'],
+                         ['Гідроакумулятор', 'бак']),
+
+    ('pm',      'pumps', [r'насос|насосн|помпа'], []),
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # КОТЛИ (bl)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    ('bl.g',    'boilers', [r'газов.*котел|biasi|teknix'],    ['BIASI', 'газов']),
+    ('bl.e',    'boilers', [r'електр.*котел|tatra'],          ['електр', 'Tatra']),
+    ('bl.t',    'boilers', [r'твердопалив|дтм\b'],            ['ДТМ']),
+
+    ('bl',      'boilers', [r'котел|бойлерна.*установка'], []),
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ВОДОНАГРІВАЧІ (wh)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    ('wh',      'water_heaters', [r'водонагрівач|бойлер\b|титан\b|водонагр'], []),
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ОПАЛЕННЯ (ht)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    ('ht.v.h',    'heating', [r'herz.*клапан|клапан.*herz|термозмішув'],    ['Herz', 'HERZ']),
+    ('ht.c',    'heating', [r'колектор\s+(опален|1\')|колектор.*opalen'],  ['Коллектора - теплый пол']),
+
+    ('ht',      'heating', [r'опален|радіатор.*(підключ|кутов|прям)'
+                             r'|колектор\s+(опален|1\'|ht)'], []),
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # АВТОМАТИКА (at)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    ('at.ht',    'automation', [r'насосн.?груп|змішувальн.?вузол|гідравліч.?стрілк'],
+                              ['Насосні групи', 'Змішувальні вузли']),
+
+    ('at.pg',    'automation', [r'погодн.?регул|регул.*sur03|lsg.?16|pcnr'],
+                              ['Регулятор']),
+
+    ('at',      'automation', [r'насосн.?груп|змішувальн.?вузол|гідравліч.?стрілк'
+                                r'|погодн.?регул|sur03|lsg.?16|pcnr|автоматик.*(насос|котел)'],
+                              []),
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ІНШІ КАТЕГОРІЇ (без підвузлів)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    ('fl',      'filtration',        [r'фільтр|filtration|ecosoft|екософт|картридж|колб.?фільтр'], []),
+    ('ins',     'insulation',        [r'утеплюв|мірелон|k.?flex|thermaflex|ізоляц.?труб'], []),
+    ('wm',      'water_meters',      [r'лічильн|водомір|водомер|gidrotek|dn\s*(15|20|25)\s*лічильн'], []),
+    ('mx',      'mixers_faucets',    [r'змішувач|кран\s+(умивальн|мийк|ванн|душ)|смесител|однорукавк'], []),
+    ('tw',      'towel_warmers',     [r'рушникосуш|полотенцесуш|towel.?warm'], []),
+    ('hs',      'hoses',             [r'шланг|підводк|підведен.*(води|газу)|гнучк.?підвод'], []),
+    ('fs',      'fasteners_sealants',[r'хомут|скоб.*(монтаж|кріпл)|дюбель|шпилька'
+                                       r'|льон\b|тефлон|фум\b|пакля|прокладк|ущільн'
+                                       r'|glidex|глідекс|герметик|мастило|силікон'], []),
+    ('sf',      'siphons_fittings',  [r'сифон|злив.?арматур|арматур.?унітаз|заповнюв.?клапан|трап\b'], []),
+    ('sw',      'sanitary_ware',     [r'унітаз|раковин|умивальник\s+(кераміч|фаянс)'
+                                       r'|інсталяц|душов.*(піддон|кабін)|ванн.*(акрил|чавун)'], []),
+    ('sav',     'safety_valves',     [r'запобіжн.?клапан|клапан.*безпек|клапан.*запобіжн'
+                                       r'|safety.?valve|скидн.?клапан'], []),
 ]
 
-Категорії: plastic_ppr, push_systems, sewage, adapters_reducers, shutoff_valves, heating,
-metal_plastic, filtration, insulation, radiators_radiatorsvalve, underfloor_heating,
-water_heaters, boilers, pumps, mixers_faucets, sanitary_ware, siphons_fittings,
-hoses, water_meters, towel_warmers, safety_valves, automation, other"""
 
-    contents = [_gtypes.Part.from_bytes(data=pb, mime_type="image/jpeg")
-                for pb in photos_bytes]
-    contents.append(_gtypes.Part.from_text(text=prompt))
+# ─── Таблиця для зворотного пошуку: category_code → всі node_id у цій категорії ──
+# Використовується для sub-фільтрації у пошуку.
 
-    resp = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=contents,
-        config=_gtypes.GenerateContentConfig(temperature=0),
-    )
-    raw  = (resp.text or '').strip()
-    text = re.sub(r'^```json\s*', '', raw)
-    text = re.sub(r'\s*```$', '', text).strip()
+_cat_to_nodes: dict[str, list[str]] = {}
+for _nid, _cat, *_ in TREE:
+    _cat_to_nodes.setdefault(_cat, []).append(_nid)
 
-    try:
-        pairs = json.loads(text)
-        return (pairs if isinstance(pairs, list) else []), raw
-    except json.JSONDecodeError as e:
-        print(f"❌ JSON parse: {e}\nRaw: {raw[:500]}", flush=True)
-        return [], raw
+
+# ─── Зворотня сумісність: CAT_PREFIX, PREFIX_CAT ─────────────────────────────
+
+CAT_PREFIX: dict[str, str] = {   # category_code → верхній node_id (як 2-3-літерний префікс)
+    'plastic_ppr':             'PP',
+    'sewage':                  'KN',
+    'push_systems':            'PS',
+    'shutoff_valves':          'SV',
+    'adapters_reducers':       'AR',
+    'heating':                 'HT',
+    'boilers':                 'BL',
+    'water_heaters':           'WH',
+    'pumps':                   'PM',
+    'radiators_radiatorsvalve':'RD',
+    'metal_plastic':           'MP',
+    'filtration':              'FL',
+    'insulation':              'INS',
+    'underfloor_heating':      'UF',
+    'water_meters':            'WM',
+    'mixers_faucets':          'MX',
+    'towel_warmers':           'TW',
+    'fasteners_sealants':      'FS',
+    'sanitary_ware':           'SW',
+    'siphons_fittings':        'SF',
+    'hoses':                   'HS',
+    'automation':              'AT',
+    'safety_valves':           'SAV',
+    'other':                   'XX',
+}
+
+PREFIX_CAT: dict[str, str] = {v: k for k, v in CAT_PREFIX.items()}
+
+
+# ─── Основні функції ─────────────────────────────────────────────────────────
+
+def _refine_ppr_node(combined: str, base_node: str) -> str:     # уточнює вузол PPR фітингів по виробнику (pp.f.k → pp.e.f якщо ekoplastik)
+    """
+    Якщо в тексті є виробник PPR → повертає вузол виробника + тип фітинга.
+    pp.f.k (коліно) + ekoplastik → pp.e.f
+    pp.f.m (муфта) + asg → pp.a.f
+    pp.f.t (трійник) + raftec → pp.r.f
+    Без виробника → pp.f (загальний)
+    """
+    # Маппінг виробника → кореневий вузол
+    BRAND_NODES = {
+        r'ekoplastik|екопластик|pp-rct.*ekoplast': 'pp.e.f',
+        r'\basg\b':                                  'pp.a.f',
+        r'\braftec\b':                               'pp.r.f',
+        r'\bplm\b':                                  'pp.p.f',
+        r'\bkan\b':                                  'pp.k.f',
+        r'fv\s*plast|fv\s+plast':                    'pp.f.f',
+        r'\beco\s+ppr\b|\beco\b.*ppr':               'pp.c.f',
+    }
+    for pat, brand_node in BRAND_NODES.items():
+        if re.search(pat, combined, re.IGNORECASE):
+            return brand_node
+    # Без виробника — загальний вузол фітингів
+    return 'pp.f'
+
+
+def route(пос: dict) -> str:    # визначає category_code і node_id для позиції
+    """
+    Головна функція маршрутизації.
+
+    Вхід:  позиція від Gemini (dict: normalized, original, category, type, dia)
+    Вихід: category_code (рядок типу 'sewage').
+
+    Побічно додає в пос:
+      _node_id   — ієрархічний ID найточнішого вузла ('kn.u.p.a')
+      _routed_cat — category_code ('sewage')
+      _prefix    — 2-3 літерний префікс для Excel ('KN')
+
+    Пріоритети:
+      1. TREE — від специфічніших до загальних (перший збіг перемагає)
+      2. Gemini category як fallback
+      3. 'other'
+    """
+    combined = (
+        (пос.get('normalized') or '') + ' ' +
+        (пос.get('original')   or '')
+    ).lower()
+
+    node_id = _match_tree(combined)
+
+    if node_id:
+        cat = _node_category(node_id)
+
+        # Уточнення node_id по виробнику для PPR фітингів
+        # pp.f.k/pp.f.m/pp.f.t + виробник → pp.e.f / pp.a.f / pp.r.f тощо
+        if node_id.startswith('pp.f') and cat == 'plastic_ppr':
+            node_id = _refine_ppr_node(combined, node_id)
+
+        пос['_node_id']    = node_id
+        пос['_routed_cat'] = cat
+        пос['_prefix']     = CAT_PREFIX.get(cat, 'XX')
+        return cat
+
+    # Fallback: Gemini category
+    gemini_cat = (пос.get('category') or '').lower().strip()
+    if gemini_cat and gemini_cat != 'other' and gemini_cat in CAT_PREFIX:
+        root = CAT_NODE.get(gemini_cat, gemini_cat)
+        пос['_node_id']    = root
+        пос['_routed_cat'] = gemini_cat
+        пос['_prefix']     = CAT_PREFIX.get(gemini_cat, 'XX')
+        return gemini_cat
+
+    пос['_node_id']    = 'xx'
+    пос['_routed_cat'] = 'other'
+    пос['_prefix']     = 'XX'
+    return 'other'
+
+
+def filter_by_node(catalog: list[dict], node_id: str) -> list[dict]:   # повертає товари з каталогу що належать вузлу або його підвузлам
+    """
+    Фільтрує каталог за node_id (ієрархічно).
+
+    'kn.u.p' → повертає всі товари kn.u.p, kn.u.p.a, kn.u.p.b, kn.u.p.c...
+    Якщо node_id == 'kn' → всі товари каналізації.
+
+    Використовує поле '_node_id' у товарі (додається при завантаженні каталогу).
+    Якщо товар не має '_node_id' — фільтруємо тільки за category.
+    """
+    if not node_id or node_id == 'xx':
+        return catalog
+
+    cat = _node_category(node_id)
+    result = []
+    for it in catalog:
+        if it.get('category') != cat:
+            continue
+        item_node = it.get('_node_id', '')
+        if item_node and item_node.startswith(node_id):
+            result.append(it)
+        elif not item_node:
+            # Товар без node_id — включаємо якщо node_id кореневий
+            if '.' not in node_id:
+                result.append(it)
+    return result
+
+
+def get_node_groups(node_id: str) -> list[str]:     # повертає group-ключові слова для sub-фільтрації
+    """Повертає список group_keywords для вузла — для фільтрації в smart_search."""
+    for nid, _cat, _pats, groups in TREE:
+        if nid == node_id:
+            return groups
+    return []
+
+
+def route_sub(пос: dict, cat: str) -> list[str] | None:    # повертає group-keywords підкатегорії або None
+    """
+    Зворотня сумісність з search.py.
+    Повертає group_keywords для поточного _node_id позиції.
+    """
+    node_id = пос.get('_node_id', '')
+    if not node_id or node_id == 'xx':
+        return None
+    groups = get_node_groups(node_id)
+    return groups if groups else None
+
+
+def get_prefix(category_code: str) -> str:  # повертає 2-3 літерний префікс для Excel
+    return CAT_PREFIX.get(category_code, 'XX')
+
+
+def label(пос: dict) -> str:    # повертає рядок "[KN.U.P] Труба канал..." для логів
+    """Формує читабельний лейбл з node_id + normalized для Excel/логів."""
+    node = пос.get('_node_id') or CAT_NODE.get(пос.get('_routed_cat', ''), 'xx')
+    return f"[{node.upper()}] {пос.get('normalized', '')}"
+
+
+def route_batch(позиції: list[dict]) -> list[dict]:     # мутує позиції — додає _routed_cat, _prefix, _node_id
+    """Додає _routed_cat, _prefix і _node_id до кожної позиції списку."""
+    for пос in позиції:
+        route(пос)   # route() вже мутує пос in-place
+    return позиції
+
+
+# ─── Внутрішні ───────────────────────────────────────────────────────────────
+
+def _match_tree(combined: str) -> Optional[str]:    # шукає перший збіг у TREE; повертає node_id або None
+    """Перебирає TREE від специфічніших до загальних, повертає перший node_id."""
+    # Якщо є чіткі маркери PPR або металопластик — пропускаємо sewage вузли
+    _is_ppr   = bool(re.search(r'\b(ppr|ппр|fiber|pn\s*\d{2}|polipr|pp-rct)\b', combined, re.IGNORECASE))
+    _is_mp    = bool(re.search(r'металопласт|м\/п\b|м\.п\.\b|\bmp\b|прес.?фіт|пресс.?фіт', combined, re.IGNORECASE))
+    # \b не працює з кирилицею — використовуємо (?<!\w) або просто без \b для кирилічних слів
+    _is_push  = bool(re.search(
+        r'\b(pex|push|rautitan|гільз)\b'
+        r'|(?<![а-яА-ЯіІїЇєЄ])(пекс|пуш|натяжн)',
+        combined, re.IGNORECASE))
+
+    for node_id, cat, patterns, _groups in TREE:
+        # Пропускаємо sewage якщо є PPR/металопластик/push маркери
+        if cat == 'sewage' and (_is_ppr or _is_mp or _is_push):
+            continue
+        # Пропускаємо plastic_ppr якщо є чіткі push маркери
+        # (натяжні муфти/коліна МРЗ/МРВ = PUSH, не PPR)
+        if cat == 'plastic_ppr' and _is_push and not _is_ppr:
+            continue
+        for pat in patterns:
+            if re.search(pat, combined, re.IGNORECASE):
+                return node_id
+    return None
+
+
+def _node_category(node_id: str) -> str:    # повертає category_code для node_id
+    """Повертає category_code для будь-якого node_id через TREE."""
+    for nid, cat, *_ in TREE:
+        if nid == node_id:
+            return cat
+    # Якщо точного збігу нема — шукаємо кореневий вузол
+    root = node_id.split('.')[0]
+    return ROOT_NODES.get(root, 'other')
+
+
+# ─── Приклади адрес (для документації і тестів) ──────────────────────────────
+# kn           → Вся каналізація
+# kn.u         → Внутрішня каналізація
+# kn.u.p       → Труби внутрішньої каналізації
+# kn.u.p.a     → ASG труби (внутрішня)
+# kn.u.p.b     → Ostendorf труби (внутрішня)
+# kn.u.f       → Фітинги внутрішньої каналізації
+# kn.e         → Зовнішня каналізація
+# kn.s         → Безшумна каналізація
+# pp           → Весь PPR пластик
+# pp.p         → PPR труби
+# pp.p.a       → ASG PPR труби
+# pp.f         → PPR фітинги
+# pp.f.m       → PPR муфти (МРЗ/МРВ/РН)
+# pp.f.k       → PPR коліна
+# pp.f.t       → PPR трійники
+# ps           → Вся PUSH/PEX система
+# ps.p.a       → REHAU труби PEX
+# ps.f         → PUSH фітинги
+# rd.t22       → Радіатори тип 22
+# bl.g         → Газові котли
+# pm.c         → Циркуляційні насоси
