@@ -12,19 +12,6 @@ def register(bot, state: dict):
                                        get_kn_pending, pop_kn_pending)
     from knowledge.rules import add_rule
 
-    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('навчання', '📚 навчання'))
-    def kb_learn(message):
-        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-        last = state.get('last_results', {}).get(message.chat.id)
-        if not last:
-            bot.reply_to(message, "⚠️ Спочатку надішли фото замовлення."); return
-        mk = InlineKeyboardMarkup()
-        mk.add(
-            InlineKeyboardButton("🎓 Почати навчання", callback_data="tr_go"),
-            InlineKeyboardButton("✖️ Закрити",         callback_data="tr_close"),
-        )
-        bot.reply_to(message, "Навчання: вкажи номери неправильних рядків.", reply_markup=mk)
-
     _train_state = state.setdefault('_train_state', {})
     _fix_state   = state.setdefault('_fix_state',   {})
     _manual_wait = state.setdefault('_manual_wait',  {})
@@ -146,9 +133,9 @@ def register(bot, state: dict):
                 if old_name:
                     cache_ban_pair(original, old_name, cat)
                     if cslug: clients.client_cache_set_status(cslug,original,old_name,'banned')
-                cache_confirm(save_orig, {}, r.get('normalized', save_orig), new_name, cat)
+                cache_confirm(save_orig, {}, r.get('normalized', save_orig), new_name, cat, source="training")
                 if save_orig != original:
-                    cache_confirm(original, {}, save_orig, new_name, cat)
+                    cache_confirm(original, {}, save_orig, new_name, cat, source="training")
                 if cslug:
                     clients.client_cache_save(cslug, save_orig, new_name, cat, 100)
                     clients.client_cache_set_status(cslug, save_orig, new_name, 'confirmed')
@@ -248,7 +235,7 @@ def register(bot, state: dict):
                          parse_mode='Markdown'); return
         if _adm(message.from_user.id):
             if not cache_set_status(original, назва, 'confirmed'):
-                cache_confirm(original, {}, r.get('normalized', original), назва, cat)
+                cache_confirm(original, {}, r.get('normalized', original), назва, cat, source="training")
             if last.get('client_slug'):
                 clients.client_cache_save(last['client_slug'], original, назва, cat, 100)
                 clients.client_cache_set_status(last['client_slug'], original, назва, 'confirmed')
@@ -347,7 +334,7 @@ def register(bot, state: dict):
             if old_name:
                 cache_ban_pair(original, old_name, cat)
                 if cslug: clients.client_cache_set_status(cslug, original, old_name, 'banned')
-            cache_confirm(original, {}, r.get('normalized', original), new_name, cat)
+            cache_confirm(original, {}, r.get('normalized', original), new_name, cat, source="training")
             if cslug:
                 clients.client_cache_save(cslug, original, new_name, cat, 100)
                 clients.client_cache_set_status(cslug, original, new_name, 'confirmed')
