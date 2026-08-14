@@ -41,7 +41,7 @@ def register(bot, state: dict):
             parse_mode="Markdown",
             reply_markup=main_keyboard(message.from_user.id))
 
-    @bot.message_handler(func=lambda m: m.text == "📸 Як користуватись")
+    @bot.message_handler(func=lambda m: m.text and 'як користуватись' in m.text.lower())
     def kb_howto(message):
         bot.reply_to(message, """📸 *ПОВНА ІНСТРУКЦІЯ*
 
@@ -66,7 +66,7 @@ def register(bot, state: dict):
 Тапни «🎓 Навчання» → номери рядків → причину → правильний товар.""",
             parse_mode="Markdown")
 
-    @bot.message_handler(func=lambda m: m.text in ("🛑 Стоп", "🛑 стоп"))
+    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('стоп', '🛑 стоп'))
     def kb_stop(message):
         _do_stop(message.chat.id, bot, state)
         bot.reply_to(message, "🛑 Зупинено. Всі активні сесії скасовано.")
@@ -76,7 +76,7 @@ def register(bot, state: dict):
         _do_stop(message.chat.id, bot, state)
         bot.reply_to(message, "🛑 Зупинено. Всі активні сесії скасовано.")
 
-    @bot.message_handler(func=lambda m: m.text in ("📋 Правило",))
+    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('правило', '📋 правило'))
     def kb_rule_btn(message):
         bot.reply_to(message,
             "Напиши: `правило <текст>`\nПриклад: `правило рожон = трійник`",
@@ -87,23 +87,17 @@ def _do_stop(chat_id: int, bot, state: dict):
     """Зупиняє всі активні сесії для чату."""
     from engine.brand_selector import cancel as bs_cancel
 
-    # stop_flag — сигнал для process_service щоб перервав обробку
-    state.setdefault('stop_flags', {})[chat_id] = True
+    state['stop_flags'][chat_id] = True
 
-    # Скасовуємо таймер батчу фото
-    batches = state.get('user_batches', {})
-    if chat_id in batches:
-        t = batches[chat_id].get('timer')
+    if chat_id in state['user_batches']:
+        t = state['user_batches'][chat_id].get('timer')
         if t:
-            try: t.cancel()
-            except Exception: pass
-        batches.pop(chat_id, None)
+            t.cancel()
+        state['user_batches'].pop(chat_id, None)
 
-    # Очищаємо всі стани цього користувача
-    for key in ('_order_setup', '_pre_batch', '_learn_state',
-                '_manual_wait', 'pending_hints', '_fix_state',
-                '_training_state', '_rule_state'):
-        state.get(key, {}).pop(chat_id, None)
-
-    # Скасовуємо вибір виробника
+    state.get('_order_setup', {}).pop(chat_id, None)
+    state.get('_pre_batch',   {}).pop(chat_id, None)
+    state.get('_learn_state', {}).pop(chat_id, None)
+    state.get('_manual_wait', {}).pop(chat_id, None)
+    state.get('pending_hints',{}).pop(chat_id, None)
     bs_cancel(chat_id)
