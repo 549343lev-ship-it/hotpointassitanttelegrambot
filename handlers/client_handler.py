@@ -9,15 +9,21 @@ def register(bot, state: dict):
 
     @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('клієнти', '👥 клієнти'))
     def handle_clients_list(message):
-        profiles = clients.list_profiles()
-        if not profiles:
-            bot.reply_to(message, "Немає клієнтів. `новий клієнт Ім'я`",
-                         parse_mode="Markdown"); return
-        lines = ["👥 *Клієнти:*"]
-        for p in profiles:
-            active = " ← активний" if clients.get_active(message.chat.id) == p['slug'] else ""
-            lines.append(f"• {p['name']}{active}")
-        bot.reply_to(message, "\n".join(lines), parse_mode="Markdown")
+        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+        index = clients.list_clients()
+        mk = InlineKeyboardMarkup(row_width=1)
+        mk.add(InlineKeyboardButton('➕ Створити нового клієнта', callback_data='cl_create_new'))
+        if not index:
+            bot.reply_to(message, '👥 Клієнтів ще немає.', reply_markup=mk); return
+        active_slug = clients.get_active(message.chat.id)
+        lines = ['👥 *Клієнти:*']
+        for slug, name in sorted(index.items(), key=lambda x: x[1]):
+            p = clients.get_profile(slug)
+            orders = p.get('orders_count', 0) if p else 0
+            active = ' ✅' if active_slug == slug else ''
+            lines.append(f'• {name} ({orders} зам.){active}')
+            mk.add(InlineKeyboardButton(f'👤 {name}', callback_data=f'cl_use_{slug}'))
+        bot.reply_to(message, '\n'.join(lines), parse_mode='Markdown', reply_markup=mk)
 
     @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('новий клієнт'))
     def handle_new_client(message):
@@ -50,6 +56,18 @@ def register(bot, state: dict):
             mk = client_list_keyboard(matches)
             bot.reply_to(message, "Оберіть клієнта:", reply_markup=mk)
 
+    @bot.callback_query_handler(func=lambda c: c.data == 'cl_create_new')
+    def cb_create_new(call):
+        bot.answer_callback_query(call.id)
+        state.setdefault('_manual_wait', {})[call.message.chat.id] = {'mode': 'new_client'}
+        bot.send_message(call.message.chat.id, "👤 Введи ім'я нового клієнта:")
+
+    @bot.callback_query_handler(func=lambda c: c.data.startswith('cl_use_'))
+    def cb_client_use_inline(call):
+        slug = call.data[7:]
+        bot.answer_callback_query(call.id)
+        _activate_client(call.message.chat.id, slug, None, bot)
+
     @bot.callback_query_handler(func=lambda c: c.data.startswith('sel_client_'))
     def cb_select_client(call):
         slug = call.data[11:]
@@ -57,7 +75,7 @@ def register(bot, state: dict):
         _activate_client(call.message.chat.id, slug, None, bot)
 
     # ── Кеш клієнта ───────────────────────────────────────────────────────────
-    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('кеш клієнта', '👥 кеш клієнта'))
+    @bot.message_handler(func=lambda m: m.text == "👥 Кеш клієнта")
     def kb_client_cache(message):
         slug = clients.get_active(message.chat.id)
         if not slug:
