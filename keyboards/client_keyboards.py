@@ -17,10 +17,10 @@ def client_cache_page_keyboard(slug: str, page: int, total_pages: int) -> Inline
     mk = InlineKeyboardMarkup(row_width=3)
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("◀️", callback_data=f"ccp_prev_{slug}_{page}"))
-    nav.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="ccp_noop"))
+        nav.append(InlineKeyboardButton("◀️", callback_data=f"ccp|prev|{slug}|{page}"))
+    nav.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="ccp|noop"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton("▶️", callback_data=f"ccp_next_{slug}_{page}"))
+        nav.append(InlineKeyboardButton("▶️", callback_data=f"ccp|next|{slug}|{page}"))
     if nav:
         mk.add(*nav)
     return mk
@@ -28,8 +28,7 @@ def client_cache_page_keyboard(slug: str, page: int, total_pages: int) -> Inline
 
 def cache_item_keyboard(slug: str, key: str, idx: int) -> InlineKeyboardMarkup:
     """Кнопки для одного запису кешу: підтвердити / заборонити."""
-    # Передаємо slug|key щоб уникнути помилок з індексами
-    safe = f"{slug}|{key[:60]}"
+    safe = f"{slug}|{key[:55]}"
     mk = InlineKeyboardMarkup(row_width=2)
     mk.add(
         InlineKeyboardButton("✅ OK",  callback_data=f"cck|ok|{safe}"),
