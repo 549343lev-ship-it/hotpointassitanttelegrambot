@@ -12,17 +12,16 @@ def register(bot, state: dict):
     from clients.pending_cache import (pending_count, pending_get_batch, pending_confirm,
                                        pending_reject, pending_confirm_all_batch,
                                        pending_reject_all_batch, pending_clear_all)
-    from engine.synonym_export import build_synonym_excel
 
     def _admin(uid): return uid == ADMIN_ID
 
     # ── Статистика ─────────────────────────────────────────────────────────────
-    @bot.message_handler(func=lambda m: m.text == "👑 Статистика")
+    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('статистика', '👑 статистика'))
     def kb_stats(message):
         if not _admin(message.from_user.id): return
         bot.reply_to(message, get_usage_stats(), parse_mode="Markdown")
 
-    @bot.message_handler(func=lambda m: m.text == "👑 Логи")
+    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('логи', '👑 логи'))
     def kb_logs(message):
         if not _admin(message.from_user.id): return
         if not os.path.exists(USAGE_LOG_FILE):
@@ -31,7 +30,7 @@ def register(bot, state: dict):
             bot.send_document(message.chat.id, f, visible_file_name="usage_log.json")
 
     # ── Діри каталогу ──────────────────────────────────────────────────────────
-    @bot.message_handler(func=lambda m: m.text == "👑 Діри каталогу")
+    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('діри каталогу', '👑 діри каталогу'))
     @bot.message_handler(commands=['діри', 'gaps'])
     def kb_gaps(message):
         if not _admin(message.from_user.id): return
@@ -60,7 +59,7 @@ def register(bot, state: dict):
             if os.path.exists(tmp): os.remove(tmp)
 
     # ── Кеш ────────────────────────────────────────────────────────────────────
-    @bot.message_handler(func=lambda m: m.text == "📊 Кеш")
+    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('кеш', '📊 кеш'))
     @bot.message_handler(commands=['кеш', 'cache'])
     def kb_cache(message):
         from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -95,30 +94,9 @@ def register(bot, state: dict):
             bot.answer_callback_query(call.id, f"Видалено {n} авто-записів")
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id)
 
-    # ── Словник синонімів ──────────────────────────────────────────────────────
-    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() == "словник")
-    def kb_synonym_export(message):
-        if not _admin(message.from_user.id): return
-        tmp = os.path.join(DATA_DIR, "synonym_export.xlsx")
-        try:
-            count = build_synonym_excel(tmp)
-            if count == 0:
-                bot.reply_to(message, "📋 Кеш порожній — словник пустий."); return
-            with open(tmp, 'rb') as f:
-                bot.send_document(
-                    message.chat.id, f,
-                    caption=(f"📖 *Словник синонімів*: {count} записів\n"
-                             f"✅ підтверджені · 🤖 авто · 🚫 заблоковані"),
-                    visible_file_name=f"словник_{time.strftime('%Y%m%d')}.xlsx",
-                    parse_mode="Markdown")
-        except Exception as e:
-            bot.reply_to(message, f"❌ {e}")
-        finally:
-            if os.path.exists(tmp): os.remove(tmp)
-
     # ── Pending кеш ────────────────────────────────────────────────────────────
     @bot.message_handler(func=lambda m: m.text and (
-        m.text == "👑 Перевір кеш" or m.text.lower().strip() == "перевір кеш"
+        m.text and m.text.lower().strip() in ('перевір кеш', 'перевир кеш', '👑 перевір кеш')
     ))
     def handle_check_cache(message):
         if not _admin(message.from_user.id): return
@@ -132,7 +110,7 @@ def register(bot, state: dict):
                             pending_reject_all_batch, pending_clear_all, pending_get_batch)
 
     # ── Правила на розгляд ─────────────────────────────────────────────────────
-    @bot.message_handler(func=lambda m: m.text == "👑 Правила на розгляд")
+    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('правила на розгляд', '👑 правила на розгляд'))
     def kb_pending(message):
         if not _admin(message.from_user.id): return
         _show_pending(message.chat.id, bot, state)
