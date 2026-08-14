@@ -12,7 +12,7 @@ def register(bot, state: dict):
     from clients.pending_cache import (pending_count, pending_get_batch, pending_confirm,
                                        pending_reject, pending_confirm_all_batch,
                                        pending_reject_all_batch, pending_clear_all)
-    from synonym_export import build_synonym_excel
+    from engine.synonym_export import build_synonym_excel
 
     def _admin(uid): return uid == ADMIN_ID
 
