@@ -9,15 +9,15 @@ def register(bot, state: dict):
 
     @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() == 'клієнти')
     def handle_clients_list(message):
-        owner_id = message.chat.id
-        profiles = clients.list_profiles(owner_id=owner_id)
-        if not profiles:
+        index = clients.list_clients()
+        if not index:
             bot.reply_to(message, "Немає клієнтів. `новий клієнт Ім'я`",
                          parse_mode="Markdown"); return
+        active_slug = clients.get_active(message.chat.id)
         lines = ["👥 *Клієнти:*"]
-        for p in profiles:
-            active = " ← активний" if clients.get_active(message.chat.id) == p['slug'] else ""
-            lines.append(f"• {p['name']}{active}")
+        for slug, name in index.items():
+            active = " ← активний" if active_slug == slug else ""
+            lines.append(f"• {name}{active}")
         bot.reply_to(message, "\n".join(lines), parse_mode="Markdown")
 
     @bot.message_handler(func=lambda m: m.text and m.text.lower().startswith('новий клієнт'))
@@ -35,11 +35,9 @@ def register(bot, state: dict):
             clients.set_active(message.chat.id, None)
             bot.reply_to(message, "👤 Клієнта скинуто."); return
 
-        owner_id = message.chat.id
-        profiles = clients.list_profiles(owner_id=owner_id)
-        matches  = [p for p in profiles
-                    if rest.lower() in p['name'].lower()
-                    or rest.lower() == p['slug']]
+        index   = clients.list_clients()
+        matches = [(slug, name) for slug, name in index.items()
+                   if rest.lower() in name.lower() or rest.lower() == slug]
 
         if not matches:
             bot.reply_to(message, f"❓ Клієнта '{rest}' не знайдено.\n"
@@ -47,9 +45,10 @@ def register(bot, state: dict):
                          parse_mode="Markdown"); return
 
         if len(matches) == 1:
-            _activate_client(message.chat.id, matches[0]['slug'], message, bot)
+            _activate_client(message.chat.id, matches[0][0], message, bot)
         else:
-            mk = client_list_keyboard(matches)
+            profiles = [{'slug': s, 'name': n} for s, n in matches]
+            mk = client_list_keyboard(profiles)
             bot.reply_to(message, "Оберіть клієнта:", reply_markup=mk)
 
     @bot.callback_query_handler(func=lambda c: c.data.startswith('sel_client_'))
@@ -134,7 +133,8 @@ def register(bot, state: dict):
         if len(parts) < 2:
             return
         slug, mode = parts[0], parts[1]
-        n = clients.clear_client_cache(slug, mode)
+        status_map = {'auto': 'auto', 'confirmed': 'confirmed', 'all': None}
+        n = clients.client_cache_clear(slug, status_map.get(mode, None))
         bot.edit_message_text(f"🗑 Видалено {n} записів.",
                               call.message.chat.id, call.message.message_id)
 
@@ -148,9 +148,9 @@ def register(bot, state: dict):
 def _activate_client(chat_id: int, slug: str, message, bot):
     from clients import clients
     clients.set_active(chat_id, slug)
-    p    = clients.get_profile(slug)
-    name = p['name'] if p else slug
-    orders = clients.get_order_count(slug)
+    p      = clients.get_profile(slug)
+    name   = p['name'] if p else slug
+    orders = p.get('orders_count', 0) if p else 0
     text   = (f"✅ Активний клієнт: *{name}*\n"
               f"📦 Замовлень: {orders}\n"
               f"Тепер кинь фото замовлення.")
@@ -162,13 +162,15 @@ def _activate_client(chat_id: int, slug: str, message, bot):
 
 def _create_client(chat_id: int, name: str, bot):
     from clients import clients
-    slug = re.sub(r'\s+', '_', name.strip().lower())
-    if clients.get_profile(slug):
+    ok, result = clients.create_client(name)
+    if not ok and result.startswith("existing:"):
+        slug = result[9:]
         bot.send_message(chat_id, f"❓ Клієнт '{name}' вже існує.")
         _activate_client(chat_id, slug, None, bot)
         return
-    clients.create_profile(slug, name, owner_id=chat_id)
-    _activate_client(chat_id, slug, None, bot)
+    if not ok:
+        bot.send_message(chat_id, f"⚠️ {result}"); return
+    _activate_client(chat_id, result, None, bot)
 
 
 def _show_client_cache(chat_id: int, slug: str, page: int, bot):
