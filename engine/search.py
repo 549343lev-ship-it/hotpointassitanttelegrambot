@@ -1197,7 +1197,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                 continue
             # кеш суперечить підказці виробника — ігноруємо, шукаємо заново
 
-                # РІВЕНЬ 4: живий пошук кандидатів
+        # РІВЕНЬ 4: живий пошук кандидатів
         кандидати      = []
         required_brand = None
         джерело        = ''
@@ -1254,8 +1254,6 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
         if кандидати:
             pass                      # вже отримали від параметрики
         elif hard_brand:
-
-        if hard_brand:
             кандидати = smart_search(пос, top_n=12, brand_tokens=hard_brand)
             if кандидати:
                 required_brand = hard_brand[0]
