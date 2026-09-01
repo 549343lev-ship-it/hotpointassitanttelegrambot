@@ -22,6 +22,7 @@ from clients import clients
 from catalog.catalog import CATALOG, tokenize, ensure_tokens
 from engine.router import (route_batch, get_prefix, CAT_PREFIX,
                             route_sub)  # жорстка маршрутизація + підкатегорії
+from engine.parametric import parametric_search, parse_parametric, query_strength
 from engine.voyage_search import (voyage_find_one, voyage_search,
                                    rebuild_if_needed, is_ready as voyage_ready,
                                    make_routing_path,
@@ -1196,11 +1197,63 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                 continue
             # кеш суперечить підказці виробника — ігноруємо, шукаємо заново
 
-        # РІВЕНЬ 4: живий пошук кандидатів
+                # РІВЕНЬ 4: живий пошук кандидатів
         кандидати      = []
         required_brand = None
         джерело        = ''
         brand_warning  = ''
+
+        # ── РІВЕНЬ 3.5: ПАРАМЕТРИЧНИЙ ПОШУК ─────────────────────────────────
+        # Жорсткий фільтр по розмірах/типу/системі ДО векторного пошуку.
+        # Voyage сліпий до чисел — тут вони вирішують.
+        _pq = parse_parametric(f"{normalized} {original}", query_mode=True)
+        if query_strength(_pq) >= 2:
+            _phits = parametric_search(
+                normalized or original,
+                node_id=пос.get('_node_id') or None,
+                category=пос.get('_routed_cat') or category,
+                brand_tokens=hard_brand,
+                top_n=8,
+                qa=_pq,
+            )
+            # єдиний кандидат з точним збігом розмірів → приймаємо без AI
+            if len(_phits) == 1 and _phits[0].get('_ptier') == 1:
+                top   = _phits[0]
+                _qa_p = пос.get('_qa') or build_qa(пос)
+                пос['_qa'] = _qa_p
+                if validate_pick(_qa_p, top):
+                    результати[i] = {
+                        'original': original, 'normalized': normalized,
+                        'знайдено': True, 'назва': top['name'],
+                        'назва_повна': top.get('name_full', top['name']),
+                        'артикул': top.get('artikul', ''), 'ціна': top.get('price', ''),
+                        'qty': пос.get('qty', ''), 'category': category,
+                        'confidence': 96, 'keyword_pct': top.get('_match_pct', 0),
+                        'джерело': '📐 параметричний', 'brand_warning': '',
+                        'reason': f"Єдиний збіг за розмірами (score={top['_pscore']})",
+                        'fail_reason': '',
+                        'candidates_debug': [c['name'] for c in _phits[:3]],
+                        '_prefix': пос.get('_prefix', 'XX'),
+                        '_routed_cat': пос.get('_routed_cat', 'other'),
+                        '_node_id': пос.get('_node_id', ''),
+                        '_catalog_node': top.get('_node_id', ''),
+                        '_used_brand': '',
+                    }
+                    pending_add(original, brand_map, normalized, top['name'],
+                                category, 96, source='auto')
+                    if client_slug:
+                        clients.client_cache_save(client_slug, original, top['name'],
+                                                  category, 96)
+                    continue
+            # 2-8 кандидатів → віддаємо їх Claude замість 50 від Voyage
+            if _phits:
+                кандидати      = _phits
+                джерело        = '📐 параметричний'
+                required_brand = hard_brand[0] if hard_brand else None
+
+        if кандидати:
+            pass                      # вже отримали від параметрики
+        elif hard_brand:
 
         if hard_brand:
             кандидати = smart_search(пос, top_n=12, brand_tokens=hard_brand)
