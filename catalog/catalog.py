@@ -152,7 +152,8 @@ def _read_xlsx_tree(path: str, category: str) -> list[dict]:
             'group':     current_group,      # LEGACY
             'subgroup':  current_subgroup,   # LEGACY
             'path':      tree_path,          # НОВЕ: справжня ієрархія 1С
-            '_node_id':  assign_node_id(category, current_group, current_subgroup),
+            '_node_id':  assign_node_id(category, current_group, current_subgroup,
+                                          path=tree_path),
         })
 
     # Файл без outline (старий формат) — шлях будуємо з legacy-полів
