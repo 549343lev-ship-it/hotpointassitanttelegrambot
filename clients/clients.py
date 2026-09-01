@@ -281,29 +281,63 @@ def parse_invoice(invoice_path: str) -> list[str]:  # парсить рахун�
 
 
 def learn_from_example(slug: str, example_n: int,
-                       pairs: list[dict]) -> int:   # зберігає пари оригінал→товар в кеш клієнта як confirmed; повертає кількість збережених
+                       pairs: list[dict],
+                       scope: str = "both") -> dict:   # зберігає пари оригінал→товар; scope: client | global | both
     """
     pairs: [{'original': '...', 'catalog_name': '...', 'category': '...'}, ...]
     Викликається після того як Gemini зіставив рядки фото з рахунком.
+
+    scope:
+      'client' — тільки в кеш цього клієнта (як було раніше)
+      'global' — тільки в глобальний кеш бота (працює для ВСІХ клієнтів)
+      'both'   — і туди, і туди (за замовчуванням)
+
+    Повертає {'client': n, 'global': n, 'global_updated': n, 'total': n}
     """
-    saved = 0
-    for p in pairs:
-        original     = p.get('original', '').strip()
-        catalog_name = p.get('catalog_name', '').strip()
-        category     = p.get('category', 'other')
-        if not original or not catalog_name:
-            continue
-        client_cache_save(slug, original, catalog_name, category, 100)
-        client_cache_set_status(slug, original, catalog_name, 'confirmed')
-        saved += 1
+    from clients.cache import cache_learn_bulk
+
+    client_saved = 0
+    g = {'saved': 0, 'updated': 0, 'skipped_banned': 0, 'skipped_empty': 0}
+
+    valid = [p for p in pairs
+             if str(p.get('original') or '').strip()
+             and str(p.get('catalog_name') or '').strip()]
+
+    if scope in ('client', 'both') and slug:
+        for p in valid:
+            original     = str(p['original']).strip()
+            catalog_name = str(p['catalog_name']).strip()
+            category     = str(p.get('category') or 'other')
+            client_cache_save(slug, original, catalog_name, category, 100)
+            client_cache_set_status(slug, original, catalog_name, 'confirmed')
+            client_saved += 1
+
+    if scope in ('global', 'both'):
+        g = cache_learn_bulk(valid, source='training')
 
     # Оновлюємо лічильник прикладів
-    profile = get_profile(slug)
-    if profile:
-        profile['examples_count'] = profile.get('examples_count', 0) + 1
-        save_profile(slug, profile)
+    if slug:
+        profile = get_profile(slug)
+        if profile:
+            profile['examples_count'] = profile.get('examples_count', 0) + 1
+            save_profile(slug, profile)
 
-    return saved
+    return {
+        'client':         client_saved,
+        'global':         g['saved'],
+        'global_updated': g['updated'],
+        'skipped_banned': g['skipped_banned'],
+        'total':          len(valid),
+    }
+
+
+def learn_global(pairs: list[dict], source: str = "training") -> dict:  # навчання глобального кешу бота без прив'язки до клієнта
+    """Пряме навчання бота парами оригінал→товар. Без клієнта, без прикладів."""
+    from clients.cache import cache_learn_bulk
+    valid = [p for p in pairs
+             if str(p.get('original') or '').strip()
+             and str(p.get('catalog_name') or '').strip()]
+    return cache_learn_bulk(valid, source=source)
 
 
 def list_examples(slug: str) -> list[dict]:     # повертає список прикладів клієнта з інфо про наявність фото/рахунку
