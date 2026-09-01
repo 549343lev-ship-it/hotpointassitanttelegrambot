@@ -264,9 +264,11 @@ def ensure_tokens():    # лінива індексація токенів і а
     if not _tokens_built:
         from engine.search import parse_attrs   # lazy import щоб уникнути циклічного імпорту catalog↔search
         print("🔨 Індексую токени...", flush=True)
+               from engine.parametric import parse_parametric   # lazy import
         for item in CATALOG:
             item['_tokens'] = tokenize(item['name'])
             item['_attrs']  = parse_attrs(item['name'])
+            item['_pattrs'] = parse_parametric(item['name'])
         print("✅ Індексація завершена", flush=True)
         _tokens_built = True
 
