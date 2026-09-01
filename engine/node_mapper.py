@@ -1049,17 +1049,13 @@ for _cat, _gp, _sp, _nid in _RULES:
 
 # ─── Основна функція ──────────────────────────────────────────────────────────
 
-def assign_node_id(category: str, group: str, subgroup: str) -> str:
+def _match_rules(category: str, group: str, subgroup: str) -> str | None:
     """
-    Повертає node_id для товару за (category, group, subgroup).
+    Шукає перше правило, що підходить під (category, group, subgroup).
+    Повертає node_id або None.
 
-    Алгоритм:
-      1. Перебираємо _COMPILED по порядку (специфічніші вище).
-      2. Категорія повинна збігатись точно.
-      3. group_pattern: None = будь-який, str = 'in group.lower()', regex = re.search.
-      4. subgroup_pattern: аналогічно.
-      5. Перший збіг → повертаємо node_id.
-      6. Якщо нічого — повертаємо кореневий вузол категорії.
+    group_pattern: None = будь-який, regex = re.search, str = точне == .
+    Точне == запобігає помилці: 'raftec' in 'raftec труба' = True.
     """
     g_lower = group.lower()
     s_lower = subgroup.lower()
@@ -1067,8 +1063,6 @@ def assign_node_id(category: str, group: str, subgroup: str) -> str:
     for cat, gp, sp, nid in _COMPILED:
         if cat != category:
             continue
-        # Перевірка group: None=будь-який, regex=re.search, str=точне порівняння (==)
-        # Точне == запобігає помилці: 'raftec' in 'raftec труба' = True
         if gp is None:
             g_ok = True
         elif isinstance(gp, re.Pattern):
@@ -1077,7 +1071,7 @@ def assign_node_id(category: str, group: str, subgroup: str) -> str:
             g_ok = (gp == g_lower)
         if not g_ok:
             continue
-        # Перевірка subgroup: аналогічно
+
         if sp is None:
             s_ok = True
         elif isinstance(sp, re.Pattern):
@@ -1086,10 +1080,45 @@ def assign_node_id(category: str, group: str, subgroup: str) -> str:
             s_ok = (sp == s_lower)
         if not s_ok:
             continue
+
+        return nid
+    return None
+
+
+def assign_node_id(category: str, group: str, subgroup: str,
+                   path: list[str] | None = None) -> str:
+    """
+    Повертає node_id для товару.
+
+    1) Спершу пробуємо legacy-поля (group, subgroup) — поведінка не змінилась,
+       усі правила, що працювали раніше, дають той самий результат.
+    2) Якщо впали в корінь категорії і є `path` (справжня ієрархія 1С) —
+       пробуємо СУСІДНІ ПАРИ шляху (батько, дитина), від найглибшої вгору.
+
+       Це оживляє правила, написані під справжню структуру, які раніше
+       не спрацьовували бо старий парсер знищував проміжні рівні. Напр.:
+           ('sewage', '*Наружная', 'Труба', 'kn.e.p')
+       Рівні *Наружная і Труба у legacy-полях просто не існували.
+
+       Беремо ТІЛЬКИ пари, не поодинокі сегменти: правила написані у формі
+       (батько, дитина), і одиночний сегмент дає хибні збіги
+       (напр. «Інструмент» → вузол перехідників).
+
+    3) Інакше — кореневий вузол категорії.
+    """
+    nid = _match_rules(category, group, subgroup)
+    if nid is not None:
         return nid
 
-    # Fallback: кореневий вузол категорії
-    return CAT_ROOT.get(category, 'xx')
+    root = CAT_ROOT.get(category, 'xx')
+
+    if path and len(path) >= 2:
+        for i in range(len(path) - 1, 0, -1):        # від найглибшого рівня
+            nid = _match_rules(category, path[i - 1], path[i])
+            if nid is not None and nid != root:
+                return nid
+
+    return root
 
 
 def node_pool(catalog: list[dict], node_id: str) -> list[dict]:
