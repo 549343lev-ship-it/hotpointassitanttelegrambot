@@ -23,6 +23,7 @@ from catalog.catalog import CATALOG, tokenize, ensure_tokens
 from engine.router import (route_batch, get_prefix, CAT_PREFIX,
                             route_sub)  # жорстка маршрутизація + підкатегорії
 from engine.parametric import parametric_search, parse_parametric, query_strength
+from engine.path_filter import filter_by_path
 from engine.voyage_search import (voyage_find_one, voyage_search,
                                    rebuild_if_needed, is_ready as voyage_ready,
                                    make_routing_path,
@@ -1336,6 +1337,15 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                               'reason': '', 'fail_reason': 'всі кандидати забанені',
                               'candidates_debug': []}
             continue
+
+        # ── ФІЛЬТР ПО ГІЛЦІ 1С ──────────────────────────────────────────────
+        # Один бренд живе в кількох гілках дерева (труба/фітинг,
+        # внутрішня/зовнішня, кульовий/американка). Лишаємо тільки ту,
+        # що відповідає запиту. Якщо запит неоднозначний — не ріже.
+        _before_pf = len(кандидати)
+        кандидати  = filter_by_path(f"{normalized} {original}", кандидати)
+        if len(кандидати) < _before_pf:
+            джерело = (джерело + ' 🌳') if джерело else '🌳 гілка'
 
         # ⚡ VOYAGE АВТО-ПРИЙОМ: якщо Voyage впевнений (score >= 0.82) → одразу
         if кандидати and кандидати[0].get('_voyage') and not brand_warning:
