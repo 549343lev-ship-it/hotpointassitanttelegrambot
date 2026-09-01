@@ -1,4 +1,15 @@
-"""handlers/learn_handler.py — Навчання бота на парах фото+рахунок клієнта."""
+"""
+handlers/learn_handler.py — Навчання на парах фото+рахунок.
+
+ДВА РЕЖИМИ:
+  📚 Навчання      — з прив'язкою до клієнта; на кроці 3 обираєш куди зберігати
+  🌐 Навчання бота — без клієнта, одразу в глобальний кеш (працює для всіх)
+
+ОБЛАСТІ ЗБЕРЕЖЕННЯ (scope):
+  client — тільки кеш цього клієнта
+  global — глобальний кеш бота (для ВСІХ клієнтів), status=confirmed, source=training
+  both   — і туди, і туди (за замовчуванням)
+"""
 import os
 import re
 import threading
@@ -15,6 +26,18 @@ def register(bot, state: dict):
     _learn_photo_timers = {}
 
     # ── Запуск навчання ───────────────────────────────────────────────────────
+
+    GLOBAL_SLUG = "_bot"          # псевдо-клієнт для глобального навчання
+
+    # ── Навчання БОТА (без клієнта) ───────────────────────────────────────────
+
+    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in
+                         ('навчання бота', '🌐 навчання бота', 'навчити бота'))
+    def handle_learn_global_start(message):
+        _start_learn_session(message.chat.id, GLOBAL_SLUG,
+                             reply_to=message, scope='global')
+
+    # ── Навчання КЛІЄНТА ──────────────────────────────────────────────────────
 
     @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('навчання', '📚 навчання'))
     def handle_learn_start(message):
@@ -35,7 +58,9 @@ def register(bot, state: dict):
 
     # ── Вибір клієнта для навчання ────────────────────────────────────────────
 
-    @bot.callback_query_handler(func=lambda c: c.data.startswith('lrn_') and c.data != 'lrn_photos_done')
+    @bot.callback_query_handler(func=lambda c: c.data.startswith('lrn_')
+                                 and c.data != 'lrn_photos_done'
+                                 and not c.data.startswith('lrnsc|'))
     def cb_learn_pick_client(call):
         slug = call.data[4:]
         p    = clients.get_profile(slug)
@@ -50,20 +75,26 @@ def register(bot, state: dict):
 
     # ── Ініціалізація сесії ───────────────────────────────────────────────────
 
-    def _start_learn_session(chat_id: int, slug: str, reply_to=None):
+    def _start_learn_session(chat_id: int, slug: str, reply_to=None,
+                             scope: str = 'both'):
         from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-        p       = clients.get_profile(slug)
-        _, ex_n = clients.get_next_example_dir(slug)
+        is_global = (slug == GLOBAL_SLUG)
+        p         = None if is_global else clients.get_profile(slug)
+        _, ex_n   = clients.get_next_example_dir(slug)
         _learn_state[chat_id] = {
             'slug':            slug,
             'example_n':       ex_n,
             'stage':           'photos',
+            'scope':           scope,
+            'is_global':       is_global,
             'photo_paths':     [],
             'photo_count':     0,
             'invoice_received': False,
         }
+        who = ("🌐 *ВЕСЬ БОТ* (для всіх клієнтів)" if is_global
+               else f"👤 клієнта *{p['name'] if p else slug}*")
         text = (
-            f"📚 Навчання клієнта *{p['name'] if p else slug}*\n"
+            f"📚 Навчання {who}\n"
             f"Приклад #{ex_n}\n\n"
             f"Крок 1️⃣: Кидай фото замовлення від майстра\n"
             f"_(можна кілька — коли всі кинув, натисни_ *Готово* _або одразу кидай рахунок)_"
@@ -220,20 +251,100 @@ def register(bot, state: dict):
                 f"_Відповідь Gemini:_\n`{raw_response[:300]}`",
                 message.chat.id, status_msg.message_id, parse_mode="Markdown"); return
 
-        saved = clients.learn_from_example(slug, ex_n, pairs)
-        _learn_state.pop(message.chat.id, None)
-        print(f"✅ Навчання: збережено {saved}/{len(pairs)} пар", flush=True)
+        st['pairs']       = pairs
+        st['photo_n']     = len(photos_bytes)
+        st['status_msg']  = status_msg.message_id
+        st['stage']       = 'scope'
 
-        p = clients.get_profile(slug)
+        preview = "\n".join(
+            f"• `{str(pr.get('original',''))[:28]}` → {str(pr.get('catalog_name',''))[:44]}"
+            for pr in pairs[:5])
+        more = f"\n_...і ще {len(pairs) - 5}_" if len(pairs) > 5 else ""
+
+        # У глобальному режимі scope вже відомий — зберігаємо одразу
+        if st.get('is_global'):
+            _finish_learn(message.chat.id, 'global')
+            return
+
+        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+        mk = InlineKeyboardMarkup(row_width=1)
+        mk.add(InlineKeyboardButton("🔀 Клієнт + весь бот (рекомендовано)", callback_data="lrnsc|both"))
+        mk.add(InlineKeyboardButton("🌐 Тільки весь бот",                   callback_data="lrnsc|global"))
+        mk.add(InlineKeyboardButton("👤 Тільки цей клієнт",                 callback_data="lrnsc|client"))
+        mk.add(InlineKeyboardButton("❌ Скасувати",                         callback_data="lrnsc|cancel"))
+
         bot.edit_message_text(
-            f"✅ Навчання завершено!\n"
-            f"👤 Клієнт: *{p['name'] if p else slug}*\n"
-            f"📚 Приклад #{ex_n}\n"
-            f"📸 Фото: {len(photos_bytes)} шт.\n"
-            f"🔗 Знайдено збігів: *{len(pairs)}*\n"
-            f"💾 Збережено в кеш: *{saved}*\n\n"
-            f"Для ще одного прикладу: натисни *📚 Навчання*",
-            message.chat.id, status_msg.message_id, parse_mode="Markdown")
+            f"🔗 Знайдено збігів: *{len(pairs)}*\n\n{preview}{more}\n\n"
+            f"Крок 3️⃣: Куди зберігати?\n"
+            f"_🌐 «весь бот» = працюватиме для всіх клієнтів_",
+            message.chat.id, status_msg.message_id,
+            parse_mode="Markdown", reply_markup=mk)
+
+    # ── Крок 3: вибір області збереження ──────────────────────────────────────
+
+    @bot.callback_query_handler(func=lambda c: c.data.startswith('lrnsc|'))
+    def cb_learn_scope(call):
+        scope = call.data.split('|', 1)[1]
+        st    = _learn_state.get(call.message.chat.id)
+        if not st:
+            bot.answer_callback_query(call.id, "Сесія завершена"); return
+        if scope == 'cancel':
+            _learn_state.pop(call.message.chat.id, None)
+            bot.edit_message_text("❌ Навчання скасовано. Нічого не збережено.",
+                                  call.message.chat.id, call.message.message_id)
+            bot.answer_callback_query(call.id); return
+        bot.answer_callback_query(call.id, "Зберігаю...")
+        _finish_learn(call.message.chat.id, scope)
+
+    # ── Фінальне збереження ───────────────────────────────────────────────────
+
+    def _finish_learn(chat_id: int, scope: str):
+        st = _learn_state.get(chat_id)
+        if not st:
+            return
+        slug    = st['slug']
+        ex_n    = st['example_n']
+        pairs   = st.get('pairs', [])
+        msg_id  = st.get('status_msg')
+        photo_n = st.get('photo_n', 0)
+
+        if st.get('is_global'):
+            g = clients.learn_global(pairs, source='training')
+            res = {'client': 0, 'global': g['saved'], 'global_updated': g['updated'],
+                   'skipped_banned': g['skipped_banned'], 'total': len(pairs)}
+        else:
+            res = clients.learn_from_example(slug, ex_n, pairs, scope=scope)
+
+        _learn_state.pop(chat_id, None)
+        print(f"✅ Навчання [{scope}]: {res}", flush=True)
+
+        p    = None if st.get('is_global') else clients.get_profile(slug)
+        who  = "🌐 ВЕСЬ БОТ" if st.get('is_global') else (p['name'] if p else slug)
+
+        lines = [
+            "✅ Навчання завершено!",
+            f"🎯 Ціль: *{who}*",
+            f"📚 Приклад #{ex_n}",
+            f"📸 Фото: {photo_n} шт.",
+            f"🔗 Знайдено збігів: *{res['total']}*",
+            "",
+        ]
+        if res['client']:
+            lines.append(f"👤 У кеш клієнта: *{res['client']}*")
+        if res['global'] or res['global_updated']:
+            lines.append(f"🌐 У кеш бота: *{res['global']}* нових"
+                         + (f", {res['global_updated']} оновлено" if res['global_updated'] else ""))
+        if res['skipped_banned']:
+            lines.append(f"🚫 Пропущено (забанено адміном): {res['skipped_banned']}")
+        lines.append("")
+        lines.append("_Записи безстрокові, у пошуку мають найвищий пріоритет._")
+
+        bot.send_message(chat_id, "\n".join(lines), parse_mode="Markdown")
+        if msg_id:
+            try:
+                bot.edit_message_reply_markup(chat_id, msg_id, reply_markup=None)
+            except Exception:
+                pass
 
 
 # ── Gemini зіставлення ────────────────────────────────────────────────────────
