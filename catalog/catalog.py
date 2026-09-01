@@ -9,6 +9,7 @@ import os
 import re
 import json
 import pandas as pd
+from openpyxl import load_workbook
 try:
     from engine.node_mapper import assign_node_id   # на сервері (engine/)
 except ImportError:
@@ -67,17 +68,113 @@ def _is_header_row(name, artikul, or_val) -> bool:  # визначає чи є �
     return True
 
 
+def _read_xlsx_tree(path: str, category: str) -> list[dict]:
+    """
+    Читає один прайс, зберігаючи СПРАВЖНЮ ієрархію 1С.
+
+    Excel не має папок — ієрархія лежить у службовій властивості рядка
+    `outlineLevel` (ті самі «плюсики» збоку). pandas її не бачить,
+    openpyxl — бачить.
+
+    Рядок без артикула і без ціни = папка. Решта = товар.
+    Глибина не обмежена: 2, 6 чи 10 рівнів читаються однаково.
+
+    Кожен товар отримує:
+      path     — повний шлях папок ['ЗАПІРНА АРМАТУРА', 'Краны шаровые', ...]
+      group    — LEGACY, як рахував старий парсер (для node_mapper)
+      subgroup — LEGACY, як рахував старий парсер (для node_mapper)
+    """
+    ws    = load_workbook(path, data_only=True).active
+    stack: dict[int, str] = {}      # рівень → назва відкритої папки
+    items: list[dict]     = []
+
+    # LEGACY state — щоб group/subgroup лишились байт-у-байт як раніше
+    current_group    = ''
+    current_subgroup = ''
+    prev_was_group   = False
+
+    has_outline = False
+
+    for i in range(2, ws.max_row + 1):
+        name = str(ws.cell(row=i, column=1).value or '').strip()
+        if not name or name == 'nan':
+            continue
+
+        # openpyxl віддає None там, де pandas віддавав nan — нормалізуємо,
+        # інакше _is_header_row() вважає кожну папку товаром
+        artikul = ws.cell(row=i, column=2).value
+        price   = ws.cell(row=i, column=3).value
+        artikul = '' if artikul is None else artikul
+        price   = 0  if price   is None else price
+
+        rd  = ws.row_dimensions.get(i)
+        lvl = rd.outline_level if rd else 0
+        if lvl:
+            has_outline = True
+
+        if _is_header_row(name, artikul, price):
+            # ── ПАПКА ──
+            stack[lvl] = name
+            for k in [k for k in stack if k > lvl]:
+                del stack[k]        # перейшли в сусідню гілку — глибші закриваємо
+
+            # legacy state machine (не чіпати — від нього залежить node_mapper)
+            if name.upper() != name:
+                if prev_was_group:
+                    current_subgroup = name
+                else:
+                    current_group    = name
+                    current_subgroup = ''
+            else:
+                current_group    = name
+                current_subgroup = ''
+            prev_was_group = True
+            continue
+
+        # ── ТОВАР ──
+        prev_was_group = False
+        try:
+            p = float(price)
+        except (TypeError, ValueError):
+            p = 0.0
+
+        art        = str(artikul).strip()
+        name_full  = name
+        name_clean = re.sub(r'\s*\{[^}]+\}', '', name).strip()
+        tree_path  = [stack[k] for k in sorted(stack) if k < lvl]
+
+        items.append({
+            'name':      name_clean,
+            'name_full': name_full,
+            'artikul':   art if art not in ('nan', 'None') else '',
+            'category':  category,
+            'price':     p,
+            'group':     current_group,      # LEGACY
+            'subgroup':  current_subgroup,   # LEGACY
+            'path':      tree_path,          # НОВЕ: справжня ієрархія 1С
+            '_node_id':  assign_node_id(category, current_group, current_subgroup),
+        })
+
+    # Файл без outline (старий формат) — шлях будуємо з legacy-полів
+    if not has_outline:
+        for it in items:
+            it['path'] = [x for x in (it['group'], it['subgroup']) if x]
+
+    return items
+
+
 def build_catalog_from_xlsx() -> list[dict]:    # читає всі xlsx з prices/ і збирає єдиний список товарів
     catalog  = []
-    src_dir  = os.path.dirname(os.path.abspath(__file__))   # data/
-    root_dir = os.path.dirname(src_dir)                      # корінь проекту
+    src_dir  = os.path.dirname(os.path.abspath(__file__))
+    root_dir = os.path.dirname(src_dir)
     search_dirs = [
-        os.path.join(root_dir, 'prices'),   # абсолютний шлях до prices/
-        'prices',                            # відносний від робочої директорії
-        root_dir,                            # корінь проекту
-        '.',                                 # поточна директорія
+        os.path.join(root_dir, 'prices'),
+        'prices',
+        root_dir,
+        '.',
     ]
 
+    depth_max = 0
     for key, category in CATALOG_FILES:
         found = False
         for d in search_dirs:
@@ -85,66 +182,19 @@ def build_catalog_from_xlsx() -> list[dict]:    # читає всі xlsx з pric
             if not os.path.exists(path):
                 continue
             try:
-                df   = pd.read_excel(path, header=0)
-                cols = list(df.columns)
-                rename = {}
-                if len(cols) >= 1: rename[cols[0]] = 'name'
-                if len(cols) >= 2: rename[cols[1]] = 'artikul'
-                if len(cols) >= 3: rename[cols[2]] = 'price'
-                df    = df.rename(columns=rename)
-                count = 0
-                current_group = ''    # поточна підгрупа (рядок без артикулу)
-                current_subgroup = '' # підпідгрупа (другий рівень)
-                prev_was_group = False
-
-                for _, row in df.iterrows():
-                    name    = str(row.get('name', '')).strip()
-                    artikul = row.get('artikul', '')
-                    price   = row.get('price', 0)
-
-                    # Рядок-підгрупа (немає артикулу і ціни)
-                    if _is_header_row(name, artikul, price):
-                        if name and name != 'nan' and name.upper() != name:
-                            # Малі літери = підгрупа (виробник або тип)
-                            if prev_was_group:
-                                current_subgroup = name  # другий рівень
-                            else:
-                                current_group = name
-                                current_subgroup = ''
-                            prev_was_group = True
-                        elif name and name != 'nan':
-                            # Великі літери = головна група
-                            current_group = name
-                            current_subgroup = ''
-                            prev_was_group = True
-                        continue
-
-                    prev_was_group = False
-                    try:
-                        p = float(price)
-                    except Exception:
-                        p = 0.0
-                    art        = str(artikul).strip()
-                    name_full  = name
-                    name_clean = re.sub(r'\s*\{[^}]+\}', '', name).strip()
-                    catalog.append({
-                        'name':      name_clean,
-                        'name_full': name_full,
-                        'artikul':   art if art != 'nan' else '',
-                        'category':  category,
-                        'price':     p,
-                        'group':     current_group,
-                        'subgroup':  current_subgroup,
-                        '_node_id':  assign_node_id(category, current_group, current_subgroup),
-                    })
-                    count += 1
-                print(f"  ✅ {key}: {count} товарів")
+                items = _read_xlsx_tree(path, category)
+                catalog.extend(items)
+                dmax = max((len(i['path']) for i in items), default=0)
+                depth_max = max(depth_max, dmax)
+                print(f"  ✅ {key}: {len(items)} товарів, глибина {dmax}")
                 found = True
                 break
             except Exception as e:
                 print(f"  ❌ {key}: {e}")
         if not found:
             print(f"  ⚠️ {key}.xlsx не знайдено")
+
+    print(f"🌳 Максимальна глибина ієрархії: {depth_max}")
     return catalog
 
 
@@ -153,9 +203,9 @@ def load_catalog():     # завантажує каталог з JSON-кешу �
     if os.path.exists(CATALOG_PATH):
         with open(CATALOG_PATH, encoding="utf-8") as f:
             CATALOG = json.load(f)
-        # Якщо каталог старий (без _node_id) — перебудовуємо
-        if CATALOG and '_node_id' not in CATALOG[0]:
-            print("⚙️ Каталог без node_id — перебудовую...", flush=True)
+        # Якщо каталог старий (без _node_id або без path) — перебудовуємо
+        if CATALOG and ('_node_id' not in CATALOG[0] or 'path' not in CATALOG[0]):
+            print("⚙️ Каталог без node_id/path — перебудовую...", flush=True)
             CATALOG = build_catalog_from_xlsx()
             if CATALOG:
                 with open(CATALOG_PATH, "w", encoding="utf-8") as f:
