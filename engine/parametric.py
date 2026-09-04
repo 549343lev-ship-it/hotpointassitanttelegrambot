@@ -151,15 +151,32 @@ _DIM_F  = re.compile(rf'(?:ф|Ø|d)\s*({_NUM})'
                      rf'(?:\s*[хx×*]\s*({_NUM}))?'
                      rf'(?:\s*[хx×*]\s*({_NUM}))?', re.I)
 # 500x1000 (радіатори) — без ф
-_DIM_X  = re.compile(rf'(?<![\d/."])({_NUM})\s*[хx×]\s*({_NUM})'
-                     rf'(?:\s*[хx×]\s*({_NUM}))?')
+_DIM_X  = re.compile(rf'(?<![\d/."])({_NUM})\s*[хx×*]\s*({_NUM})'
+                     rf'(?:\s*[хx×*]\s*({_NUM}))?')
 _DN     = re.compile(r'\bDN\s*(\d+)', re.I)
 _PN     = re.compile(r'\bPN\s*(\d+)', re.I)
 # 1/2"  3/4"  1 1/4"  2"
 _THREAD = re.compile(r'(\d+\s+\d+/\d+|\d+/\d+|\d+)\s*["”]')
 _ANGLE  = re.compile(r'(\d{2,3})(?:[.,]\d)?\s*[°º]')
 _LEN    = re.compile(rf'L\s*[=:]?\s*({_NUM})\s*(мм|см|м)\b', re.I)
-_TYPESZ = re.compile(r'\bтип\s*(\d{2})\b', re.I)   # радіатори: тип 22, тип 11
+_TYPESZ = re.compile(r'тип\s*(\d{1,2})(?![\d])', re.I)   # радіатори: тип 22, тип 11
+
+# Тип з'єднання ВВ / ВЗ / ЗВ / НВ. \b НЕ працює з кирилицею — тільки lookaround.
+_NOTLET = r'(?<![а-яіїєґА-ЯІЇЄҐa-zA-Z])'
+_NOTLET_R = r'(?![а-яіїєґА-ЯІЇЄҐa-zA-Z])'
+_CONN_RE: list[tuple[str, str]] = [
+    (rf'{_NOTLET}(?:вв|вн\.вн|в/в){_NOTLET_R}',                    'vv'),   # внутр-внутр
+    (rf'{_NOTLET}(?:вз|зв|нв|вн|в/з|з/в){_NOTLET_R}',               'vz'),   # внутр-зовн
+]
+_CONN_COMPILED = [(re.compile(p, re.I), v) for p, v in _CONN_RE]
+
+# Різьба МРЗ/МРВ — теж тільки через lookaround, інакше «резеРВуар» → mrv
+_THREAD_TYPE_RE: list[tuple[str, str]] = [
+    (rf'{_NOTLET}(?:мрз|mrz|зр|рз|нр){_NOTLET_R}',  'mrz'),   # зовнішня різьба
+    (rf'{_NOTLET}(?:мрв|mrv|вр|рв){_NOTLET_R}',     'mrv'),   # внутрішня різьба
+    (rf'{_NOTLET}(?:мрн|mrn|врн|нг){_NOTLET_R}',    'mrn'),   # накидна гайка
+]
+_THREAD_TYPE_COMPILED = [(re.compile(p, re.I), v) for p, v in _THREAD_TYPE_RE]
 # різьба БЕЗ лапок — тільки для query_mode: "25х3/4", "перехід 1/2 на 3/4"
 _THREAD_BARE = re.compile(r'(?<![\d.,])(\d+\s+\d+/\d+|\d/\d)(?![\d.,])')
 _ANGLE_SET   = {15, 30, 45, 67, 87, 88, 90}
@@ -188,6 +205,14 @@ def _norm_num(v: Optional[float]) -> Optional[float]:
     if v is None:
         return None
     return int(v) if float(v).is_integer() else round(float(v), 2)
+
+
+def _find_re(text: str, compiled: list[tuple]) -> Optional[str]:
+    """Перший регекс зі списку, що знайшовся. Порядок = пріоритет."""
+    for rx, val in compiled:
+        if rx.search(text):
+            return val
+    return None
 
 
 def _find_lex(low: str, lex: list[tuple[str, str]]) -> Optional[str]:
@@ -278,7 +303,8 @@ def parse_parametric(raw: str, query_mode: bool = False) -> dict[str, Any]:
         'type':        ptype,
         'brand':       brand,
         'system':      system,
-        'thread_type': _find_lex(low, THREAD_TYPE_LEXICON),
+        'thread_type': _find_re(core, _THREAD_TYPE_COMPILED),
+        'conn':        _find_re(core, _CONN_COMPILED),
         'dims':        dims,
         'dn':          int(dn.group(1)) if dn else None,
         'pn':          int(pn.group(1)) if pn else None,
