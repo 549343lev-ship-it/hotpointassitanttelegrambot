@@ -1,13 +1,13 @@
 """
 search.py — Пошук товарів у каталозі.
 
-Пріоритети пошуку:
-  1. Підказка менеджера (brand_map від caption) — одразу живий пошук, кеші ігноруються
-  2. Кеш клієнта — якщо підказки немає або вона нічого не знайшла
-  3. Кеш бота — якщо кеш клієнта не спрацював
-  4. Живий пошук: line_brand → профіль клієнта → DEFAULT_BRAND_PRIORITY → вільний
+4 рівні пошуку (від швидкого до складного):
+  1. Кеш клієнта
+  2. Кеш бота
+  3. Атрибутний пошук (детермінований: тип + діаметри + кут)
+  4. Claude вибір з кандидатів (AI-арбітр)
 
-Плюс: keyword_search як fallback, ⚡ авто-прийом очевидних збігів (Voyage + attr tier-1).
+Плюс: keyword_search як fallback, ⚡ авто-прийом очевидних збігів.
 """
 
 import os
@@ -22,6 +22,8 @@ from clients import clients
 from catalog.catalog import CATALOG, tokenize, ensure_tokens
 from engine.router import (route_batch, get_prefix, CAT_PREFIX,
                             route_sub)  # жорстка маршрутизація + підкатегорії
+from engine.parametric import parametric_search, parse_parametric, query_strength
+from engine.path_filter import filter_by_path
 from engine.voyage_search import (voyage_find_one, voyage_search,
                                    rebuild_if_needed, is_ready as voyage_ready,
                                    make_routing_path,
@@ -411,11 +413,56 @@ _INCOMPATIBLE_TYPES = [
 ]
 
 
-def validate_pick(qa: dict, item: dict) -> bool:    # пост-валідація вибору: діаметри, тип, кут, різьба, трійник dim
+def _pattrs_of(item: dict) -> dict:     # параметричні атрибути товару (з кешу індексу або на льоту)
+    pa = item.get('_pattrs')
+    if pa:
+        return pa
+    return parse_parametric(item.get('name', ''))
+
+
+def _qpattrs(qa: dict) -> dict:         # параметричні атрибути ЗАПИТУ, кешуються в самому qa
+    pa = qa.get('_pq')
+    if pa is None:
+        pa = parse_parametric(qa.get('_raw', ''), query_mode=True)
+        qa['_pq'] = pa
+    return pa
+
+
+def _clean_dia(legacy_dia: list, pat: dict) -> set:
+    """
+    Прибирає з набору діаметрів значення, що насправді є PN або типом радіатора.
+    Стара parse_attrs зараховувала їх у діаметри (PN20 → діаметр 20).
+    Прибираємо ТІЛЬКИ якщо значення не збігається зі справжнім розміром —
+    інакше «Труба ф20 PN20» втратила б реальний ф20.
+    """
+    real = set(pat.get('dims') or [])
+    junk = set()
+    for key in ('pn', 'rad_type'):
+        v = pat.get(key)
+        if v and v not in real:
+            junk.add(v)
+    return {d for d in (legacy_dia or []) if d not in junk}
+
+
+def _dims_compatible(q: list, c: list) -> bool:
+    """
+    Розміри сумісні за префіксом, ПОРЯДОК ВАЖЛИВИЙ.
+    ф50х32 ≠ ф32х50. Запит із меншою кількістю розмірів — не блокує
+    ("труба 20" підходить до "ф20х2,8", бо 2,8 це товщина стінки).
+    """
+    if not q or not c:
+        return True
+    n = min(len(q), len(c))
+    return q[:n] == c[:n]
+
+
+def validate_pick(qa: dict, item: dict) -> bool:    # пост-валідація вибору: розміри, тип, кут, різьба, з'єднання
     ia    = item.get('_attrs') or parse_attrs(item.get('name', ''))
+    ip    = _pattrs_of(item)                 # параметричні атрибути товару
+    qp    = _qpattrs(qa)                     # параметричні атрибути запиту
+    item_name_lower = item.get('name', '').lower()
 
     # Відхиляємо виробників яких не продаємо
-    item_name_lower = item.get('name', '').lower()
     if any(b.lower() in item_name_lower for b in _BANNED_BRANDS):
         return False
 
@@ -427,132 +474,140 @@ def validate_pick(qa: dict, item: dict) -> bool:    # пост-валідаці�
         if t2 in _raw and t1 in item_name_lower:
             return False
 
-    q_dia = set(qa.get('dia') or [])
-    # Плівка, стрічка, демпфер — товари без діаметра, валідація по діаметру не застосовується
+    # ── РОЗМІРИ ──────────────────────────────────────────────────────────────
+    # Через parse_parametric: PN/DN/тип радіатора — окремі поля, не діаметри.
+    # Стара parse_attrs зараховувала PN20 у діаметри, через що труба ф25 PN20
+    # проходила валідацію на запит «труба ф20».
     _skip_dia_types = {'плівка', 'стрічка', 'утеплювач', 'мірелон', 'лічильник'}
     _qa_type = (qa.get('type') or '').lower()
-    _item_name_lc = item.get('name', '').lower()
-    _qa_raw = (qa.get('_raw') or '').lower()
     _skip_dia = (
         _qa_type in _skip_dia_types or
-        any(w in _item_name_lc for w in ('плівк', 'стрічк', 'демпфер', 'мірелон', 'утеплюв', 'лічильн', 'водомір')) or
-        any(w in _qa_raw for w in ('лічильн', 'водомір', 'gidrotek'))
+        any(w in item_name_lower for w in ('плівк', 'стрічк', 'демпфер', 'мірелон',
+                                           'утеплюв', 'лічильн', 'водомір')) or
+        any(w in _raw for w in ('лічильн', 'водомір', 'gidrotek'))
     )
-    if q_dia and not _skip_dia and not q_dia.issubset(set(ia['dia'])):
-        return False
+    if not _skip_dia:
+        # 1) впорядковане порівняння — ловить переставлені розміри (50х32 ≠ 32х50)
+        if not _dims_compatible(qp['dims'], ip['dims']):
+            return False
+        # 2) DN і PN звіряємо окремо — вони більше не плутаються з діаметром
+        if qp['dn'] and ip['dn'] and qp['dn'] != ip['dn']:
+            return False
+        if qp['pn'] and ip['pn'] and qp['pn'] != ip['pn']:
+            return False
+        # 3) множинна перевірка — працює й там, де parametric не витяг розміри
+        #    (назви без «ф», напр. «Підведення 1/2"х1/2", 0,5 м»).
+        #    Діаметри очищені від PN і типу радіатора.
+        #    Беремо ПЕРЕТИН двох парсерів — лишаються тільки числа, які
+        #    обидва вважають розміром. Так відсікається і кут (parametric
+        #    знає, що 87 — це градуси), і довжина/потужність (їх не бачить
+        #    старий парсер як діаметр разом з новим).
+        _q_leg = _clean_dia(qa.get('dia'), qp)
+        _q_par = {int(d) for d in qp['dims'] if float(d).is_integer()}
+        q_dia  = (_q_leg & _q_par) or _q_leg
+        i_dia  = _clean_dia(ia.get('dia'), ip) | {int(d) for d in ip['dims']
+                                                  if float(d).is_integer()}
+        if q_dia and not q_dia.issubset(i_dia):
+            return False
+
+    # ── ТИП ВИРОБУ ───────────────────────────────────────────────────────────
     if qa.get('type') and ia.get('type') and qa['type'] != ia['type']:
         if {qa['type'], ia['type']} != {'коліно', 'відведення'}:
-            # КРИТИЧНО: муфта ≠ коліно навіть якщо обидва мають РВ/РЗ
-            if {qa['type'], ia['type']} in [
-                {'муфта', 'коліно'}, {'муфта', 'відведення'},
-                {'трійник', 'муфта'}, {'трійник', 'коліно'},
-            ]:
-                return False
             return False
 
-    # КРИТИЧНО: ВЗ ≠ ВВ для кранів і клапанів
-    # Якщо запит має conn_type → товар з протилежним conn_type відхиляємо
-    if qa.get('conn_type'):
-        ia_conn = ia.get('conn_type')
-        item_lc = item.get('name', '').lower()
-        if ia_conn and qa['conn_type'] != ia_conn:
+    # ── З'ЄДНАННЯ ВВ / ВЗ ────────────────────────────────────────────────────
+    # Стара перевірка не працювала: '\bвв\b' був звичайним рядком, а 'вв' in
+    # t.split() не ловив «ВВ,» з комою. Розпізнавалось 16% товарів із 1407.
+    q_conn = qp['conn'] or qa.get('conn_type')
+    if q_conn in ('vv', 'vz'):
+        i_conn = ip['conn']
+        if i_conn and q_conn != i_conn:
             return False
-        # Хлопушка/пелюстковий не має conn_type але не є штоковим ВВ клапаном
-        if any(x in item_lc for x in ('хлопушк', 'пелюстк')):
-            return False
-        # Кран ВЗ: якщо запитали ВЗ але знайшло ВВ (і навпаки)
-        q_conn = qa['conn_type']
-        if q_conn == 'вз' and ' вв' in item_lc and ' вз' not in item_lc:
-            return False
-        if q_conn == 'вв' and ' вз' in item_lc and ' вв' not in item_lc:
+        if any(x in item_name_lower for x in ('хлопушк', 'пелюстк')):
             return False
 
-    # ЖОРСТКО: ECO ≠ Ekoplastik — різні виробники, різні папки!
-    # Якщо підказка "екопластик" → ECO товари заборонені і навпаки
+    # ── ВИРОБНИК: ECO ≠ Ekoplastik (різні папки каталогу) ───────────────────
     _req_brand_lc = [t.lower() for t in (qa.get('_brand_tokens') or [])]
-    _item_name_lc = item.get('name', '').lower()
     if _req_brand_lc:
         wants_ekoplastik = any(b in ('ekoplastik', 'pp-rct') for b in _req_brand_lc)
         wants_eco        = _req_brand_lc == ['eco']
-        item_is_eco      = ', eco' in _item_name_lc or ' eco' == _item_name_lc[-4:]
-        item_is_ekoplas  = 'ekoplastik' in _item_name_lc or 'pp-rct' in _item_name_lc
+        item_is_eco      = ', eco' in item_name_lower or ' eco' == item_name_lower[-4:]
+        item_is_ekoplas  = 'ekoplastik' in item_name_lower or 'pp-rct' in item_name_lower
         if wants_ekoplastik and item_is_eco and not item_is_ekoplas:
-            return False   # хотіли Ekoplastik — ECO заборонено
+            return False
         if wants_eco and item_is_ekoplas and not item_is_eco:
-            return False   # хотіли ECO — Ekoplastik заборонено
-    # Якщо в запиті є "латунь" або "вввв" → PPR категорія не підходить
-    _raw_lc = (qa.get('_raw') or '').lower()
-    _item_cat = item.get('category', '')
-    if 'латун' in _raw_lc and _item_cat == 'plastic_ppr':
-        return False
-    if 'латун' in _raw_lc and 'ppr' in item.get('name', '').lower():
+            return False
+
+    # Латунь ≠ PPR
+    if 'латун' in _raw and (item.get('category') == 'plastic_ppr'
+                            or 'ppr' in item_name_lower):
         return False
 
-    # КРИТИЧНО: "з американкою" — якщо запит має американку, товар без неї не підходить
-    item_lc = item.get('name', '').lower()
-    if 'американк' in _raw_lc and 'американк' not in item_lc and 'амер' not in item_lc:
+    # Американка: запитали — товар мусить її мати
+    if 'американк' in _raw and 'американк' not in item_name_lower \
+            and 'амер' not in item_name_lower:
         return False
 
-    # КРИТИЧНО: поливальний кран ≠ звичайний кран
-    if 'поливальн' in _raw_lc or 'поливочн' in _raw_lc:
-        if 'поливальн' not in item_lc and 'поливочн' not in item_lc:
+    # Поливальний кран ≠ звичайний
+    if 'поливальн' in _raw or 'поливочн' in _raw:
+        if 'поливальн' not in item_name_lower and 'поливочн' not in item_name_lower:
             return False
-    if qa.get('angle') and not _angle_match(qa['angle'], ia.get('angle')):
+
+    # ── КУТ ──────────────────────────────────────────────────────────────────
+    # qp у пріоритеті: стара parse_attrs плутала розмір із кутом
+    # ("Піддон 120x90" давало angle=90, хоча 90 — це ширина)
+    q_ang = qp['angle'] if qp['angle'] is not None else qa.get('angle')
+    if q_ang is not None:
+        i_ang = ip['angle'] if ip['angle'] is not None else ia.get('angle')
+        if not _angle_match(q_ang, i_ang):
+            return False
+
+    # ── ТИП РІЗЬБИ МРЗ/МРВ ───────────────────────────────────────────────────
+    # Стара перевірка шукала 'рв' підрядком → «резеРВуар» ставав mrv (767 хибних).
+    q_tt = qp['thread_type'] or qa.get('thread_type')
+    i_tt = ip['thread_type']
+    if q_tt and i_tt and q_tt != i_tt:
         return False
-    # перевірка типу різьби МРЗ/МРВ (зовнішня vs внутрішня — різні товари!)
-    if qa.get('thread_type') and ia.get('thread_type'):
-        if qa['thread_type'] != ia['thread_type']:
+
+    # ── РОЗМІР РІЗЬБИ 1/2" ≠ 3/4" ────────────────────────────────────────────
+    if qp['threads'] and ip['threads'] and set(qp['threads']) != set(ip['threads']):
+        return False
+    if not qp['threads']:
+        _q_thread = qa.get('thread', '')
+        _i_thread = ia.get('thread', '')
+        if _q_thread and _i_thread and _q_thread != _i_thread:
             return False
-    # перевірка впорядкованих діаметрів трійника (ф25х16х25 ≠ ф25х16х16)
-    if qa.get('dim_ordered') and ia.get('dim_ordered'):
-        if qa['dim_ordered'] != ia['dim_ordered']:
-            return False
-    # перевірка безшумна vs звичайна (sline ≠ htr)
-    # Безшумна підходить ТІЛЬКИ якщо явно запитали
-    q_sl = qa.get('silent')
-    i_sl = ia.get('silent')
+
+    # ── БЕЗШУМНА vs ЗВИЧАЙНА каналізація ─────────────────────────────────────
+    q_sl, i_sl = qa.get('silent'), ia.get('silent')
     if i_sl is True and q_sl is not True:
-        return False   # товар безшумний але не запитували
+        return False
     if q_sl is True and i_sl is False:
-        return False   # запитали безшумну але товар звичайний
-    # перевірка типу радіатора (тип 10 ≠ тип 22 — різні товари!)
-    _raw_lc = (qa.get('_raw') or '').lower()
-    _item_lc = item.get('name', '').lower()
-    import re as _re_v
-    _q_rad_type = _re_v.search(r'тип\s*(\d+)', _raw_lc)
-    _i_rad_type = _re_v.search(r'тип\s*(\d+)', _item_lc)
-    if _q_rad_type and _i_rad_type:
-        if _q_rad_type.group(1) != _i_rad_type.group(1):
-            return False  # запитали тип 10 але знайшло тип 22 — відхиляємо
+        return False
 
-    # перевірка категорії: якщо запит в [AR] а товар plastic_ppr → відхиляємо
-    # (подовжувач/Gebo ≠ PPR муфта)
+    # ── ТИП РАДІАТОРА (тип 10 ≠ тип 22) ──────────────────────────────────────
+    # У старому коді в регексі стояв справжній байт 0x08 замість \b —
+    # перевірка не спрацьовувала ЖОДНОГО разу.
+    if qp['rad_type'] and ip['rad_type'] and qp['rad_type'] != ip['rad_type']:
+        return False
+
+    # ── ДОВЖИНА ТРУБИ ────────────────────────────────────────────────────────
+    if qp['length_mm'] and ip['length_mm'] and qp['length_mm'] != ip['length_mm']:
+        return False
+
+    # ── НЕСУМІСНІ КАТЕГОРІЇ ──────────────────────────────────────────────────
     _qa_cat   = qa.get('_routed_cat', '')
     _item_cat = item.get('category', '')
     _incompatible_cats = {
-        # якщо запитали адаптери — PPR не підходить і навпаки
-        ('adapters_reducers', 'plastic_ppr'),
-        ('plastic_ppr', 'adapters_reducers'),
-        # запірна арматура ≠ PPR
-        ('shutoff_valves', 'plastic_ppr'),
-        ('plastic_ppr', 'shutoff_valves'),
-        # каналізація ≠ PPR  
-        ('sewage', 'plastic_ppr'),
-        ('plastic_ppr', 'sewage'),
-        # тепла підлога ≠ PPR
+        ('adapters_reducers', 'plastic_ppr'), ('plastic_ppr', 'adapters_reducers'),
+        ('shutoff_valves', 'plastic_ppr'),    ('plastic_ppr', 'shutoff_valves'),
+        ('sewage', 'plastic_ppr'),            ('plastic_ppr', 'sewage'),
         ('underfloor_heating', 'plastic_ppr'),
-        # котли ≠ радіатори
         ('boilers', 'radiators_radiatorsvalve'),
         ('radiators_radiatorsvalve', 'boilers'),
     }
     if _qa_cat and _item_cat and (_qa_cat, _item_cat) in _incompatible_cats:
-        return False  # несумісні категорії
-
-    # перевірка різьби: 1/2" ≠ 3/4" ≠ 1 1/2" (різні розміри — критично!)
-    _q_thread = qa.get('thread', '')
-    _i_thread = (item.get('_attrs') or parse_attrs(item.get('name',''))).get('thread', '')
-    if _q_thread and _i_thread and _q_thread != _i_thread:
-        return False   # пряме порівняння: 1_2 ≠ 3_4, 1_2 ≠ 1_1_2
+        return False
 
     return True
 
@@ -1134,34 +1189,17 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
             if _is_cat_brand:
                 hard_brand = _global_brand  # підвищуємо до жорсткого тільки якщо виробник підходить
 
-        # ── РІВЕНЬ 1: підказка менеджера (hard_brand від менеджера) ─────────────
-        # Якщо менеджер вказав виробника — одразу живий пошук, кеші не перевіряємо.
-        # Кеші задіюються тільки якщо підказки немає АБО пошук по підказці не дав результату.
-        кандидати      = []
-        required_brand = None
-        джерело        = ''
-        brand_warning  = ''
-        _manager_search_done = False  # чи вже шукали по підказці менеджера
-
-        if manager_brand:
-            _manager_search_done = True
-            кандидати = smart_search(пос, top_n=12, brand_tokens=manager_brand)
-            if кандидати:
-                required_brand = manager_brand[0]
-                джерело = '👨 менеджер'
-            # якщо не знайшли по підказці — падаємо в кеші нижче (не в дефолт!)
-
-        # РІВЕНЬ 2: кеш клієнта (тільки якщо менеджер не дав підказку АБО вона не знайшла)
-        if not кандидати and client_slug:
+        # РІВЕНЬ 2: кеш клієнта
+        if client_slug:
             c = clients.client_cache_lookup(client_slug, original,
                                             required_brand_tokens=hard_brand)
             if c and cache_is_banned(original, c.get('catalog_name', '')):
-                c = None
+                c = None    # бан головніший за клієнтський кеш
             if c:
                 _qa_c = пос.get('_qa') or build_qa(пос)
                 пос['_qa'] = _qa_c
                 if not validate_pick(_qa_c, {'name': c['catalog_name']}):
-                    c = None
+                    c = None    # кеш суперечить діаметру/типу — ігноруємо
             if c:
                 результати[i] = {
                     'original': original, 'normalized': normalized,
@@ -1180,89 +1218,160 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                 }
                 continue
 
-        # РІВЕНЬ 3: кеш бота (тільки якщо підказки немає АБО кеш клієнта не спрацював)
-        if not кандидати:
-            cached = cache_lookup(original, brand_map)
-            if cached and cache_is_banned(original, cached.get('catalog_name', '')):
-                cached = None
-            if cached:
-                _qa_b = пос.get('_qa') or build_qa(пос)
-                пос['_qa'] = _qa_b
-                if not validate_pick(_qa_b, {'name': cached['catalog_name']}):
-                    cached = None
-            if cached:
-                ok = True
-                if hard_brand:
-                    nl = cached.get('catalog_name', '').lower()
-                    ok = any(t.lower() in nl for t in hard_brand)
-                if ok:
+        # РІВЕНЬ 3: кеш бота
+        cached = cache_lookup(original, brand_map)
+        if cached and cache_is_banned(original, cached.get('catalog_name', '')):
+            cached = None   # страховка: бан головніший за будь-який запис
+        if cached:
+            _qa_b = пос.get('_qa') or build_qa(пос)
+            пос['_qa'] = _qa_b
+            if not validate_pick(_qa_b, {'name': cached['catalog_name']}):
+                cached = None   # кеш суперечить діаметру/типу запиту — у пошук
+        if cached:
+            ok = True
+            if hard_brand:
+                nl = cached.get('catalog_name', '').lower()
+                ok = any(t.lower() in nl for t in hard_brand)
+            if ok:
+                результати[i] = {
+                    'original': original, 'normalized': cached.get('normalized', normalized),
+                    'знайдено': True, 'назва': cached['catalog_name'],
+                    'назва_повна': '', 'артикул': '', 'ціна': '',
+                    'qty': пос.get('qty', ''), 'category': cached.get('category', category),
+                    'confidence': cached.get('confidence', 0), 'keyword_pct': 100,
+                    'джерело': '🤖 кеш бота' + (' ✅' if cached.get('status') == 'confirmed' else ''),
+                    'reason': f"З кешу ({cached.get('confidence', 0)}%)",
+                    'fail_reason': '', 'candidates_debug': [], '_from_cache': True,
+                    '_prefix': пос.get('_prefix', 'XX'),
+                    '_routed_cat': пос.get('_routed_cat', 'other'),
+                    '_node_id': пос.get('_node_id', ''),
+                    '_catalog_node': '',
+                    '_used_brand':   '',
+                }
+                continue
+            # кеш суперечить підказці виробника — ігноруємо, шукаємо заново
+
+        # РІВЕНЬ 4: живий пошук кандидатів
+        кандидати      = []
+        required_brand = None
+        джерело        = ''
+        brand_warning  = ''
+
+        # ── РІВЕНЬ 3.5: ПАРАМЕТРИЧНИЙ ПОШУК ─────────────────────────────────
+        # Жорсткий фільтр по розмірах/типу/системі ДО векторного пошуку.
+        # Voyage сліпий до чисел — тут вони вирішують.
+        _pq = parse_parametric(f"{normalized} {original}", query_mode=True)
+        if query_strength(_pq) >= 2:
+            _phits = parametric_search(
+                normalized or original,
+                node_id=пос.get('_node_id') or None,
+                category=пос.get('_routed_cat') or category,
+                brand_tokens=hard_brand,
+                top_n=8,
+                qa=_pq,
+            )
+            # єдиний кандидат з точним збігом розмірів → приймаємо без AI
+            if len(_phits) == 1 and _phits[0].get('_ptier') == 1:
+                top   = _phits[0]
+                _qa_p = пос.get('_qa') or build_qa(пос)
+                пос['_qa'] = _qa_p
+                if validate_pick(_qa_p, top):
                     результати[i] = {
-                        'original': original, 'normalized': cached.get('normalized', normalized),
-                        'знайдено': True, 'назва': cached['catalog_name'],
-                        'назва_повна': '', 'артикул': '', 'ціна': '',
-                        'qty': пос.get('qty', ''), 'category': cached.get('category', category),
-                        'confidence': cached.get('confidence', 0), 'keyword_pct': 100,
-                        'джерело': '🤖 кеш бота' + (' ✅' if cached.get('status') == 'confirmed' else ''),
-                        'reason': f"З кешу ({cached.get('confidence', 0)}%)",
-                        'fail_reason': '', 'candidates_debug': [], '_from_cache': True,
+                        'original': original, 'normalized': normalized,
+                        'знайдено': True, 'назва': top['name'],
+                        'назва_повна': top.get('name_full', top['name']),
+                        'артикул': top.get('artikul', ''), 'ціна': top.get('price', ''),
+                        'qty': пос.get('qty', ''), 'category': category,
+                        'confidence': 96, 'keyword_pct': top.get('_match_pct', 0),
+                        'джерело': '📐 параметричний', 'brand_warning': '',
+                        'reason': f"Єдиний збіг за розмірами (score={top['_pscore']})",
+                        'fail_reason': '',
+                        'candidates_debug': [c['name'] for c in _phits[:3]],
                         '_prefix': пос.get('_prefix', 'XX'),
                         '_routed_cat': пос.get('_routed_cat', 'other'),
                         '_node_id': пос.get('_node_id', ''),
-                        '_catalog_node': '',
-                        '_used_brand':   '',
+                        '_catalog_node': top.get('_node_id', ''),
+                        '_used_brand': '',
                     }
+                    pending_add(original, brand_map, normalized, top['name'],
+                                category, 96, source='auto')
+                    if client_slug:
+                        clients.client_cache_save(client_slug, original, top['name'],
+                                                  category, 96)
                     continue
+            # 2-8 кандидатів → віддаємо їх Claude замість 50 від Voyage
+            if _phits:
+                кандидати      = _phits
+                джерело        = '📐 параметричний'
+                required_brand = hard_brand[0] if hard_brand else None
 
-        # РІВЕНЬ 4: живий пошук (якщо кандидати ще не знайдені)
-        if not кандидати:
-            if hard_brand and not _manager_search_done:
-                # line_brand або node_default_brand (не менеджер)
-                кандидати = smart_search(пос, top_n=12, brand_tokens=hard_brand)
-                if кандидати:
-                    required_brand = hard_brand[0]
-                    if _node_default_brand and hard_brand == _node_default_brand:
-                        джерело = '⚙️ дефолт'
-                    else:
-                        джерело = '📝 з рядка'
-
-            if not кандидати:
-                # hard_brand не дав результату — fallback на дефолтні бренди категорії
-                if hard_brand:
-                    brand_warning = f"⚠️ у {hard_brand[0]} немає — аналог"
-
-                # 4а: преференції клієнта з історії замовлень
-                for brand, _cnt in client_prefs.get('by_category', {}).get(category, [])[:3]:
-                    bt = BRAND_TOKENS.get(brand)
-                    if not bt: continue
-                    кандидати = smart_search(пос, top_n=12, brand_tokens=bt)
+        if кандидати:
+            pass                      # вже отримали від параметрики
+        elif hard_brand:
+            кандидати = smart_search(пос, top_n=12, brand_tokens=hard_brand)
+            if кандидати:
+                required_brand = hard_brand[0]
+                if manager_brand:
+                    джерело = '👨 менеджер'
+                elif _node_default_brand and hard_brand == _node_default_brand:
+                    джерело = '⚙️ дефолт'
+                else:
+                    джерело = '📝 з рядка'
+            else:
+                # Виробник не знайдений — спробуємо дефолтні бренди категорії
+                brand_list = DEFAULT_BRAND_PRIORITY.get(category, [])
+                if category == 'sewage':
+                    node = пос.get('_node_id', '')
+                    brand_list = ([['ostendorf', 'OSTENDORF'], ['asg', 'ASG']]
+                                  if node.startswith('kn.s')
+                                  else [['asg', 'ASG'], ['ostendorf', 'OSTENDORF']])
+                for pt in brand_list:
+                    if pt[0].lower() == hard_brand[0].lower():
+                        continue  # вже пробували
+                    кандидати = smart_search(пос, top_n=12, brand_tokens=pt)
                     if кандидати:
-                        required_brand = bt[0]
-                        джерело = '👤 профіль клієнта'
+                        required_brand = pt[0]
+                        джерело = '⚙️ дефолт'
                         break
-
-                # 4б: дефолтні виробники для категорії
-                if not кандидати:
-                    brand_list = DEFAULT_BRAND_PRIORITY.get(category, [])
-                    if category == 'sewage':
-                        node = пос.get('_node_id', '')
-                        if node.startswith('kn.s'):
-                            brand_list = [['ostendorf', 'OSTENDORF'], ['asg', 'ASG']]
-                        else:
-                            brand_list = [['asg', 'ASG'], ['ostendorf', 'OSTENDORF']]
-                    for pt in brand_list:
-                        if hard_brand and pt[0].lower() == hard_brand[0].lower():
-                            continue  # вже пробували
-                        кандидати = smart_search(пос, top_n=12, brand_tokens=pt)
-                        if кандидати:
-                            required_brand = pt[0]
-                            джерело = '⚙️ дефолт'
-                            break
-
-                # 4в: вільний пошук без виробника
                 if not кандидати:
                     кандидати = smart_search(пос, top_n=12)
-                    if not джерело:
-                        джерело = '🔍 вільний'
+                brand_warning = f"⚠️ у {hard_brand[0]} немає — аналог"
+                if not джерело:
+                    джерело = '⚠️ fallback'
+        else:
+            # 4а: преференції клієнта з історії замовлень
+            for brand, _cnt in client_prefs.get('by_category', {}).get(category, [])[:3]:
+                bt = BRAND_TOKENS.get(brand)
+                if not bt: continue
+                кандидати = smart_search(пос, top_n=12, brand_tokens=bt)
+                if кандидати:
+                    required_brand = bt[0]
+                    джерело = '👤 профіль клієнта'
+                    break
+            # 4б: дефолтні виробники для категорії
+            if not кандидати:
+                brand_list = DEFAULT_BRAND_PRIORITY.get(category, [])
+
+                # Для каналізації: пріоритет залежить від вузла
+                # kn.u (внутрішня) → ASG першим
+                # kn.e (зовнішня) / kn.s (безшумна) → OSTENDORF першим
+                if category == 'sewage':
+                    node = пос.get('_node_id', '')
+                    if node.startswith('kn.s'):
+                        brand_list = [['ostendorf', 'OSTENDORF'], ['asg', 'ASG']]
+                    else:
+                        brand_list = [['asg', 'ASG'], ['ostendorf', 'OSTENDORF']]
+
+                for pt in brand_list:
+                    кандидати = smart_search(пос, top_n=12, brand_tokens=pt)
+                    if кандидати:
+                        required_brand = pt[0]
+                        джерело = '⚙️ дефолт'
+                        break
+            # 4в: вільний пошук без виробника
+            if not кандидати:
+                кандидати = smart_search(пос, top_n=12)
+                джерело   = '🔍 вільний'
 
         if not кандидати:
             результати[i] = {**пос, 'знайдено': False, 'назва': '', 'артикул': '',
@@ -1281,6 +1390,15 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                               'reason': '', 'fail_reason': 'всі кандидати забанені',
                               'candidates_debug': []}
             continue
+
+        # ── ФІЛЬТР ПО ГІЛЦІ 1С ──────────────────────────────────────────────
+        # Один бренд живе в кількох гілках дерева (труба/фітинг,
+        # внутрішня/зовнішня, кульовий/американка). Лишаємо тільки ту,
+        # що відповідає запиту. Якщо запит неоднозначний — не ріже.
+        _before_pf = len(кандидати)
+        кандидати  = filter_by_path(f"{normalized} {original}", кандидати)
+        if len(кандидати) < _before_pf:
+            джерело = (джерело + ' 🌳') if джерело else '🌳 гілка'
 
         # ⚡ VOYAGE АВТО-ПРИЙОМ: якщо Voyage впевнений (score >= 0.82) → одразу
         if кандидати and кандидати[0].get('_voyage') and not brand_warning:
