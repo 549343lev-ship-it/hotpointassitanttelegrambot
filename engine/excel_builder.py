@@ -78,7 +78,10 @@ def create_excel(результати: list[dict]) -> tuple[BytesIO, list, list]
             suspicious = (
                 conf < 70 or kw < 50
                 or r.get('brand_warning')
-                or r.get('джерело', '') in ('⚠️ fallback', '🔍 вільний', '⚠️ аналог')
+                # підрядком, а не рівністю: джерело може мати суфікс
+                # («⚠️ аналог 🌳» — спрацював фільтр гілки 1С)
+                or any(s in r.get('джерело', '')
+                       for s in ('fallback', 'вільний', 'аналог'))
             )
             # Маршрут = node_id від ROUTER (куди бот направляв пошук)
             _route_node = r.get('_node_id', '')   # ← від router через пос
