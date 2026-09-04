@@ -1,13 +1,13 @@
 """
 search.py — Пошук товарів у каталозі.
 
-4 рівні пошуку (від швидкого до складного):
-  1. Кеш клієнта
-  2. Кеш бота
-  3. Атрибутний пошук (детермінований: тип + діаметри + кут)
-  4. Claude вибір з кандидатів (AI-арбітр)
+Пріоритети пошуку:
+  1. Підказка менеджера (brand_map від caption) — одразу живий пошук, кеші ігноруються
+  2. Кеш клієнта — якщо підказки немає або вона нічого не знайшла
+  3. Кеш бота — якщо кеш клієнта не спрацював
+  4. Живий пошук: line_brand → профіль клієнта → DEFAULT_BRAND_PRIORITY → вільний
 
-Плюс: keyword_search як fallback, ⚡ авто-прийом очевидних збігів.
+Плюс: keyword_search як fallback, ⚡ авто-прийом очевидних збігів (Voyage + attr tier-1).
 """
 
 import os
@@ -22,8 +22,6 @@ from clients import clients
 from catalog.catalog import CATALOG, tokenize, ensure_tokens
 from engine.router import (route_batch, get_prefix, CAT_PREFIX,
                             route_sub)  # жорстка маршрутизація + підкатегорії
-from engine.parametric import parametric_search, parse_parametric, query_strength
-from engine.path_filter import filter_by_path
 from engine.voyage_search import (voyage_find_one, voyage_search,
                                    rebuild_if_needed, is_ready as voyage_ready,
                                    make_routing_path,
@@ -1136,17 +1134,34 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
             if _is_cat_brand:
                 hard_brand = _global_brand  # підвищуємо до жорсткого тільки якщо виробник підходить
 
-        # РІВЕНЬ 2: кеш клієнта
-        if client_slug:
+        # ── РІВЕНЬ 1: підказка менеджера (hard_brand від менеджера) ─────────────
+        # Якщо менеджер вказав виробника — одразу живий пошук, кеші не перевіряємо.
+        # Кеші задіюються тільки якщо підказки немає АБО пошук по підказці не дав результату.
+        кандидати      = []
+        required_brand = None
+        джерело        = ''
+        brand_warning  = ''
+        _manager_search_done = False  # чи вже шукали по підказці менеджера
+
+        if manager_brand:
+            _manager_search_done = True
+            кандидати = smart_search(пос, top_n=12, brand_tokens=manager_brand)
+            if кандидати:
+                required_brand = manager_brand[0]
+                джерело = '👨 менеджер'
+            # якщо не знайшли по підказці — падаємо в кеші нижче (не в дефолт!)
+
+        # РІВЕНЬ 2: кеш клієнта (тільки якщо менеджер не дав підказку АБО вона не знайшла)
+        if not кандидати and client_slug:
             c = clients.client_cache_lookup(client_slug, original,
                                             required_brand_tokens=hard_brand)
             if c and cache_is_banned(original, c.get('catalog_name', '')):
-                c = None    # бан головніший за клієнтський кеш
+                c = None
             if c:
                 _qa_c = пос.get('_qa') or build_qa(пос)
                 пос['_qa'] = _qa_c
                 if not validate_pick(_qa_c, {'name': c['catalog_name']}):
-                    c = None    # кеш суперечить діаметру/типу — ігноруємо
+                    c = None
             if c:
                 результати[i] = {
                     'original': original, 'normalized': normalized,
@@ -1165,160 +1180,89 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                 }
                 continue
 
-        # РІВЕНЬ 3: кеш бота
-        cached = cache_lookup(original, brand_map)
-        if cached and cache_is_banned(original, cached.get('catalog_name', '')):
-            cached = None   # страховка: бан головніший за будь-який запис
-        if cached:
-            _qa_b = пос.get('_qa') or build_qa(пос)
-            пос['_qa'] = _qa_b
-            if not validate_pick(_qa_b, {'name': cached['catalog_name']}):
-                cached = None   # кеш суперечить діаметру/типу запиту — у пошук
-        if cached:
-            ok = True
-            if hard_brand:
-                nl = cached.get('catalog_name', '').lower()
-                ok = any(t.lower() in nl for t in hard_brand)
-            if ok:
-                результати[i] = {
-                    'original': original, 'normalized': cached.get('normalized', normalized),
-                    'знайдено': True, 'назва': cached['catalog_name'],
-                    'назва_повна': '', 'артикул': '', 'ціна': '',
-                    'qty': пос.get('qty', ''), 'category': cached.get('category', category),
-                    'confidence': cached.get('confidence', 0), 'keyword_pct': 100,
-                    'джерело': '🤖 кеш бота' + (' ✅' if cached.get('status') == 'confirmed' else ''),
-                    'reason': f"З кешу ({cached.get('confidence', 0)}%)",
-                    'fail_reason': '', 'candidates_debug': [], '_from_cache': True,
-                    '_prefix': пос.get('_prefix', 'XX'),
-                    '_routed_cat': пос.get('_routed_cat', 'other'),
-                    '_node_id': пос.get('_node_id', ''),
-                    '_catalog_node': '',
-                    '_used_brand':   '',
-                }
-                continue
-            # кеш суперечить підказці виробника — ігноруємо, шукаємо заново
-
-        # РІВЕНЬ 4: живий пошук кандидатів
-        кандидати      = []
-        required_brand = None
-        джерело        = ''
-        brand_warning  = ''
-
-        # ── РІВЕНЬ 3.5: ПАРАМЕТРИЧНИЙ ПОШУК ─────────────────────────────────
-        # Жорсткий фільтр по розмірах/типу/системі ДО векторного пошуку.
-        # Voyage сліпий до чисел — тут вони вирішують.
-        _pq = parse_parametric(f"{normalized} {original}", query_mode=True)
-        if query_strength(_pq) >= 2:
-            _phits = parametric_search(
-                normalized or original,
-                node_id=пос.get('_node_id') or None,
-                category=пос.get('_routed_cat') or category,
-                brand_tokens=hard_brand,
-                top_n=8,
-                qa=_pq,
-            )
-            # єдиний кандидат з точним збігом розмірів → приймаємо без AI
-            if len(_phits) == 1 and _phits[0].get('_ptier') == 1:
-                top   = _phits[0]
-                _qa_p = пос.get('_qa') or build_qa(пос)
-                пос['_qa'] = _qa_p
-                if validate_pick(_qa_p, top):
+        # РІВЕНЬ 3: кеш бота (тільки якщо підказки немає АБО кеш клієнта не спрацював)
+        if not кандидати:
+            cached = cache_lookup(original, brand_map)
+            if cached and cache_is_banned(original, cached.get('catalog_name', '')):
+                cached = None
+            if cached:
+                _qa_b = пос.get('_qa') or build_qa(пос)
+                пос['_qa'] = _qa_b
+                if not validate_pick(_qa_b, {'name': cached['catalog_name']}):
+                    cached = None
+            if cached:
+                ok = True
+                if hard_brand:
+                    nl = cached.get('catalog_name', '').lower()
+                    ok = any(t.lower() in nl for t in hard_brand)
+                if ok:
                     результати[i] = {
-                        'original': original, 'normalized': normalized,
-                        'знайдено': True, 'назва': top['name'],
-                        'назва_повна': top.get('name_full', top['name']),
-                        'артикул': top.get('artikul', ''), 'ціна': top.get('price', ''),
-                        'qty': пос.get('qty', ''), 'category': category,
-                        'confidence': 96, 'keyword_pct': top.get('_match_pct', 0),
-                        'джерело': '📐 параметричний', 'brand_warning': '',
-                        'reason': f"Єдиний збіг за розмірами (score={top['_pscore']})",
-                        'fail_reason': '',
-                        'candidates_debug': [c['name'] for c in _phits[:3]],
+                        'original': original, 'normalized': cached.get('normalized', normalized),
+                        'знайдено': True, 'назва': cached['catalog_name'],
+                        'назва_повна': '', 'артикул': '', 'ціна': '',
+                        'qty': пос.get('qty', ''), 'category': cached.get('category', category),
+                        'confidence': cached.get('confidence', 0), 'keyword_pct': 100,
+                        'джерело': '🤖 кеш бота' + (' ✅' if cached.get('status') == 'confirmed' else ''),
+                        'reason': f"З кешу ({cached.get('confidence', 0)}%)",
+                        'fail_reason': '', 'candidates_debug': [], '_from_cache': True,
                         '_prefix': пос.get('_prefix', 'XX'),
                         '_routed_cat': пос.get('_routed_cat', 'other'),
                         '_node_id': пос.get('_node_id', ''),
-                        '_catalog_node': top.get('_node_id', ''),
-                        '_used_brand': '',
+                        '_catalog_node': '',
+                        '_used_brand':   '',
                     }
-                    pending_add(original, brand_map, normalized, top['name'],
-                                category, 96, source='auto')
-                    if client_slug:
-                        clients.client_cache_save(client_slug, original, top['name'],
-                                                  category, 96)
                     continue
-            # 2-8 кандидатів → віддаємо їх Claude замість 50 від Voyage
-            if _phits:
-                кандидати      = _phits
-                джерело        = '📐 параметричний'
-                required_brand = hard_brand[0] if hard_brand else None
 
-        if кандидати:
-            pass                      # вже отримали від параметрики
-        elif hard_brand:
-            кандидати = smart_search(пос, top_n=12, brand_tokens=hard_brand)
-            if кандидати:
-                required_brand = hard_brand[0]
-                if manager_brand:
-                    джерело = '👨 менеджер'
-                elif _node_default_brand and hard_brand == _node_default_brand:
-                    джерело = '⚙️ дефолт'
-                else:
-                    джерело = '📝 з рядка'
-            else:
-                # Виробник не знайдений — спробуємо дефолтні бренди категорії
-                brand_list = DEFAULT_BRAND_PRIORITY.get(category, [])
-                if category == 'sewage':
-                    node = пос.get('_node_id', '')
-                    brand_list = ([['ostendorf', 'OSTENDORF'], ['asg', 'ASG']]
-                                  if node.startswith('kn.s')
-                                  else [['asg', 'ASG'], ['ostendorf', 'OSTENDORF']])
-                for pt in brand_list:
-                    if pt[0].lower() == hard_brand[0].lower():
-                        continue  # вже пробували
-                    кандидати = smart_search(пос, top_n=12, brand_tokens=pt)
-                    if кандидати:
-                        required_brand = pt[0]
+        # РІВЕНЬ 4: живий пошук (якщо кандидати ще не знайдені)
+        if not кандидати:
+            if hard_brand and not _manager_search_done:
+                # line_brand або node_default_brand (не менеджер)
+                кандидати = smart_search(пос, top_n=12, brand_tokens=hard_brand)
+                if кандидати:
+                    required_brand = hard_brand[0]
+                    if _node_default_brand and hard_brand == _node_default_brand:
                         джерело = '⚙️ дефолт'
+                    else:
+                        джерело = '📝 з рядка'
+
+            if not кандидати:
+                # hard_brand не дав результату — fallback на дефолтні бренди категорії
+                if hard_brand:
+                    brand_warning = f"⚠️ у {hard_brand[0]} немає — аналог"
+
+                # 4а: преференції клієнта з історії замовлень
+                for brand, _cnt in client_prefs.get('by_category', {}).get(category, [])[:3]:
+                    bt = BRAND_TOKENS.get(brand)
+                    if not bt: continue
+                    кандидати = smart_search(пос, top_n=12, brand_tokens=bt)
+                    if кандидати:
+                        required_brand = bt[0]
+                        джерело = '👤 профіль клієнта'
                         break
+
+                # 4б: дефолтні виробники для категорії
+                if not кандидати:
+                    brand_list = DEFAULT_BRAND_PRIORITY.get(category, [])
+                    if category == 'sewage':
+                        node = пос.get('_node_id', '')
+                        if node.startswith('kn.s'):
+                            brand_list = [['ostendorf', 'OSTENDORF'], ['asg', 'ASG']]
+                        else:
+                            brand_list = [['asg', 'ASG'], ['ostendorf', 'OSTENDORF']]
+                    for pt in brand_list:
+                        if hard_brand and pt[0].lower() == hard_brand[0].lower():
+                            continue  # вже пробували
+                        кандидати = smart_search(пос, top_n=12, brand_tokens=pt)
+                        if кандидати:
+                            required_brand = pt[0]
+                            джерело = '⚙️ дефолт'
+                            break
+
+                # 4в: вільний пошук без виробника
                 if not кандидати:
                     кандидати = smart_search(пос, top_n=12)
-                brand_warning = f"⚠️ у {hard_brand[0]} немає — аналог"
-                if not джерело:
-                    джерело = '⚠️ fallback'
-        else:
-            # 4а: преференції клієнта з історії замовлень
-            for brand, _cnt in client_prefs.get('by_category', {}).get(category, [])[:3]:
-                bt = BRAND_TOKENS.get(brand)
-                if not bt: continue
-                кандидати = smart_search(пос, top_n=12, brand_tokens=bt)
-                if кандидати:
-                    required_brand = bt[0]
-                    джерело = '👤 профіль клієнта'
-                    break
-            # 4б: дефолтні виробники для категорії
-            if not кандидати:
-                brand_list = DEFAULT_BRAND_PRIORITY.get(category, [])
-
-                # Для каналізації: пріоритет залежить від вузла
-                # kn.u (внутрішня) → ASG першим
-                # kn.e (зовнішня) / kn.s (безшумна) → OSTENDORF першим
-                if category == 'sewage':
-                    node = пос.get('_node_id', '')
-                    if node.startswith('kn.s'):
-                        brand_list = [['ostendorf', 'OSTENDORF'], ['asg', 'ASG']]
-                    else:
-                        brand_list = [['asg', 'ASG'], ['ostendorf', 'OSTENDORF']]
-
-                for pt in brand_list:
-                    кандидати = smart_search(пос, top_n=12, brand_tokens=pt)
-                    if кандидати:
-                        required_brand = pt[0]
-                        джерело = '⚙️ дефолт'
-                        break
-            # 4в: вільний пошук без виробника
-            if not кандидати:
-                кандидати = smart_search(пос, top_n=12)
-                джерело   = '🔍 вільний'
+                    if not джерело:
+                        джерело = '🔍 вільний'
 
         if not кандидати:
             результати[i] = {**пос, 'знайдено': False, 'назва': '', 'артикул': '',
@@ -1337,15 +1281,6 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                               'reason': '', 'fail_reason': 'всі кандидати забанені',
                               'candidates_debug': []}
             continue
-
-        # ── ФІЛЬТР ПО ГІЛЦІ 1С ──────────────────────────────────────────────
-        # Один бренд живе в кількох гілках дерева (труба/фітинг,
-        # внутрішня/зовнішня, кульовий/американка). Лишаємо тільки ту,
-        # що відповідає запиту. Якщо запит неоднозначний — не ріже.
-        _before_pf = len(кандидати)
-        кандидати  = filter_by_path(f"{normalized} {original}", кандидати)
-        if len(кандидати) < _before_pf:
-            джерело = (джерело + ' 🌳') if джерело else '🌳 гілка'
 
         # ⚡ VOYAGE АВТО-ПРИЙОМ: якщо Voyage впевнений (score >= 0.82) → одразу
         if кандидати and кандидати[0].get('_voyage') and not brand_warning:
