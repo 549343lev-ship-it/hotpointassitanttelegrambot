@@ -197,13 +197,14 @@ class BrandSelectionState:
 
     def __init__(self, chat_id: int, позиції: list[dict],
                  items: list[dict], caption: str,
-                 callback_fn, status_msg_id: int):
+                 callback_fn, status_msg_id: int, slug: str = None):
         self.chat_id       = chat_id
         self.позиції       = позиції       # нормалізовані позиції
         self.items         = items         # оригінальні items батчу
         self.caption       = caption
         self.callback_fn   = callback_fn   # функція яку викликати після вибору
         self.status_msg_id = status_msg_id
+        self.slug          = slug
 
         # Визначаємо групи що є в замовленні
         self.groups_needed = self._detect_groups()
@@ -258,13 +259,13 @@ class BrandSelectionState:
 def start_brand_selection(chat_id: int, позиції: list[dict],
                            items: list[dict], caption: str,
                            callback_fn, status_msg_id: int,
-                           bot, _state: dict = None) -> None:
+                           bot, _state: dict = None, slug: str = None) -> None:
     """
     Запускає діалог вибору виробника.
     Якщо в замовленні немає груп з виробниками — одразу викликає callback_fn.
     """
     bs = BrandSelectionState(
-        chat_id, позиції, items, caption, callback_fn, status_msg_id)
+        chat_id, позиції, items, caption, callback_fn, status_msg_id, slug=slug)
     bs._bot   = bot
     bs._state = _state or {}
 
@@ -362,7 +363,7 @@ def _send_initial_question(chat_id: int, state: BrandSelectionState, bot) -> Non
 
 
 def _send_next_group(chat_id: int, state: BrandSelectionState, bot) -> None:
-    """Надсилає кнопки вибору виробника для наступної групи."""
+    """Надсилає кнопки вибору виробника — відсортовані за пріоритетом клієнта."""
     from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
     cat = state.current_group()
@@ -370,12 +371,43 @@ def _send_next_group(chat_id: int, state: BrandSelectionState, bot) -> None:
         _finish(chat_id, state, bot)
         return
 
-    info   = CATEGORY_BRANDS[cat]
-    label  = info['label']
-    brands = info['brands']
+    info    = CATEGORY_BRANDS[cat]
+    label   = info['label']
+    brands  = list(info['brands'])
     n_items = len(state.groups_needed[cat])
     done    = len(state.chosen)
     total   = len(state.groups_needed)
+
+    # ── Визначаємо пріоритетний бренд ─────────────────────────────────────────
+    # 1. Преференції клієнта (з історії), 2. DEFAULT_BRAND_PRIORITY
+    priority_key = None
+    if state.slug and state.slug != '_global':
+        try:
+            from clients import clients as _cl
+            prefs = _cl.get_preferences(state.slug)
+            cat_prefs = prefs.get('by_category', {}).get(cat, [])
+            if cat_prefs:
+                priority_key = cat_prefs[0][0].lower()
+        except Exception:
+            pass
+    if not priority_key:
+        try:
+            from search import DEFAULT_BRAND_PRIORITY
+            default_list = DEFAULT_BRAND_PRIORITY.get(cat, [])
+            if default_list:
+                priority_key = default_list[0][0].lower()
+        except Exception:
+            pass
+
+    # ── Сортуємо: пріоритетний першим, "Дефолт" завжди останній ──────────────
+    brands.sort(key=lambda x: 0 if (priority_key and x[1].lower() == priority_key)
+                               else (2 if x[0] == 'Дефолт' else 1))
+
+    # ⭐ до пріоритетного
+    brands_display = [
+        (f"⭐ {bl}" if (priority_key and bk.lower() == priority_key and bl != 'Дефолт') else bl, bk)
+        for bl, bk in brands
+    ]
 
     # Приклади товарів цієї групи
     examples = [п.get('normalized', п.get('original', ''))[:40]
@@ -389,9 +421,9 @@ def _send_next_group(chat_id: int, state: BrandSelectionState, bot) -> None:
     )
 
     mk = InlineKeyboardMarkup(row_width=2)
-    for brand_label, brand_key in brands:
-        cb = f"bs_brand_{cat}__{brand_key}"
-        mk.add(InlineKeyboardButton(brand_label, callback_data=cb))
+    for blabel, bkey in brands_display:
+        cb = f"bs_brand_{cat}__{bkey}"
+        mk.add(InlineKeyboardButton(blabel, callback_data=cb))
 
     try:
         bot.edit_message_text(
