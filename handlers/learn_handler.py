@@ -16,8 +16,12 @@ def register(bot, state: dict):
 
     # ── Запуск навчання ───────────────────────────────────────────────────────
 
-    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in (
-        'навчання', '📚 навчання', '🌐 навчання бота'))
+    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() == '🌐 навчання бота')
+    def handle_learn_global(message):
+        """Глобальне навчання — без прив'язки до клієнта."""
+        _start_learn_session(message.chat.id, slug='_global', reply_to=message)
+
+    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('навчання', '📚 навчання'))
     def handle_learn_start(message):
         from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
         slug = clients.get_active(message.chat.id)
@@ -53,8 +57,9 @@ def register(bot, state: dict):
 
     def _start_learn_session(chat_id: int, slug: str, reply_to=None):
         from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-        p       = clients.get_profile(slug)
-        _, ex_n = clients.get_next_example_dir(slug)
+        is_global = (slug == '_global')
+        p         = clients.get_profile(slug) if not is_global else None
+        _, ex_n   = clients.get_next_example_dir(slug) if not is_global else (None, 1)
         _learn_state[chat_id] = {
             'slug':            slug,
             'example_n':       ex_n,
@@ -63,8 +68,9 @@ def register(bot, state: dict):
             'photo_count':     0,
             'invoice_received': False,
         }
+        client_label = 'ВЕСЬ БОТ (для всіх клієнтів)' if is_global else (p['name'] if p else slug)
         text = (
-            f"📚 Навчання клієнта *{p['name'] if p else slug}*\n"
+            f"📚 Навчання *{client_label}*\n"
             f"Приклад #{ex_n}\n\n"
             f"Крок 1️⃣: Кидай фото замовлення від майстра\n"
             f"_(можна кілька — коли всі кинув, натисни_ *Готово* _або одразу кидай рахунок)_"
@@ -241,14 +247,27 @@ def register(bot, state: dict):
                 f"_Відповідь Gemini:_\n`{raw_response[:300]}`",
                 message.chat.id, status_msg.message_id, parse_mode="Markdown"); return
 
-        saved = clients.learn_from_example(slug, ex_n, pairs)
+        if slug == '_global':
+            # Глобальне навчання → зберігаємо в загальний кеш бота
+            from clients.cache import cache_confirm
+            saved = 0
+            for pair in pairs:
+                orig = pair.get('original', '').strip()
+                name = pair.get('catalog_name', '').strip()
+                cat  = pair.get('category', 'other')
+                if orig and name:
+                    cache_confirm(orig, {}, orig, name, cat, source='global_train')
+                    saved += 1
+        else:
+            saved = clients.learn_from_example(slug, ex_n, pairs)
         _learn_state.pop(message.chat.id, None)
         print(f"✅ Навчання: збережено {saved}/{len(pairs)} пар", flush=True)
 
-        p = clients.get_profile(slug)
+        p = clients.get_profile(slug) if slug != '_global' else None
+        client_label = 'ВЕСЬ БОТ' if slug == '_global' else (p['name'] if p else slug)
         bot.edit_message_text(
             f"✅ Навчання завершено!\n"
-            f"👤 Клієнт: *{p['name'] if p else slug}*\n"
+            f"👤 Клієнт: *{client_label}*\n"
             f"📚 Приклад #{ex_n}\n"
             f"📸 Фото: {len(photos_bytes)} шт.\n"
             f"🔗 Знайдено збігів: *{len(pairs)}*\n"
