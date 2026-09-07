@@ -71,6 +71,7 @@ def process_batch(chat_id: int, bot, state: dict):
         status_msg_id = msg_id,
         bot           = bot,
         _state        = state,
+        slug          = active_slug,
     )
 
 
