@@ -10,7 +10,7 @@ from config.settings import BATCH_TIMEOUT
 def register(bot, state: dict):
     from clients import clients
 
-    _learn_state       = state.setdefault('_learn_state', {})
+    _learn_state        = state.setdefault('_learn_state', {})
     _learn_photo_batch  = {}
     _learn_photo_timers = {}
 
@@ -254,6 +254,10 @@ def register(bot, state: dict):
             f"💾 Збережено в кеш: *{saved}*\n\n"
             f"Для ще одного прикладу: натисни *📚 Навчання*",
             message.chat.id, status_msg.message_id, parse_mode="Markdown")
+
+    # Expose handlers до photo_handler через state (делегування)
+    state['_handle_learn_photo']   = handle_learn_photo
+    state['_handle_learn_invoice'] = handle_learn_invoice
 
 
 # ── Gemini зіставлення ────────────────────────────────────────────────────────
