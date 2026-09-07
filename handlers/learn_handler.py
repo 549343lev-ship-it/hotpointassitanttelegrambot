@@ -1,344 +1,506 @@
-"""handlers/learn_handler.py — Навчання бота на парах фото+рахунок клієнта."""
-import os
+"""
+engine/brand_selector.py — Покроковий вибір виробника по групах товарів.
+
+Флоу:
+  1. process_batch викликає ask_brand_selection() після OCR
+  2. Менеджер бачить 2 кнопки: [✅ Дефолтний пошук] / [🏭 Вибрати виробників]
+  3. При виборі "вибрати" — покроково питає виробника для кожної групи
+  4. Після вибору — позиції доповнюються brand_map і запускається find_items
+
+Групи та їх виробники визначені в CATEGORY_BRANDS нижче.
+"""
+
+from __future__ import annotations
 import re
-import threading
-import json
+from collections import defaultdict
+from typing import TYPE_CHECKING
 
-from config.settings import BATCH_TIMEOUT
+if TYPE_CHECKING:
+    pass
+
+# ─── Групи товарів → виробники (кнопки) ───────────────────────────────────────
+
+CATEGORY_BRANDS: dict[str, dict] = {
+    'plastic_ppr': {
+        'label': '🔧 PPR пайка',
+        'brands': [
+            ('Ekoplastik',  'ekoplastik'),
+            ('ASG',         'asg'),
+            ('RAFTEC',      'raftec'),
+            ('PLM',         'plm'),
+            ('ECO PPR',     'eco'),
+            ('FV Plast',    'fv plast'),
+            ('KAN',         'kan'),
+            ('Дефолт',      ''),
+        ],
+    },
+    'sewage': {
+        'label': '🚿 Каналізація',
+        'brands': [
+            ('OSTENDORF',   'ostendorf'),
+            ('ASG',         'asg'),
+            ('VALROM',      'valrom'),
+            ('PLM',         'plm'),
+            ('Дефолт',      ''),
+        ],
+    },
+    'push_systems': {
+        'label': '⚡ PUSH/PEX',
+        'brands': [
+            ('RAFTEC',      'raftec'),
+            ('REHAU',       'rehau'),
+            ('FADO',        'fado'),
+            ('KAN',         'kan'),
+            ('Uponor',      'uponor'),
+            ('Дефолт',      ''),
+        ],
+    },
+    'shutoff_valves': {
+        'label': '🔴 Запірна арматура',
+        'brands': [
+            ('RAFTEC',      'raftec'),
+            ('ASG',         'asg'),
+            ('HLV',         'hlv'),
+            ('LEXLINE',     'lexline'),
+            ('ECO',         'eco'),
+            ('Дефолт',      ''),
+        ],
+    },
+    'adapters_reducers': {
+        'label': '🔩 Перехідники',
+        'brands': [
+            ('RAFTEC GOLD', 'raftec'),
+            ('LEXLINE',     'lexline'),
+            ('УЗКМ',        'узкм'),
+            ('HLV',         'hlv'),
+            ('Мідь',        'мідь'),
+            ('Дефолт',      ''),
+        ],
+    },
+    'radiators_radiatorsvalve': {
+        'label': '🌡️ Радіатори',
+        'brands': [
+            ('MIRADO',      'mirado'),
+            ('PURMO',       'purmo'),
+            ('KORAD',       'korad'),
+            ('IDMAR',       'idmar'),
+            ('HIDROS',      'hidros'),
+            ('Дефолт',      ''),
+        ],
+    },
+    'underfloor_heating': {
+        'label': '🏠 Тепла підлога',
+        'brands': [
+            ('RAFTEC',      'raftec'),
+            ('PLM',         'plm'),
+            ('REHAU',       'rehau'),
+            ('KAN',         'kan'),
+            ('Danfoss',     'danfoss'),
+            ('Дефолт',      ''),
+        ],
+    },
+    'insulation': {
+        'label': '🧱 Утеплювач',
+        'brands': [
+            ('K-FLEX',      'k-flex'),
+            ('PLM',         'plm'),
+            ('Теплоізол',   'теплоізол'),
+            ('SANFLEX',     'sanflex'),
+            ('Дефолт',      ''),
+        ],
+    },
+    'heating': {
+        'label': '🔥 Опалення',
+        'brands': [
+            ('ESBE',        'esbe'),
+            ('CALEFFI',     'caleffi'),
+            ('HONEYWELL',   'honeywell'),
+            ('HERZ',        'herz'),
+            ('AFRISO',      'afriso'),
+            ('Дефолт',      ''),
+        ],
+    },
+    'pumps': {
+        'label': '💧 Насоси',
+        'brands': [
+            ('Lider',       'lider'),
+            ('WILO',        'wilo'),
+            ('TATRA',       'tatra'),
+            ('Grundfos',    'grundfos'),
+            ('Дефолт',      ''),
+        ],
+    },
+    'filtration': {
+        'label': '🔬 Фільтрація',
+        'brands': [
+            ('ECOSOFT',     'ecosoft'),
+            ('Filtrons',    'filtrons'),
+            ('BWT',         'bwt'),
+            ('Дефолт',      ''),
+        ],
+    },
+    'metal_plastic': {
+        'label': '🔧 Металопластик',
+        'brands': [
+            ('RAFTEC',      'raftec'),
+            ('FADO',        'fado'),
+            ('KAN',         'kan'),
+            ('HLV',         'hlv'),
+            ('Дефолт',      ''),
+        ],
+    },
+    'water_meters': {
+        'label': '📊 Лічильники',
+        'brands': [
+            ('Ecostar',     'ecostar'),
+            ('GIDROTEK',    'gidrotek'),
+            ('Дефолт',      ''),
+        ],
+    },
+    'safety_valves': {
+        'label': '⚙️ Арматура безпеки',
+        'brands': [
+            ('RAFTEC',      'raftec'),
+            ('HERZ',        'herz'),
+            ('Flamco',      'flamco'),
+            ('CALEFFI',     'caleffi'),
+            ('PLM',         'plm'),
+            ('Дефолт',      ''),
+        ],
+    },
+    'fasteners_sealants': {
+        'label': '🔨 Кріплення/Герметики',
+        'brands': [
+            ('Walraven',    'walraven'),
+            ('RAFTEC',      'raftec'),
+            ('UNIPAK',      'unipak'),
+            ('PLM',         'plm'),
+            ('Дефолт',      ''),
+        ],
+    },
+}
+
+# Категорії які НЕ потребують вибору виробника (вибір недоречний)
+SKIP_CATEGORIES = {
+    'not_ours', 'other', 'sanitary_ware', 'mixers_faucets',
+    'boilers', 'water_heaters', 'siphons_fittings', 'hoses',
+    'towel_warmers', 'automation',
+}
+
+# ─── Стан вибору виробника: chat_id → BrandSelectionState ─────────────────────
+
+_states: dict[int, 'BrandSelectionState'] = {}
 
 
-def register(bot, state: dict):
-    from clients import clients
+class BrandSelectionState:
+    """Стан покрокового вибору виробника для одного замовлення."""
 
-    _learn_state        = state.setdefault('_learn_state', {})
-    _learn_photo_batch  = {}
-    _learn_photo_timers = {}
+    def __init__(self, chat_id: int, позиції: list[dict],
+                 items: list[dict], caption: str,
+                 callback_fn, status_msg_id: int, slug: str = None):
+        self.chat_id       = chat_id
+        self.позиції       = позиції       # нормалізовані позиції
+        self.items         = items         # оригінальні items батчу
+        self.caption       = caption
+        self.callback_fn   = callback_fn   # функція яку викликати після вибору
+        self.status_msg_id = status_msg_id
+        self.slug          = slug
 
-    # ── Запуск навчання ───────────────────────────────────────────────────────
+        # Визначаємо групи що є в замовленні
+        self.groups_needed = self._detect_groups()
+        self.group_queue   = list(self.groups_needed.keys())  # черга груп
+        self.chosen        : dict[str, str] = {}              # cat → brand_key
 
-    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() == '🌐 навчання бота')
-    def handle_learn_global(message):
-        """Глобальне навчання — без прив'язки до клієнта."""
-        _start_learn_session(message.chat.id, slug='_global', reply_to=message)
+    def _detect_groups(self) -> dict[str, list[dict]]:
+        """Знаходить групи товарів що є в замовленні і мають виробників."""
+        groups: dict[str, list[dict]] = defaultdict(list)
+        for п in self.позиції:
+            cat = п.get('category', 'other')
+            if cat in SKIP_CATEGORIES:
+                continue
+            if cat not in CATEGORY_BRANDS:
+                continue
+            groups[cat].append(п)
+        return dict(groups)
 
-    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('навчання', '📚 навчання'))
-    def handle_learn_start(message):
-        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-        slug = clients.get_active(message.chat.id)
-        if not slug:
-            index = clients.list_clients()
-            if not index:
-                bot.reply_to(message,
-                    "⚠️ Немає жодного клієнта.\nСпочатку створи: `новий клієнт Ім'я`",
-                    parse_mode="Markdown"); return
-            mk = InlineKeyboardMarkup(row_width=1)
-            for s, cname in sorted(index.items(), key=lambda x: x[1])[:10]:
-                mk.add(InlineKeyboardButton(f"👤 {cname}", callback_data=f"lrn_{s}"))
-            bot.reply_to(message, "📚 Кого навчаємо? Обери клієнта:", reply_markup=mk)
-            return
-        _start_learn_session(message.chat.id, slug, reply_to=message)
+    def current_group(self) -> str | None:
+        """Поточна група для вибору."""
+        return self.group_queue[0] if self.group_queue else None
 
-    # ── Вибір клієнта для навчання ────────────────────────────────────────────
+    def apply_choice(self, cat: str, brand_key: str):
+        """Застосовує вибір виробника для групи."""
+        self.chosen[cat] = brand_key
+        if cat in self.group_queue:
+            self.group_queue.remove(cat)
 
-    @bot.callback_query_handler(func=lambda c: c.data.startswith('lrn_') and c.data != 'lrn_photos_done')
-    def cb_learn_pick_client(call):
-        slug = call.data[4:]
-        p    = clients.get_profile(slug)
-        if not p:
-            bot.answer_callback_query(call.id, "Клієнта не знайдено"); return
-        clients.set_active(call.message.chat.id, slug)
-        bot.edit_message_text(
-            f"👤 Обрано: *{p['name']}*",
-            call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-        bot.answer_callback_query(call.id)
-        _start_learn_session(call.message.chat.id, slug)
+    def is_done(self) -> bool:
+        return len(self.group_queue) == 0
 
-    # ── Ініціалізація сесії ───────────────────────────────────────────────────
-
-    def _start_learn_session(chat_id: int, slug: str, reply_to=None):
-        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-        is_global = (slug == '_global')
-        p         = clients.get_profile(slug) if not is_global else None
-        _, ex_n   = clients.get_next_example_dir(slug) if not is_global else (None, 1)
-        _learn_state[chat_id] = {
-            'slug':            slug,
-            'example_n':       ex_n,
-            'stage':           'photos',
-            'photo_paths':     [],
-            'photo_count':     0,
-            'invoice_received': False,
-        }
-        client_label = 'ВЕСЬ БОТ (для всіх клієнтів)' if is_global else (p['name'] if p else slug)
-        text = (
-            f"📚 Навчання *{client_label}*\n"
-            f"Приклад #{ex_n}\n\n"
-            f"Крок 1️⃣: Кидай фото замовлення від майстра\n"
-            f"_(можна кілька — коли всі кинув, натисни_ *Готово* _або одразу кидай рахунок)_"
-        )
-        mk = InlineKeyboardMarkup()
-        mk.add(InlineKeyboardButton("✅ Фото готові — кидай рахунок", callback_data="lrn_photos_done"))
-        if reply_to:
-            bot.reply_to(reply_to, text, parse_mode="Markdown", reply_markup=mk)
-        else:
-            bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=mk)
-
-    # ── Прийом фото ───────────────────────────────────────────────────────────
-
-    @bot.message_handler(content_types=['photo'],
-                         func=lambda m: m.chat.id in state.get('_learn_state', {})
-                         and state['_learn_state'][m.chat.id].get('stage') in ('photos', 'invoice')
-                         and not state['_learn_state'][m.chat.id].get('invoice_received'))
-    def handle_learn_photo(message):
-        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-        st = _learn_state.get(message.chat.id)
-        if not st or st.get('invoice_received'):
-            return
-        st['stage'] = 'photos'
-
-        chat_id = message.chat.id
-        ex_n    = st['example_n']
-
-        file_info = bot.get_file(message.photo[-1].file_id)
-        file_data = bot.download_file(file_info.file_path)
-        ext       = (file_info.file_path.split('.')[-1] or 'jpg').lower()
-        _learn_photo_batch.setdefault(chat_id, []).append((file_data, ext))
-
-        if chat_id in _learn_photo_timers:
-            _learn_photo_timers[chat_id].cancel()
-
-        def _flush(cid):
-            batch  = _learn_photo_batch.pop(cid, [])
-            _learn_photo_timers.pop(cid, None)
-            lstate = _learn_state.get(cid)
-            if not lstate:
-                return
-            count_before = lstate.get('photo_count', 0)
-            for i, (fdata, fext) in enumerate(batch, start=count_before + 1):
-                fpath = os.path.join(
-                    clients.CLIENTS_DIR, lstate['slug'], "examples",
-                    f"приклад_{lstate['example_n']}", f"photo_{i}.{fext}"
-                )
-                os.makedirs(os.path.dirname(fpath), exist_ok=True)
-                with open(fpath, 'wb') as f:
-                    f.write(fdata)
-                lstate.setdefault('photo_paths', []).append(fpath)
-            lstate['photo_count'] = count_before + len(batch)
-            total = lstate['photo_count']
-            mk = InlineKeyboardMarkup()
-            mk.add(InlineKeyboardButton("✅ Фото готові — кидай рахунок",
-                                        callback_data="lrn_photos_done"))
-            bot.send_message(cid,
-                f"✅ Збережено фото: *{total}* шт.\nКидай ще або натисни кнопку і кидай рахунок.",
-                parse_mode="Markdown", reply_markup=mk)
-
-        t = threading.Timer(BATCH_TIMEOUT, _flush, args=[chat_id])
-        t.daemon = True
-        t.start()
-        _learn_photo_timers[chat_id] = t
-
-    # ── Кнопка "фото готові" ──────────────────────────────────────────────────
-
-    @bot.callback_query_handler(func=lambda c: c.data == 'lrn_photos_done')
-    def cb_learn_photos_done(call):
-        chat_id = call.message.chat.id
-        st = _learn_state.get(chat_id)
-        if not st:
-            bot.answer_callback_query(call.id, "Сесія завершена"); return
-
-        # Примусово скидаємо батч фото якщо таймер ще не спрацював
-        if chat_id in _learn_photo_timers:
-            _learn_photo_timers[chat_id].cancel()
-            _learn_photo_timers.pop(chat_id, None)
-        pending = _learn_photo_batch.pop(chat_id, [])
-        if pending:
-            count_before = st.get('photo_count', 0)
-            for i, (fdata, fext) in enumerate(pending, start=count_before + 1):
-                fpath = os.path.join(
-                    clients.CLIENTS_DIR, st['slug'], "examples",
-                    f"приклад_{st['example_n']}", f"photo_{i}.{fext}"
-                )
-                os.makedirs(os.path.dirname(fpath), exist_ok=True)
-                with open(fpath, 'wb') as f:
-                    f.write(fdata)
-                st.setdefault('photo_paths', []).append(fpath)
-            st['photo_count'] = count_before + len(pending)
-
-        if st.get('photo_count', 0) == 0:
-            bot.answer_callback_query(call.id, "⚠️ Спочатку кинь хоча б одне фото!"); return
-        st['stage'] = 'invoice'
-        bot.edit_message_text(
-            f"✅ Фото збережено: {st['photo_count']} шт.\n\n"
-            f"Крок 2️⃣: Кидай файл рахунку (.xls або .xlsx)",
-            call.message.chat.id, call.message.message_id)
-        bot.answer_callback_query(call.id)
-
-    # ── Прийом рахунку ────────────────────────────────────────────────────────
-
-    @bot.message_handler(content_types=['document'],
-                         func=lambda m: m.chat.id in state.get('_learn_state', {})
-                         and state['_learn_state'][m.chat.id].get('stage') == 'invoice')
-    def handle_learn_invoice(message):
-        st   = _learn_state.get(message.chat.id)
-        slug = st['slug']
-        ex_n = st['example_n']
-
-        fname = message.document.file_name or ''
-        ext   = fname.rsplit('.', 1)[-1].lower() if '.' in fname else 'xlsx'
-        if ext not in ('xls', 'xlsx'):
-            bot.reply_to(message, "⚠️ Потрібен файл .xls або .xlsx"); return
-
-        file_info    = bot.get_file(message.document.file_id)
-        file_data    = bot.download_file(file_info.file_path)
-        invoice_path = clients.save_example_invoice(slug, ex_n, file_data, ext)
-
-        st['stage']            = 'invoice'
-        st['invoice_received'] = True
-
-        status_msg = bot.reply_to(message, "⏳ Зіставляю фото з рахунком через Gemini...")
-
-        invoice_items = clients.parse_invoice(invoice_path)
-        print(f"📄 parse_invoice: {len(invoice_items)} позицій з {invoice_path}", flush=True)
-        if not invoice_items:
-            bot.edit_message_text(
-                "❌ Не вдалося прочитати рахунок. Перевір формат файлу.",
-                message.chat.id, status_msg.message_id); return
-
-        photo_paths = st.get('photo_paths', [])
-        print(f"📸 Фото для навчання: {photo_paths}", flush=True)
-        if not photo_paths:
-            bot.edit_message_text(
-                "❌ Фото не знайдено. Почни навчання знову: `навчання`",
-                message.chat.id, status_msg.message_id, parse_mode="Markdown"); return
-
-        photos_bytes = []
-        for pp in photo_paths:
-            if os.path.exists(pp):
-                with open(pp, 'rb') as f:
-                    photos_bytes.append(f.read())
-                print(f"  ✅ {pp} ({os.path.getsize(pp)} байт)", flush=True)
+    def build_brand_map(self) -> dict[str, list[str]]:
+        """Будує brand_map для find_items з вибраних виробників."""
+        from engine.search import BRAND_TOKENS
+        brand_map: dict[str, list[str]] = {}
+        for cat, brand_key in self.chosen.items():
+            if not brand_key:
+                continue
+            tokens = BRAND_TOKENS.get(brand_key.lower())
+            if tokens:
+                brand_map[cat] = tokens
             else:
-                print(f"  ❌ Не знайдено: {pp}", flush=True)
+                brand_map[cat] = [brand_key]
+        return brand_map
 
-        if not photos_bytes:
-            bot.edit_message_text("❌ Файли фото не читаються. Спробуй знову.",
-                                  message.chat.id, status_msg.message_id); return
-
-        bot.edit_message_text(
-            f"⏳ Gemini аналізує {len(photos_bytes)} фото та {len(invoice_items)} позицій...",
-            message.chat.id, status_msg.message_id)
-
-        try:
-            pairs, raw_response = _gemini_match(photos_bytes, invoice_items)
-            print(f"🤖 Gemini (перші 500):\n{raw_response[:500]}", flush=True)
-        except Exception as e:
-            import traceback
-            print(f"❌ Gemini exception:\n{traceback.format_exc()}", flush=True)
-            bot.edit_message_text(
-                f"❌ Помилка Gemini:\n`{str(e)[:200]}`",
-                message.chat.id, status_msg.message_id, parse_mode="Markdown"); return
-
-        if not pairs:
-            bot.edit_message_text(
-                f"⚠️ Gemini не знайшов збігів між фото і рахунком.\n\n"
-                f"Можливі причини:\n"
-                f"• Фото і рахунок від різних замовлень\n"
-                f"• Фото нечітке або погано освітлене\n"
-                f"• Gemini не зміг розібрати почерк\n\n"
-                f"_Відповідь Gemini:_\n`{raw_response[:300]}`",
-                message.chat.id, status_msg.message_id, parse_mode="Markdown"); return
-
-        if slug == '_global':
-            # Глобальне навчання → зберігаємо в загальний кеш бота
-            from clients.cache import cache_confirm
-            saved = 0
-            for pair in pairs:
-                orig = pair.get('original', '').strip()
-                name = pair.get('catalog_name', '').strip()
-                cat  = pair.get('category', 'other')
-                if orig and name:
-                    cache_confirm(orig, {}, orig, name, cat, source='global_train')
-                    saved += 1
-        else:
-            saved = clients.learn_from_example(slug, ex_n, pairs)
-        _learn_state.pop(message.chat.id, None)
-        print(f"✅ Навчання: збережено {saved}/{len(pairs)} пар", flush=True)
-
-        p = clients.get_profile(slug) if slug != '_global' else None
-        client_label = 'ВЕСЬ БОТ' if slug == '_global' else (p['name'] if p else slug)
-        bot.edit_message_text(
-            f"✅ Навчання завершено!\n"
-            f"👤 Клієнт: *{client_label}*\n"
-            f"📚 Приклад #{ex_n}\n"
-            f"📸 Фото: {len(photos_bytes)} шт.\n"
-            f"🔗 Знайдено збігів: *{len(pairs)}*\n"
-            f"💾 Збережено в кеш: *{saved}*\n\n"
-            f"Для ще одного прикладу: натисни *📚 Навчання*",
-            message.chat.id, status_msg.message_id, parse_mode="Markdown")
-
-    # Expose handlers до photo_handler через state (делегування)
-    state['_handle_learn_photo']   = handle_learn_photo
-    state['_handle_learn_invoice'] = handle_learn_invoice
+    def count_per_group(self) -> dict[str, int]:
+        return {cat: len(items) for cat, items in self.groups_needed.items()}
 
 
-# ── Gemini зіставлення ────────────────────────────────────────────────────────
+# ─── Публічний API ──────────────────────────────────────────────────────────────
 
-def _gemini_match(photos_bytes: list[bytes],
-                  invoice_items: list[str]) -> tuple[list[dict], str]:
-    from google import genai as _genai
-    from google.genai import types as _gtypes
+def start_brand_selection(chat_id: int, позиції: list[dict],
+                           items: list[dict], caption: str,
+                           callback_fn, status_msg_id: int,
+                           bot, _state: dict = None, slug: str = None) -> None:
+    """
+    Запускає діалог вибору виробника.
+    Якщо в замовленні немає груп з виробниками — одразу викликає callback_fn.
+    """
+    bs = BrandSelectionState(
+        chat_id, позиції, items, caption, callback_fn, status_msg_id, slug=slug)
+    bs._bot   = bot
+    bs._state = _state or {}
 
-    GEMINI_KEY   = os.environ.get("GEMINI_KEY", "")
-    client       = _genai.Client(api_key=GEMINI_KEY)
-    invoice_text = "\n".join(f"{i+1}. {name}" for i, name in enumerate(invoice_items))
+    if not bs.groups_needed:
+        # Немає груп для вибору — одразу пускаємо з порожнім brand_map
+        _call_callback(bs, {})
+        return
 
-    prompt = f"""Ти — експерт з читання рукописних замовлень сантехніки українською мовою.
+    _states[chat_id] = bs
+    _send_initial_question(chat_id, bs, bot)
 
-На фото — рукописний список замовлення від майстра-сантехніка (може бути кілька сторінок).
-Нижче — рахунок з правильними назвами товарів з бази.
 
-РАХУНОК (товари з бази, {len(invoice_items)} позицій):
-{invoice_text}
+def handle_callback(chat_id: int, data: str, bot) -> bool:
+    """
+    Обробляє callback від кнопок вибору виробника.
+    Повертає True якщо callback належить цьому модулю.
+    """
+    if not data.startswith('bs_'):
+        return False
 
-ЗАВДАННЯ:
-1. Прочитай кожен рядок з фото (скорочення, абревіатури, каракулі — все читай)
-2. Знайди найближчий товар з рахунку
-3. Якщо рядок з фото точно відповідає товару з рахунку — включай в результат
+    state = _states.get(chat_id)
+    if not state:
+        return True
 
-ПРАВИЛА зіставлення:
-- "Труба ф25" на фото → "Труба PPR..." в рахунку ✓
-- "Трійник ф25" → "Трійник однозначний рівний PPR ф 25..." ✓
-- "Кол ф25 90" → "Коліно PPR 90° ф 25..." ✓
-- Скорочення: "Тр" = Трійник, "Кол/Кут" = Коліно, "Тр-ба" = Труба
-- Ігноруй кількість (шт, м) — вона не є назвою товару
-- Якщо немає відповідника — НЕ включай
+    if data == 'bs_default':
+        # Дефолтний пошук — без вибору виробників
+        _finish(chat_id, state, bot)
+        return True
 
-Поверни ТІЛЬКИ JSON масив (без пояснень, без markdown):
-[
-  {{"original": "що написано на фото", "catalog_name": "точна назва з рахунку", "category": "категорія"}},
-  ...
-]
+    if data == 'bs_pick':
+        # Починаємо покроковий вибір
+        _send_next_group(chat_id, state, bot)
+        return True
 
-Категорії: plastic_ppr, push_systems, sewage, adapters_reducers, shutoff_valves, heating,
-metal_plastic, filtration, insulation, radiators_radiatorsvalve, underfloor_heating,
-water_heaters, boilers, pumps, mixers_faucets, sanitary_ware, siphons_fittings,
-hoses, water_meters, towel_warmers, safety_valves, automation, other"""
+    if data.startswith('bs_brand_'):
+        # bs_brand_CATEGORY__brandkey
+        payload = data[9:]   # CATEGORY__brandkey
+        if '__' in payload:
+            cat, brand_key = payload.split('__', 1)
+            state.apply_choice(cat, brand_key)
+            if state.is_done():
+                _finish(chat_id, state, bot)
+            else:
+                _send_next_group(chat_id, state, bot)
+        return True
 
-    contents = [_gtypes.Part.from_bytes(data=pb, mime_type="image/jpeg")
-                for pb in photos_bytes]
-    contents.append(_gtypes.Part.from_text(text=prompt))
+    return False
 
-    resp = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=contents,
-        config=_gtypes.GenerateContentConfig(temperature=0),
+
+def cancel(chat_id: int) -> None:
+    """Скасовує активну сесію вибору (при /стоп)."""
+    _states.pop(chat_id, None)
+
+
+def has_active(chat_id: int) -> bool:
+    return chat_id in _states
+
+
+# ─── Внутрішні функції ──────────────────────────────────────────────────────────
+
+def _send_initial_question(chat_id: int, state: BrandSelectionState, bot) -> None:
+    """Надсилає перше питання: дефолт чи вибрати виробників."""
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    counts   = state.count_per_group()
+    n_groups = len(counts)
+    n_items  = sum(counts.values())
+
+    lines = [f"📋 *Замовлення: {n_items} позицій, {n_groups} груп*\n"]
+    for cat, cnt in counts.items():
+        info = CATEGORY_BRANDS.get(cat, {})
+        label = info.get('label', cat)
+        lines.append(f"  • {label} — {cnt} шт.")
+
+    lines.append("\n*Оберіть режим пошуку:*")
+
+    mk = InlineKeyboardMarkup(row_width=1)
+    mk.add(
+        InlineKeyboardButton(
+            "✅ Дефолтний пошук (пріоритетний виробник)",
+            callback_data="bs_default"),
+        InlineKeyboardButton(
+            "🏭 Вибрати виробника для кожної групи",
+            callback_data="bs_pick"),
     )
-    raw  = (resp.text or '').strip()
-    text = re.sub(r'^```json\s*', '', raw)
-    text = re.sub(r'\s*```$', '', text).strip()
 
     try:
-        pairs = json.loads(text)
-        return (pairs if isinstance(pairs, list) else []), raw
-    except json.JSONDecodeError as e:
-        print(f"❌ JSON parse: {e}\nRaw: {raw[:500]}", flush=True)
-        return [], raw
+        bot.edit_message_text(
+            '\n'.join(lines), chat_id, state.status_msg_id,
+            parse_mode="Markdown", reply_markup=mk)
+    except Exception:
+        bot.send_message(
+            chat_id, '\n'.join(lines),
+            parse_mode="Markdown", reply_markup=mk)
+
+
+def _send_next_group(chat_id: int, state: BrandSelectionState, bot) -> None:
+    """Надсилає кнопки вибору виробника — відсортовані за пріоритетом клієнта."""
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    cat = state.current_group()
+    if not cat:
+        _finish(chat_id, state, bot)
+        return
+
+    info    = CATEGORY_BRANDS[cat]
+    label   = info['label']
+    brands  = list(info['brands'])
+    n_items = len(state.groups_needed[cat])
+    done    = len(state.chosen)
+    total   = len(state.groups_needed)
+
+    # ── Визначаємо пріоритетний бренд ─────────────────────────────────────────
+    # 1. Преференції клієнта (з історії), 2. DEFAULT_BRAND_PRIORITY
+    priority_key = None
+    if state.slug and state.slug != '_global':
+        try:
+            from clients import clients as _cl
+            prefs = _cl.get_preferences(state.slug)
+            cat_prefs = prefs.get('by_category', {}).get(cat, [])
+            if cat_prefs:
+                priority_key = cat_prefs[0][0].lower()
+        except Exception:
+            pass
+    if not priority_key:
+        try:
+            from search import DEFAULT_BRAND_PRIORITY
+            default_list = DEFAULT_BRAND_PRIORITY.get(cat, [])
+            if default_list:
+                priority_key = default_list[0][0].lower()
+        except Exception:
+            pass
+
+    # ── Сортуємо: пріоритетний першим, "Дефолт" завжди останній ──────────────
+    brands.sort(key=lambda x: 0 if (priority_key and x[1].lower() == priority_key)
+                               else (2 if x[0] == 'Дефолт' else 1))
+
+    # ⭐ до пріоритетного
+    brands_display = [
+        (f"⭐ {bl}" if (priority_key and bk.lower() == priority_key and bl != 'Дефолт') else bl, bk)
+        for bl, bk in brands
+    ]
+
+    # Приклади товарів цієї групи
+    examples = [п.get('normalized', п.get('original', ''))[:40]
+                for п in state.groups_needed[cat][:3]]
+    ex_text = '\n'.join(f"  _{e}_" for e in examples)
+
+    text = (
+        f"*Крок {done+1}/{total}:* {label}\n"
+        f"Позицій: {n_items}\n{ex_text}\n\n"
+        f"*Оберіть виробника:*"
+    )
+
+    mk = InlineKeyboardMarkup(row_width=2)
+    for blabel, bkey in brands_display:
+        cb = f"bs_brand_{cat}__{bkey}"
+        mk.add(InlineKeyboardButton(blabel, callback_data=cb))
+
+    try:
+        bot.edit_message_text(
+            text, chat_id, state.status_msg_id,
+            parse_mode="Markdown", reply_markup=mk)
+    except Exception:
+        bot.send_message(
+            chat_id, text,
+            parse_mode="Markdown", reply_markup=mk)
+
+
+def _call_callback(state: BrandSelectionState, brand_map: dict) -> None:
+    """Викликає callback з усіма потрібними параметрами."""
+    import inspect
+    sig = inspect.signature(state.callback_fn)
+    params = list(sig.parameters.keys())
+    try:
+        if 'bot' in params and '_state' in params:
+            state.callback_fn(
+                state.chat_id, state.позиції, state.items,
+                state.caption, brand_map, state.status_msg_id,
+                bot=state._bot, _state=state._state)
+        elif 'bot' in params:
+            state.callback_fn(
+                state.chat_id, state.позиції, state.items,
+                state.caption, brand_map, state.status_msg_id,
+                bot=state._bot)
+        else:
+            state.callback_fn(
+                state.chat_id, state.позиції, state.items,
+                state.caption, brand_map, state.status_msg_id)
+    except Exception as e:
+        print(f"❌ brand_selector callback: {e}", flush=True)
+        try:
+            state._bot.send_message(state.chat_id, f"❌ Помилка пошуку: {e}")
+        except Exception:
+            pass
+
+
+def _finish(chat_id: int, state: BrandSelectionState, bot) -> None:
+    """Завершує вибір і запускає пошук."""
+    brand_map = state.build_brand_map()
+
+    msg = (
+        f"✅ Виробники обрані:\n" +
+        "\n".join(
+            f"  • {CATEGORY_BRANDS.get(cat, {}).get('label', cat)}: *{bk[0]}*"
+            for cat, bk in brand_map.items()
+        ) + "\n\n🔍 Шукаю..."
+        if brand_map else "🔍 Шукаю з дефолтними виробниками..."
+    )
+
+    try:
+        bot.edit_message_text(msg, chat_id, state.status_msg_id,
+                              parse_mode="Markdown")
+    except Exception as _e:
+        if 'message is not modified' not in str(_e) and 'message to edit not found' not in str(_e):
+            print(f"⚠️ brand_selector: {_e}", flush=True)
+
+    _states.pop(chat_id, None)
+    _call_callback(state, brand_map)
+
+
+def inject_brand_map_to_positions(
+        позиції: list[dict], brand_map: dict[str, list[str]],
+        global_caption_brand_map: dict) -> None:
+    """
+    Вставляє brand_map в кожну позицію.
+    Категорія-специфічний brand_map має пріоритет над глобальним (caption).
+    """
+    for п in позиції:
+        cat = п.get('category', 'other')
+        existing = dict(global_caption_brand_map)   # копія глобального
+
+        if cat in brand_map:
+            # Вибраний виробник для цієї категорії → жорстке перевизначення
+            existing[cat]      = brand_map[cat]
+            existing['_global'] = brand_map[cat]    # також глобально для цієї позиції
+
+        п['_brand_map'] = existing
