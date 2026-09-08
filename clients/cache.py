@@ -200,7 +200,7 @@ def cache_save(original: str, brand_map: dict, normalized: str,
     if confidence >= 97:
         try:
             from engine.synonyms import synonyms_add
-            synonyms_add(normalized, catalog_name)
+            synonyms_add(normalized, catalog_name, category=category)
         except Exception:
             pass
 
@@ -222,7 +222,7 @@ def cache_confirm(original: str, brand_map: dict, normalized: str,
     # ── Synonyms: накопичуємо universal_key → варіанти по брендах ─────────────
     try:
         from engine.synonyms import synonyms_add
-        synonyms_add(normalized, catalog_name)
+        synonyms_add(normalized, catalog_name, category=category)
     except Exception:
         pass
 
