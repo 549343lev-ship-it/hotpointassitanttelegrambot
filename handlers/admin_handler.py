@@ -99,7 +99,7 @@ def register(bot, state: dict):
     @bot.message_handler(commands=['synonyms', 'схожі'])
     def cmd_synonyms(message):
         if message.chat.id != ADMIN_ID: return
-        from synonyms import get_synonyms_stats, rebuild_from_cache
+        from engine.synonyms import get_synonyms_stats, rebuild_from_cache
         from clients.cache import get_cache
         stats = get_synonyms_stats()
         text = (
@@ -119,7 +119,7 @@ def register(bot, state: dict):
         if message.chat.id != ADMIN_ID: return
         status = bot.reply_to(message, "⏳ Перебудовую synonyms з кешу...")
         try:
-            from synonyms import rebuild_from_cache
+            from engine.synonyms import rebuild_from_cache
             from clients.cache import get_cache
             n = rebuild_from_cache(get_cache())
             bot.edit_message_text(f"✅ Synonyms rebuild: {n} записів додано",
@@ -140,7 +140,7 @@ def register(bot, state: dict):
             bot.reply_to(message, "⚠️ SYNONYMS_SHEET_ID не задано в env"); return
         status = bot.reply_to(message, "⏳ Експортую в Google Sheets...")
         try:
-            from synonyms import export_to_sheets
+            from engine.synonyms import export_to_sheets
             n = export_to_sheets(SHEET_ID)
             bot.edit_message_text(f"✅ Експортовано {n} рядків у Google Sheets",
                                   status.chat.id, status.message_id)
