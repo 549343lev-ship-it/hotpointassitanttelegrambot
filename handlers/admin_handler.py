@@ -104,9 +104,10 @@ def register(bot, state: dict):
         stats = get_synonyms_stats()
         text = (
             f"📖 *Таблиця схожих товарів*\n"
-            f"Universal keys: {stats['universal_keys']}\n"
-            f"Всього записів: {stats['total_entries']}\n"
-            f"З кількома брендами: {stats['multi_brand']}\n\n"
+            f"Універсальних назв: {stats['universal_keys']}\n"
+            f"Варіантів (бренди): {stats['total_entries']}\n"
+            f"З кількома брендами: {stats['multi_brand']}\n"
+            f"Формулювань (aliases): {stats['aliases']}\n\n"
             f"Команди:\n"
             "/synonyms_rebuild — перебудувати з кешу\n"
             "/synonyms_export — експорт у Google Sheets"
@@ -121,9 +122,13 @@ def register(bot, state: dict):
         try:
             from engine.synonyms import rebuild_from_cache
             from clients.cache import get_cache
-            n = rebuild_from_cache(get_cache())
-            bot.edit_message_text(f"✅ Synonyms rebuild: {n} записів додано",
-                                  status.chat.id, status.message_id)
+            r = rebuild_from_cache(get_cache())
+            bot.edit_message_text(
+                f"✅ Оброблено {r['processed']} записів кешу\n"
+                f"→ {r['universal_keys']} універсальних назв\n"
+                f"→ {r['multi_brand']} з кількома брендами\n"
+                f"→ {r['aliases']} формулювань",
+                status.chat.id, status.message_id)
         except Exception as e:
             bot.edit_message_text(f"❌ Помилка: {e}", status.chat.id, status.message_id)
 
