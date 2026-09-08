@@ -1,30 +1,33 @@
 """
-synonyms.py — Таблиця "схожих товарів".
+synonyms.py — Довідник "схожих товарів" (універсальна назва → варіанти по брендах).
 
-КОНЦЕПЦІЯ:
-  Окремий незалежний блок. НЕ впливає на роботу бота.
-  Накопичує: universal_key → {brand: {catalog_name, code, hits}}
-  Експортує в Google Sheets з структурою:
-    A: універсальна назва | B: 1 пріоритет | C: код | D: 2 пріоритет | E: код | ...
+КЛЮЧОВА ІДЕЯ:
+  Ключ будується з catalog_name (що підібрали), а НЕ з normalized (як спитали).
+  Тому всі формулювання менеджера сходяться в один рядок:
 
-UNIVERSAL KEY:
-  = normalized без бренду, нижній регістр, нормалізовані пробіли.
-  "Муфта PPR МРЗ ф25х3/4, RAFTEC" → "муфта ppr мрз ф25х3/4"
-  "Коліно PPR РН ф25х3/4, Ekoplastik" → "коліно ppr рн ф25х3/4"
+    "ізоляція синя ф22"        ┐
+    "утеплювач 22/6 синій 2м"  ├─→ "утеплювач ламін для труб ф22х6 синій"
+    "утеплювач для труб ф22"   ┘        └─ {plm: {...}, теплоізол: {...}}
 
-ІНТЕГРАЦІЯ (майбутня):
-  Щоб підключити до пошуку — в search.py перед Voyage викликати:
-    result = synonyms_lookup(universal_key, brand)
-    if result: return result
+  Фрази менеджера зберігаються як aliases — основа для майбутнього
+  етапу "normalized → універсальна назва" перед пошуком.
 
-ФАЙЛ:
-  DATA_DIR/synonyms.json
+ФАЙЛ: DATA_DIR/synonyms.json
   {
-    "муфта ppr мрз ф25х3/4": {
-      "ekoplastik": {"catalog_name": "Муфта PPR MP3 ф25х3/4 Ekoplastik", "code": "42977", "hits": 5},
-      "raftec":     {"catalog_name": "Муфта PPR МРЗ ф25 3/4 RAFTEC",     "code": "88519", "hits": 2}
+    "утеплювач ламін для труб ф22х6 синій": {
+      "variants": {
+        "plm": {"catalog_name": "Утеплювач ламін. для труб ф 22х6 мм, синій, PLM",
+                "code": "", "hits": 6, "last_seen": "2026-09-08"}
+      },
+      "aliases":  ["ізоляція синя ф22", "утеплювач 22/6 синій 2м"],
+      "category": "insulation",
+      "attrs":    {"dia": [22], "angle": null, "color": "синій"}
     }
   }
+
+ІНТЕГРАЦІЯ (майбутній Крок 2):
+  ukey = match_universal(normalized)   # fuzzy по aliases + жорсткий фільтр атрибутів
+  item = synonyms_lookup(ukey, brand)
 """
 
 import os
@@ -35,102 +38,184 @@ import time
 DATA_DIR      = os.environ.get("DATA_DIR") or ("/var/data" if os.path.isdir("/var/data") else ".")
 SYNONYMS_FILE = os.path.join(DATA_DIR, "synonyms.json")
 
-# Всі відомі бренди (з BRAND_TOKENS) — для стрипінгу з normalized
-_BRAND_PATTERNS = [
-    r'\b(raftec|RAFTEC)\b',
-    r'\b(ekoplastik|Ekoplastik|PP-RCT)\b',
-    r'\b(ECO\s+PPR|ECO)\b',
-    r'\b(asg|ASG)\b',
-    r'\b(fv\s*plast|FV\s*Plast)\b',
-    r'\b(ostendorf|OSTENDORF)\b',
-    r'\b(plm|PLM)\b',
-    r'\b(rehau|REHAU)\b',
-    r'\b(kan|KAN)\b',
-    r'\b(fado|FADO)\b',
-    r'\b(hidros|HIDROS|Hidros)\b',
-    r'\b(idmar|IDMAR)\b',
-    r'\b(mirado|MIRADO)\b',
-    r'\b(purmo|Purmo)\b',
-    r'\b(tatra|TATRA)\b',
-    r'\b(wilo|WILO)\b',
-    r'\b(grundfos|GRUNDFOS)\b',
-    r'\b(biasi|BIASI)\b',
-    r'\b(vaillant|Vaillant)\b',
-    r'\b(giacomini|Giacomini)\b',
-    r'\b(general\s*fittings?)\b',
-    r'\b(aquapex|AQUAPEX)\b',
-    r'\b(valrom|VALROM)\b',
-    r'\b(wavin|Wavin)\b',
-    r'\b(lexline|LEXLINE)\b',
-    r'\b(pattaroni|Pattaroni)\b',
-    r'\b(solomon|SOLOMON)\b',
+MAX_ALIASES = 20   # скільки формулювань зберігати на один ключ
+
+
+# ─── Бренди ──────────────────────────────────────────────────────────────────
+# Порядок важливий: довші назви перші, щоб не з'їдало частинами.
+
+_BRANDS = [
+    ('ekoplastik', [r'ekoplastik']),
+    ('raftec',     [r'raftec']),
+    ('asg',        [r'(?<![a-z])asg(?![a-z])']),
+    ('ostendorf',  [r'ostendorf']),
+    ('fv plast',   [r'fv\s*plast']),
+    ('plm',        [r'(?<![a-z])plm(?![a-z])']),
+    ('eco',        [r'(?<![a-z])eco(?![a-z])']),
+    ('rehau',      [r'rehau']),
+    ('kan',        [r'kan-?therm', r'(?<![a-z])kan(?![a-z])']),
+    ('fado',       [r'fado']),
+    ('valrom',     [r'valrom']),
+    ('wavin',      [r'wavin']),
+    ('hidros',     [r'hidros']),
+    ('idmar',      [r'idmar']),
+    ('mirado',     [r'mirado']),
+    ('purmo',      [r'purmo']),
+    ('tatra',      [r'tatra(-line)?']),
+    ('termojet',   [r'termojet']),
+    ('wilo',       [r'wilo']),
+    ('grundfos',   [r'grundfos']),
+    ('biasi',      [r'biasi']),
+    ('vaillant',   [r'vaillant']),
+    ('giacomini',  [r'giacomini']),
+    ('lexline',    [r'lexline']),
+    ('pattaroni',  [r'pattaroni']),
+    ('solomon',    [r'solomon']),
+    ('unipak',     [r'unipak']),
+    ('grohe',      [r'grohe']),
+    ('geberit',    [r'geberit']),
+    ('alcaplast',  [r'alcaplast']),
+    ('herz',       [r'(?<![a-z])herz(?![a-z])']),
+    ('imprese',    [r'imprese']),
+    ('navin',      [r'navin']),
+    ('teploizol',  [r'теплоізол']),
+    ('general fittings', [r'general\s*fittings?']),
 ]
-_BRAND_RE = re.compile('|'.join(_BRAND_PATTERNS), re.IGNORECASE)
+
+# Маркери товарних ліній — прибираємо, бо вони брендозалежні
+_SERIES = [
+    r'pp-?rct', r'ht\s*safe', r'(?<![a-z])htr(?![a-z])', r'kg\s*2000',
+    r'(?<![a-z])(black|gold|steel|brass|silver|white)(\s+block)?(?![a-z])',
+    r'(?<![a-z])profi(?![a-z])', r'rautitan', r'raubasic', r'aquapex',
+    r'heat-?pex', r'lizoflex(\s+stabil)?(\s+red)?', r'k-?flex',
+    r'unigarn', r'glidex', r'sanitary\s+silicone', r'extra(?![a-z])',
+    r'compress', r'\(п/з\)', r'\(упаковка\)', r'\(з\s+кабелем\)',
+    r'cw617n', r'sdr\d+',
+]
+
+_BRAND_RE  = re.compile('|'.join(p for _, pats in _BRANDS for p in pats), re.IGNORECASE)
+_SERIES_RE = re.compile('|'.join(_SERIES), re.IGNORECASE)
+
+# Абревіатури → канонічна форма
+_ABBREV = [
+    (r'внутрішн\w*',                      'вн'),
+    (r'внутр\.?(?![а-я])',                'вн'),
+    (r'внут\.?(?![а-я])',                 'вн'),
+    (r'вн\.?(?![а-я])',                   'вн'),
+    (r'зовнішн\w*',                       'зовн'),
+    (r'каналізаційн\w*',                  'канал'),
+    (r'каналіз\.?(?![а-я])',              'канал'),
+    (r'канал\.?(?![а-я])',                'канал'),
+    (r'ламінов\w*',                       'ламін'),
+    (r'ламін\.?(?![а-я])',                'ламін'),
+    (r'ексцентричн\w*',                   'ексц'),
+    (r'ексентричн\w*',                    'ексц'),
+    (r'редукційн\w*',                     'редукц'),
+    (r'перехідн\w*',                      'перехід'),
+    (r'ізоляц\w*',                        'утеплювач'),
+    (r'ізол\.?(?![а-я])',                 'утеплювач'),
+    (r'очистки',                          'очистк'),
+    (r'кульов\w*',                        'кульов'),
+    (r'підключенн\w*',                    'підключ'),
+    (r'контурн\w*|контр\.?(?![а-я])',     'контр'),
+    (r'витратомір\w*',                    'витратомір'),
+    (r'\bмм\b|\bм\.\b',                   ''),
+]
+
+# Латинські двійники кирилиці у фітингових абревіатурах
+_LOOKALIKE = [
+    (r'\bmp3\b|\bмр3\b|\bmpз\b',  'мрз'),
+    (r'\bmpb\b|\bмрb\b|\bmpв\b',  'мрв'),
+    (r'\bpb\b(?=\s|$)',           'рв'),
+    (r'\bp[\.\s]?в\b',            'рв'),
+    (r'\bp[\.\s]?з\b',            'рз'),
+]
+
+_COLORS = ['синій', 'синя', 'червоний', 'червона', 'сірий', 'сіра', 'сіре',
+           'білий', 'біла', 'біле', 'чорний', 'хром', 'нікель', 'оц']
 
 _SYNONYMS: dict = {}
 
 
-# ─── Universal key ───────────────────────────────────────────────────────────
+# ─── Канонізація ─────────────────────────────────────────────────────────────
 
-def make_universal_key(normalized: str) -> str:
+def canonical(name: str) -> str:
     """
-    Будує brand-агностичний ключ з normalized назви.
+    catalog_name → канонічний brand-агностичний ключ.
 
-    "Муфта PPR МРЗ ф25х3/4, RAFTEC"  → "муфта ppr мрз ф25х3/4"
-    "Коліно PPR РН ф25х3/4 Ekoplastik" → "коліно ppr рн ф25х3/4"
+    "Утеплювач ламін. для труб ф 22х6 мм, синій, PLM" → "утеплювач ламін для труб ф22х6 синій"
+    "Коліно вн. канал. ф110 х 30°, сіре, HT Safe, OSTENDORF" → "коліно вн канал ф110х30 сіре"
+    "Коліно внут. канал. ф110 х 30°, сіре, HTR, ASG"        → те саме
     """
-    s = normalized.lower()
-    s = _BRAND_RE.sub('', s)            # прибираємо бренди
-    s = re.sub(r'[,;]+', ' ', s)       # коми/крапки з комою → пробіл
-    s = re.sub(r'\s+', ' ', s).strip() # нормалізуємо пробіли
+    s = (name or '').lower()
+
+    s = _BRAND_RE.sub(' ', s)
+    s = _SERIES_RE.sub(' ', s)
+
+    for pat, repl in _LOOKALIKE:
+        s = re.sub(pat, repl, s)
+    for pat, repl in _ABBREV:
+        s = re.sub(pat, repl, s)
+
+    s = s.replace('x', 'х').replace('×', 'х')          # латинська x → кирилична
+    s = re.sub(r'(\d),(\d)', r'\1.\2', s)              # 1,8 → 1.8
+    s = re.sub(r'87\.5(?=\s*°|\s|$)', '87', s)         # 87,5° = 87°
+    s = re.sub(r'\bф\s*', 'ф', s)                      # "ф 22" → "ф22"
+    s = re.sub(r'\bl\s*=\s*', 'l=', s)                 # "L = 0.5" → "l=0.5"
+    s = re.sub(r'\bdn\s*', 'dn', s)
+    s = re.sub(r'\s*х\s*', 'х', s)                     # "110 х 30" → "110х30"
+    s = re.sub(r'(?<!\d)\.(?!\d)', ' ', s)             # крапка, крім десяткової
+    s = re.sub(r'[°"\'`,;:()\[\]]+', ' ', s)
+    s = re.sub(r'\s*/\s*', '/', s)
+    s = re.sub(r'\s+', ' ', s).strip()
     return s
 
 
 def _detect_brand(catalog_name: str) -> str:
-    """Визначає бренд з назви каталогу → ключ для synonyms."""
-    low = catalog_name.lower()
-    BRAND_MAP = [
-        ('ekoplastik', ['ekoplastik', 'pp-rct']),
-        ('raftec',     ['raftec']),
-        ('eco',        ['eco ppr', '\beco\b']),
-        ('asg',        ['\basg\b']),
-        ('fv plast',   ['fv plast']),
-        ('ostendorf',  ['ostendorf']),
-        ('plm',        ['\bplm\b']),
-        ('rehau',      ['rehau']),
-        ('kan',        ['\bkan\b']),
-        ('fado',       ['fado']),
-        ('hidros',     ['hidros']),
-        ('idmar',      ['idmar']),
-        ('mirado',     ['mirado']),
-        ('tatra',      ['tatra']),
-        ('wilo',       ['wilo']),
-        ('grundfos',   ['grundfos']),
-        ('biasi',      ['biasi']),
-        ('giacomini',  ['giacomini']),
-        ('valrom',     ['valrom']),
-        ('lexline',    ['lexline']),
-    ]
-    for brand_key, tokens in BRAND_MAP:
-        for t in tokens:
-            if re.search(t, low):
+    """Визначає бренд з назви каталогу."""
+    low = (catalog_name or '').lower()
+    for brand_key, pats in _BRANDS:
+        for p in pats:
+            if re.search(p, low, re.IGNORECASE):
                 return brand_key
     return '_other'
+
+
+def _parse_attrs(name: str) -> dict:
+    """Легкий парсер атрибутів для майбутнього жорсткого фільтра (Крок 2)."""
+    low = (name or '').lower()
+    dia = [int(d) for d in re.findall(r'ф\s*(\d{2,3})', low)]
+    if not dia:
+        dia = [int(d) for d in re.findall(r'dn\s*(\d{2,3})', low)]
+    m_ang = re.search(r'(\d{2,3})(?:[.,]\d)?\s*°', low)
+    angle = int(m_ang.group(1)) if m_ang else None
+    if angle == 87 or angle == 88:
+        angle = 87
+    color = next((c for c in _COLORS if re.search(r'(?<![а-я])' + c + r'(?![а-я])', low)), None)
+    return {'dia': dia, 'angle': angle, 'color': color}
 
 
 # ─── Завантаження / збереження ───────────────────────────────────────────────
 
 def _load():
     global _SYNONYMS
-    if os.path.exists(SYNONYMS_FILE):
-        try:
-            with open(SYNONYMS_FILE, encoding='utf-8') as f:
-                _SYNONYMS = json.load(f)
-            print(f"📖 Synonyms: {len(_SYNONYMS)} universal keys", flush=True)
-        except Exception as e:
-            print(f"⚠️ synonyms load: {e}", flush=True)
-            _SYNONYMS = {}
-    else:
+    if not os.path.exists(SYNONYMS_FILE):
+        _SYNONYMS = {}
+        return
+    try:
+        with open(SYNONYMS_FILE, encoding='utf-8') as f:
+            raw = json.load(f)
+        # Міграція старого формату {ukey: {brand: {...}}} → новий
+        migrated = {}
+        for k, v in raw.items():
+            if isinstance(v, dict) and 'variants' in v:
+                migrated[k] = v
+            elif isinstance(v, dict):
+                migrated[k] = {'variants': v, 'aliases': [], 'category': '', 'attrs': {}}
+        _SYNONYMS = migrated
+        print(f"📖 Synonyms: {len(_SYNONYMS)} універсальних назв", flush=True)
+    except Exception as e:
+        print(f"⚠️ synonyms load: {e}", flush=True)
         _SYNONYMS = {}
 
 
@@ -144,81 +229,114 @@ def _save():
 
 # ─── Публічний API ───────────────────────────────────────────────────────────
 
-def synonyms_add(normalized: str, catalog_name: str, code: str = '') -> str:
+def synonyms_add(normalized: str, catalog_name: str,
+                 code: str = '', category: str = '', autosave: bool = True) -> str:
     """
-    Додає запис у synonyms. Викликати після кожного успішного confirmed підбору.
-
-    normalized:   brand-агностична назва від Gemini ("Муфта PPR МРЗ ф25х3/4")
-    catalog_name: назва з каталогу ("Муфта PPR MP3, ф 25х3/4\", PP-RCT, Ekoplastik")
-    code:         артикул товару (якщо є)
-
+    Додає підбір у довідник. Ключ — з catalog_name, фраза менеджера йде в aliases.
     Повертає universal_key.
     """
-    ukey  = make_universal_key(normalized)
+    if not catalog_name or not catalog_name.strip():
+        return ''
+
+    ukey  = canonical(catalog_name)
+    if not ukey:
+        return ''
     brand = _detect_brand(catalog_name)
+    today = time.strftime('%Y-%m-%d')
 
-    if ukey not in _SYNONYMS:
-        _SYNONYMS[ukey] = {}
+    rec = _SYNONYMS.setdefault(ukey, {
+        'variants': {}, 'aliases': [], 'category': category,
+        'attrs': _parse_attrs(catalog_name),
+    })
+    if category and not rec.get('category'):
+        rec['category'] = category
 
-    existing = _SYNONYMS[ukey].get(brand)
-    if existing and existing.get('catalog_name') == catalog_name:
-        # Той самий товар — просто збільшуємо hits
-        existing['hits'] = existing.get('hits', 1) + 1
-        existing['last_seen'] = time.strftime('%Y-%m-%d')
+    v = rec['variants'].get(brand)
+    if v and v.get('catalog_name') == catalog_name:
+        v['hits']      = v.get('hits', 1) + 1
+        v['last_seen'] = today
+        if code and not v.get('code'):
+            v['code'] = str(code)
     else:
-        _SYNONYMS[ukey][brand] = {
+        rec['variants'][brand] = {
             'catalog_name': catalog_name,
             'code':         str(code) if code else '',
             'hits':         1,
-            'last_seen':    time.strftime('%Y-%m-%d'),
+            'last_seen':    today,
         }
 
-    _save()
+    alias = re.sub(r'\s+', ' ', (normalized or '').lower().strip())
+    if alias and alias != ukey and alias not in rec['aliases']:
+        rec['aliases'].append(alias)
+        if len(rec['aliases']) > MAX_ALIASES:
+            rec['aliases'] = rec['aliases'][-MAX_ALIASES:]
+
+    if autosave:
+        _save()
     return ukey
 
 
-def synonyms_lookup(normalized: str, brand_key: str = '') -> dict | None:
-    """
-    Шукає товар за universal_key і брендом.
-    Якщо brand_key не вказано — повертає варіант з найбільшим hits.
-
-    Повертає: {'catalog_name': ..., 'code': ..., 'brand': ...} або None.
-    """
-    ukey = make_universal_key(normalized)
-    variants = _SYNONYMS.get(ukey)
-    if not variants:
+def synonyms_lookup(universal_key: str, brand_key: str = '') -> dict | None:
+    """Шукає товар за універсальною назвою і брендом."""
+    rec = _SYNONYMS.get(universal_key)
+    if not rec or not rec.get('variants'):
         return None
+    variants = rec['variants']
 
     if brand_key and brand_key in variants:
         v = variants[brand_key]
         return {'catalog_name': v['catalog_name'], 'code': v['code'], 'brand': brand_key}
 
-    # Без бренду — найпопулярніший
     best = max(variants.items(), key=lambda x: x[1].get('hits', 0))
     return {'catalog_name': best[1]['catalog_name'], 'code': best[1]['code'], 'brand': best[0]}
 
 
+def get_universal_index() -> dict:
+    """Повертає весь довідник — для Кроку 2 (матчинг normalized → universal)."""
+    return _SYNONYMS
+
+
 def get_synonyms_stats() -> dict:
-    """Статистика для адмін-команди."""
     total_keys    = len(_SYNONYMS)
-    total_entries = sum(len(v) for v in _SYNONYMS.values())
-    multi_brand   = sum(1 for v in _SYNONYMS.values() if len(v) > 1)
+    total_entries = sum(len(r.get('variants', {})) for r in _SYNONYMS.values())
+    multi_brand   = sum(1 for r in _SYNONYMS.values() if len(r.get('variants', {})) > 1)
+    total_aliases = sum(len(r.get('aliases', [])) for r in _SYNONYMS.values())
     return {
         'universal_keys': total_keys,
         'total_entries':  total_entries,
         'multi_brand':    multi_brand,
+        'aliases':        total_aliases,
     }
+
+
+# ─── Пріоритет брендів для експорту ──────────────────────────────────────────
+
+def _brand_order(category: str) -> list:
+    """Порядок брендів для категорії з DEFAULT_BRAND_PRIORITY."""
+    try:
+        from engine.search import DEFAULT_BRAND_PRIORITY
+    except Exception:
+        try:
+            from search import DEFAULT_BRAND_PRIORITY
+        except Exception:
+            return []
+    return [tok[0].lower() for tok in DEFAULT_BRAND_PRIORITY.get(category, [])]
+
+
+def _sorted_variants(rec: dict) -> list:
+    """Варіанти у порядку пріоритету бренду, потім за hits."""
+    order = _brand_order(rec.get('category', ''))
+    def key(item):
+        brand, info = item
+        rank = order.index(brand) if brand in order else len(order)
+        return (rank, -info.get('hits', 0))
+    return sorted(rec.get('variants', {}).items(), key=key)
 
 
 # ─── Google Sheets Export ────────────────────────────────────────────────────
 
 def export_to_sheets(spreadsheet_id: str, credentials_path: str = None) -> int:
-    """
-    Експортує synonyms у Google Sheets.
-    Структура: A=унів.назва | B=1пріор | C=код | D=2пріор | E=код | ...
-
-    Повертає кількість записаних рядків.
-    """
+    """Експорт: A=універсальна назва | B=1 пріоритет | C=код | D=2 пріоритет | ..."""
     try:
         import gspread
         from google.oauth2.service_account import Credentials
@@ -226,21 +344,18 @@ def export_to_sheets(spreadsheet_id: str, credentials_path: str = None) -> int:
         print("⚠️ synonyms export: pip install gspread google-auth", flush=True)
         return 0
 
-    scopes = ['https://www.googleapis.com/auth/spreadsheets']
-
+    scopes     = ['https://www.googleapis.com/auth/spreadsheets']
     creds_path = credentials_path or os.environ.get('GOOGLE_CREDENTIALS_PATH', '')
     if not creds_path or not os.path.exists(creds_path):
-        # Спроба взяти з env як JSON рядок
         creds_json = os.environ.get('GOOGLE_CREDENTIALS_JSON', '')
-        if creds_json:
-            import tempfile
-            tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
-            tmp.write(creds_json)
-            tmp.close()
-            creds_path = tmp.name
-        else:
-            print("⚠️ synonyms export: GOOGLE_CREDENTIALS_PATH або GOOGLE_CREDENTIALS_JSON не задано", flush=True)
+        if not creds_json:
+            print("⚠️ synonyms export: немає GOOGLE_CREDENTIALS_JSON", flush=True)
             return 0
+        import tempfile
+        tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
+        tmp.write(creds_json)
+        tmp.close()
+        creds_path = tmp.name
 
     creds  = Credentials.from_service_account_file(creds_path, scopes=scopes)
     client = gspread.authorize(creds)
@@ -252,49 +367,60 @@ def export_to_sheets(spreadsheet_id: str, credentials_path: str = None) -> int:
         header += [f'{i} пріоритет', 'код']
 
     rows = [header]
-
-    for ukey, variants in sorted(_SYNONYMS.items()):
-        # Сортуємо бренди по hits (спадаючий)
-        sorted_brands = sorted(variants.items(),
-                               key=lambda x: x[1].get('hits', 0), reverse=True)
+    for ukey, rec in sorted(_SYNONYMS.items()):
         row = [ukey]
-        for i, (brand, info) in enumerate(sorted_brands[:MAX_BRANDS]):
+        for _brand, info in _sorted_variants(rec)[:MAX_BRANDS]:
             row += [info.get('catalog_name', ''), info.get('code', '')]
-        # Доповнюємо порожніми якщо < MAX_BRANDS
         while len(row) < 1 + MAX_BRANDS * 2:
             row += ['', '']
         rows.append(row)
 
     sheet.clear()
-    sheet.update('A1', rows)
+    sheet.update(values=rows, range_name='A1')
     print(f"✅ Synonyms → Sheets: {len(rows)-1} рядків", flush=True)
     return len(rows) - 1
 
 
-# ─── Авто-наповнення зі confirmed кешу ──────────────────────────────────────
+# ─── Перебудова з кешу ───────────────────────────────────────────────────────
 
-def rebuild_from_cache(cache: dict) -> int:
+def rebuild_from_cache(cache: dict, client_caches: dict = None) -> dict:
     """
-    Одноразово перебудовує synonyms.json з існуючого кешу бота.
-    Викликати вручну через /synonyms_rebuild (адмін-команда).
+    Повністю перебудовує довідник з кешу бота (+ опційно клієнтських кешів).
+    Повертає статистику.
+    """
+    global _SYNONYMS
+    _SYNONYMS = {}
 
-    Повертає кількість доданих записів.
-    """
-    added = 0
+    seen = 0
     for key, entry in cache.items():
-        if entry.get('status') not in ('confirmed', 'auto'):
+        if entry.get('status') == 'banned':
             continue
         if entry.get('confidence', 0) < 90:
             continue
-        normalized   = entry.get('normalized', '')
         catalog_name = entry.get('catalog_name', '')
-        if not normalized or not catalog_name:
+        normalized   = entry.get('normalized', '') or key.split('::')[0]
+        if not catalog_name:
             continue
-        synonyms_add(normalized, catalog_name)
-        added += 1
-    print(f"✅ Synonyms rebuild: {added} записів", flush=True)
-    return added
+        synonyms_add(normalized, catalog_name,
+                     category=entry.get('category', ''), autosave=False)
+        seen += 1
+
+    for slug, ccache in (client_caches or {}).items():
+        for key, entry in ccache.items():
+            if entry.get('status') == 'banned':
+                continue
+            catalog_name = entry.get('catalog_name', '')
+            if not catalog_name:
+                continue
+            synonyms_add(key.split('::')[0], catalog_name,
+                         category=entry.get('category', ''), autosave=False)
+            seen += 1
+
+    _save()
+    st = get_synonyms_stats()
+    print(f"✅ Synonyms rebuild: {seen} записів → {st['universal_keys']} універсальних назв",
+          flush=True)
+    return {'processed': seen, **st}
 
 
-# ─── Ініціалізація ───────────────────────────────────────────────────────────
 _load()
