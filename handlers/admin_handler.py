@@ -95,6 +95,42 @@ def register(bot, state: dict):
             bot.answer_callback_query(call.id, f"Видалено {n} авто-записів")
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id)
 
+    # ── Таблиця схожих товарів (synonyms) ──────────────────────────────────────
+    @bot.message_handler(commands=['synonyms', 'схожі'])
+    def cmd_synonyms(message):
+        if message.chat.id != ADMIN_ID: return
+        from synonyms import get_synonyms_stats, rebuild_from_cache
+        from clients.cache import get_cache
+        stats = get_synonyms_stats()
+        text = (
+            f"📖 *Таблиця схожих товарів*\n"
+            f"Universal keys: {stats['universal_keys']}\n"
+            f"Всього записів: {stats['total_entries']}\n"
+            f"З кількома брендами: {stats['multi_brand']}\n\n"
+            f"Команди:\n"
+            "/synonyms_rebuild — перебудувати з кешу\n"
+            "/synonyms_export — експорт у Google Sheets"
+        )
+        bot.reply_to(message, text, parse_mode="Markdown")
+
+    @bot.message_handler(commands=['synonyms_rebuild'])
+    def cmd_synonyms_rebuild(message):
+        if message.chat.id != ADMIN_ID: return
+        from synonyms import rebuild_from_cache
+        from clients.cache import get_cache
+        n = rebuild_from_cache(get_cache())
+        bot.reply_to(message, f"✅ Synonyms rebuild: {n} записів")
+
+    @bot.message_handler(commands=['synonyms_export'])
+    def cmd_synonyms_export(message):
+        if message.chat.id != ADMIN_ID: return
+        SHEET_ID = os.environ.get('SYNONYMS_SHEET_ID', '')
+        if not SHEET_ID:
+            bot.reply_to(message, "⚠️ SYNONYMS_SHEET_ID не задано в env"); return
+        from synonyms import export_to_sheets
+        n = export_to_sheets(SHEET_ID)
+        bot.reply_to(message, f"✅ Експортовано {n} рядків у Google Sheets")
+
     # ── Словник синонімів ──────────────────────────────────────────────────────
     @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('словник', '📖 словник'))
     def kb_synonym(message):
