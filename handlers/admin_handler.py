@@ -114,8 +114,7 @@ def register(bot, state: dict):
         )
         bot.reply_to(message, text, parse_mode="Markdown")
 
-    @bot.message_handler(commands=['synonyms_rebuild'],
-                          func=lambda m: m.text in ('🔄 Схожі: rebuild',) or m.text == '/synonyms_rebuild')
+    @bot.message_handler(commands=['synonyms_rebuild'])
     def cmd_synonyms_rebuild(message):
         if message.chat.id != ADMIN_ID: return
         status = bot.reply_to(message, "⏳ Перебудовую synonyms з кешу...")
