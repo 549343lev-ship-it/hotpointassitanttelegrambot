@@ -196,6 +196,13 @@ def cache_save(original: str, brand_map: dict, normalized: str,
         "saved_at":     _today(),
     }
     _save_cache()
+    # ── Synonyms: накопичуємо тільки впевнені авто-записи ─────────────────────
+    if confidence >= 97:
+        try:
+            from synonyms import synonyms_add
+            synonyms_add(normalized, catalog_name)
+        except Exception:
+            pass
 
 
 def cache_confirm(original: str, brand_map: dict, normalized: str,
@@ -212,6 +219,12 @@ def cache_confirm(original: str, brand_map: dict, normalized: str,
         "saved_at":     _today(),
     }
     _save_cache()
+    # ── Synonyms: накопичуємо universal_key → варіанти по брендах ─────────────
+    try:
+        from synonyms import synonyms_add
+        synonyms_add(normalized, catalog_name)
+    except Exception:
+        pass
 
 
 def cache_set_status(original: str, catalog_name: str, status: str) -> bool:   # встановлює статус (confirmed/banned) для пари оригінал→товар; повертає True якщо знайдено
@@ -286,77 +299,6 @@ def cache_cleanup_expired() -> int:     # видаляє всі простроч
         _save_cache()
         print(f"🧹 Кеш: видалено {len(to_delete)} прострочених записів")
     return len(to_delete)
-
-
-def cache_learn_bulk(pairs: list[dict], source: str = "training") -> dict:
-    """
-    Масове навчання ГЛОБАЛЬНОГО кешу бота (для всіх клієнтів одразу).
-
-    pairs: [{'original': '...', 'catalog_name': '...', 'category': '...'}, ...]
-    source: training (з фото+рахунок) | manual (адмін вручну) | import (з Excel)
-
-    Записи зберігаються як confirmed → безстрокові, у пошуку мають найвищий пріоритет.
-    Забанені адміном пари НЕ перезаписуються.
-    Один запис на диск замість N — тому bulk, а не цикл з cache_confirm.
-
-    Повертає {'saved': n, 'skipped_banned': n, 'skipped_empty': n, 'updated': n}
-    """
-    saved = updated = skipped_banned = skipped_empty = 0
-
-    for p in pairs:
-        original     = str(p.get('original') or '').strip()
-        catalog_name = str(p.get('catalog_name') or '').strip()
-        category     = str(p.get('category') or 'other').strip() or 'other'
-        normalized   = str(p.get('normalized') or catalog_name).strip()
-
-        if not original or not catalog_name:
-            skipped_empty += 1
-            continue
-
-        key      = _cache_key(original, {})
-        existing = _CACHE.get(key)
-
-        if existing and existing.get('status') == 'banned':
-            skipped_banned += 1      # рішення адміна головніше за навчання
-            continue
-
-        if existing:
-            updated += 1
-        else:
-            saved += 1
-
-        _CACHE[key] = {
-            "normalized":   normalized,
-            "catalog_name": catalog_name,
-            "category":     category,
-            "confidence":   100,
-            "status":       "confirmed",
-            "source":       source,
-            "saved_at":     _today(),
-        }
-
-    if saved or updated:
-        _save_cache()
-
-    return {'saved': saved, 'updated': updated,
-            'skipped_banned': skipped_banned, 'skipped_empty': skipped_empty}
-
-
-def get_learned_stats() -> dict:    # розподіл записів кешу за джерелом (auto/training/manual/client/import)
-    by_source: dict = {}
-    for e in _CACHE.values():
-        src = e.get('source', 'auto')
-        by_source[src] = by_source.get(src, 0) + 1
-    return by_source
-
-
-def cache_forget_source(source: str) -> int:    # видаляє всі записи заданого джерела (напр. відкат невдалого навчання)
-    keys = [k for k, e in _CACHE.items() if e.get('source') == source]
-    for k in keys:
-        del _CACHE[k]
-    if keys:
-        _save_cache()
-    return len(keys)
 
 
 def get_cache_stats() -> dict:  # повертає словник зі статистикою кешу (total, auto, confirmed, banned, expired)
