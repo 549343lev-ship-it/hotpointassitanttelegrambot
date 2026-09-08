@@ -80,6 +80,12 @@ _BRANDS = [
     ('navin',      [r'navin']),
     ('teploizol',  [r'теплоізол']),
     ('general fittings', [r'general\s*fittings?']),
+    # бренди з DEFAULT_BRAND_PRIORITY яких бракувало
+    ('lider',      [r'(?<![a-z])lider(?![a-z])', r'лідер']),
+    ('ecosoft',    [r'ecosoft', r'екософт']),
+    ('ecostar',    [r'ecostar']),
+    ('walraven',   [r'walraven']),
+    ('gebo',       [r'(?<![a-z])gebo(?![a-z])']),
 ]
 
 # Маркери товарних ліній — прибираємо, бо вони брендозалежні
@@ -135,6 +141,50 @@ _COLORS = ['синій', 'синя', 'червоний', 'червона', 'сі
            'білий', 'біла', 'біле', 'чорний', 'хром', 'нікель', 'оц']
 
 _SYNONYMS: dict = {}
+_CATALOG_IDX: dict | None = None   # {name.lower(): {'code':..., 'category':...}}
+
+
+def _catalog_index() -> dict:
+    """Лінивий індекс каталогу: назва товару → артикул + категорія."""
+    global _CATALOG_IDX
+    if _CATALOG_IDX is not None:
+        return _CATALOG_IDX
+    _CATALOG_IDX = {}
+    try:
+        try:
+            from catalog.catalog import CATALOG
+        except Exception:
+            from catalog import CATALOG
+        for it in CATALOG:
+            meta = {
+                'code':     it.get('artikul', '') or '',
+                'category': it.get('category', '') or '',
+            }
+            for field in ('name', 'name_full'):
+                nm = (it.get(field) or '').strip().lower()
+                if nm:
+                    _CATALOG_IDX.setdefault(nm, meta)
+                    ck = canonical(nm)
+                    if ck:
+                        _CATALOG_IDX.setdefault('~' + ck, meta)   # ~ = канонічний ключ
+        print(f"📇 Synonyms: індекс каталогу {len(_CATALOG_IDX)} ключів", flush=True)
+    except Exception as e:
+        print(f"⚠️ synonyms: каталог недоступний ({e}) — коди будуть порожні", flush=True)
+    return _CATALOG_IDX
+
+
+def _catalog_meta(catalog_name: str) -> dict:
+    """Артикул і категорія товару за назвою з каталогу."""
+    idx = _catalog_index()
+    if not idx:
+        return {}
+    nm = (catalog_name or '').strip().lower()
+    hit = idx.get(nm) or idx.get(re.sub(r'\s+', ' ', nm))
+    if hit:
+        return hit
+    # запасний варіант: збіг за канонічною формою
+    ck = canonical(catalog_name)
+    return idx.get('~' + ck, {}) if ck else {}
 
 
 # ─── Канонізація ─────────────────────────────────────────────────────────────
@@ -160,6 +210,7 @@ def canonical(name: str) -> str:
     s = s.replace('x', 'х').replace('×', 'х')          # латинська x → кирилична
     s = re.sub(r'(\d),(\d)', r'\1.\2', s)              # 1,8 → 1.8
     s = re.sub(r'87\.5(?=\s*°|\s|$)', '87', s)         # 87,5° = 87°
+    s = re.sub(r'(\d)\.0(?!\d)', r'\1', s)             # 1.0 → 1, L=0.50 → L=0.5
     s = re.sub(r'\bф\s*', 'ф', s)                      # "ф 22" → "ф22"
     s = re.sub(r'\bl\s*=\s*', 'l=', s)                 # "L = 0.5" → "l=0.5"
     s = re.sub(r'\bdn\s*', 'dn', s)
@@ -244,6 +295,13 @@ def synonyms_add(normalized: str, catalog_name: str,
     brand = _detect_brand(catalog_name)
     today = time.strftime('%Y-%m-%d')
 
+    # Артикул і категорія — з каталогу, якщо не передані явно
+    meta = _catalog_meta(catalog_name)
+    if not code:
+        code = meta.get('code', '')
+    if not category:
+        category = meta.get('category', '')
+
     rec = _SYNONYMS.setdefault(ukey, {
         'variants': {}, 'aliases': [], 'category': category,
         'attrs': _parse_attrs(catalog_name),
@@ -257,6 +315,8 @@ def synonyms_add(normalized: str, catalog_name: str,
         v['last_seen'] = today
         if code and not v.get('code'):
             v['code'] = str(code)
+    elif v and code and not v.get('code'):
+        v['code'] = str(code)
     else:
         rec['variants'][brand] = {
             'catalog_name': catalog_name,
@@ -311,16 +371,51 @@ def get_synonyms_stats() -> dict:
 
 # ─── Пріоритет брендів для експорту ──────────────────────────────────────────
 
-def _brand_order(category: str) -> list:
-    """Порядок брендів для категорії з DEFAULT_BRAND_PRIORITY."""
-    try:
-        from engine.search import DEFAULT_BRAND_PRIORITY
-    except Exception:
+# Локальна копія пріоритетів (щоб не тягнути важкий імпорт engine.search).
+# Має збігатися з DEFAULT_BRAND_PRIORITY у search.py.
+BRAND_PRIORITY = {
+    'sewage':                   ['asg', 'ostendorf'],
+    'plastic_ppr':              ['ekoplastik', 'asg', 'raftec'],
+    'shutoff_valves':           ['raftec'],
+    'adapters_reducers':        ['raftec'],
+    'filtration':               ['raftec', 'ecosoft'],
+    'radiators_radiatorsvalve': ['mirado', 'hidros', 'idmar'],
+    'pumps':                    ['lider', 'tatra', 'termojet'],
+    'insulation':               ['plm'],
+    'push_systems':             ['raftec', 'rehau'],
+    'metal_plastic':            ['raftec'],
+    'fasteners_sealants':       ['eco', 'raftec', 'walraven'],
+    'underfloor_heating':       ['raftec', 'plm'],
+    'heating':                  ['ekoplastik', 'raftec'],
+    'water_meters':             ['ecostar'],
+}
+
+_PRIORITY_SYNCED = False
+
+
+def _sync_priority_from_search() -> None:
+    """Одноразово підтягує DEFAULT_BRAND_PRIORITY із search.py, якщо доступний."""
+    global _PRIORITY_SYNCED
+    if _PRIORITY_SYNCED:
+        return
+    _PRIORITY_SYNCED = True
+    dbp = None
+    for mod in ('engine.search', 'search'):
         try:
-            from search import DEFAULT_BRAND_PRIORITY
+            dbp = __import__(mod, fromlist=['DEFAULT_BRAND_PRIORITY']).DEFAULT_BRAND_PRIORITY
+            break
         except Exception:
-            return []
-    return [tok[0].lower() for tok in DEFAULT_BRAND_PRIORITY.get(category, [])]
+            continue
+    if not dbp:
+        return
+    for cat, toks in dbp.items():
+        BRAND_PRIORITY[cat] = [t[0].lower() for t in toks]
+
+
+def _brand_order(category: str) -> list:
+    """Порядок брендів для категорії."""
+    _sync_priority_from_search()
+    return BRAND_PRIORITY.get(category, [])
 
 
 def _sorted_variants(rec: dict) -> list:
