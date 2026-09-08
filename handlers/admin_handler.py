@@ -113,13 +113,24 @@ def register(bot, state: dict):
         )
         bot.reply_to(message, text, parse_mode="Markdown")
 
-    @bot.message_handler(commands=['synonyms_rebuild'])
+    @bot.message_handler(commands=['synonyms_rebuild'],
+                          func=lambda m: m.text in ('🔄 Схожі: rebuild',) or m.text == '/synonyms_rebuild')
     def cmd_synonyms_rebuild(message):
         if message.chat.id != ADMIN_ID: return
-        from synonyms import rebuild_from_cache
-        from clients.cache import get_cache
-        n = rebuild_from_cache(get_cache())
-        bot.reply_to(message, f"✅ Synonyms rebuild: {n} записів")
+        status = bot.reply_to(message, "⏳ Перебудовую synonyms з кешу...")
+        try:
+            from synonyms import rebuild_from_cache
+            from clients.cache import get_cache
+            n = rebuild_from_cache(get_cache())
+            bot.edit_message_text(f"✅ Synonyms rebuild: {n} записів додано",
+                                  status.chat.id, status.message_id)
+        except Exception as e:
+            bot.edit_message_text(f"❌ Помилка: {e}", status.chat.id, status.message_id)
+
+    @bot.message_handler(func=lambda m: m.text == '🔄 Схожі: rebuild')
+    def btn_synonyms_rebuild(message):
+        if message.chat.id != ADMIN_ID: return
+        cmd_synonyms_rebuild(message)
 
     @bot.message_handler(commands=['synonyms_export'])
     def cmd_synonyms_export(message):
@@ -127,9 +138,19 @@ def register(bot, state: dict):
         SHEET_ID = os.environ.get('SYNONYMS_SHEET_ID', '')
         if not SHEET_ID:
             bot.reply_to(message, "⚠️ SYNONYMS_SHEET_ID не задано в env"); return
-        from synonyms import export_to_sheets
-        n = export_to_sheets(SHEET_ID)
-        bot.reply_to(message, f"✅ Експортовано {n} рядків у Google Sheets")
+        status = bot.reply_to(message, "⏳ Експортую в Google Sheets...")
+        try:
+            from synonyms import export_to_sheets
+            n = export_to_sheets(SHEET_ID)
+            bot.edit_message_text(f"✅ Експортовано {n} рядків у Google Sheets",
+                                  status.chat.id, status.message_id)
+        except Exception as e:
+            bot.edit_message_text(f"❌ Помилка: {e}", status.chat.id, status.message_id)
+
+    @bot.message_handler(func=lambda m: m.text == '📤 Схожі: export')
+    def btn_synonyms_export(message):
+        if message.chat.id != ADMIN_ID: return
+        cmd_synonyms_export(message)
 
     # ── Словник синонімів ──────────────────────────────────────────────────────
     @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('словник', '📖 словник'))
