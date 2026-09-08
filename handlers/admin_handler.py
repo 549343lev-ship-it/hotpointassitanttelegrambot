@@ -127,7 +127,8 @@ def register(bot, state: dict):
                 f"✅ Оброблено {r['processed']} записів кешу\n"
                 f"→ {r['universal_keys']} універсальних назв\n"
                 f"→ {r['multi_brand']} з кількома брендами\n"
-                f"→ {r['aliases']} формулювань",
+                f"→ {r['aliases']} формулювань\n"
+                f"→ +{r.get('added_variants', 0)} аналогів з каталогу",
                 status.chat.id, status.message_id)
         except Exception as e:
             bot.edit_message_text(f"❌ Помилка: {e}", status.chat.id, status.message_id)
@@ -151,6 +152,25 @@ def register(bot, state: dict):
                                   status.chat.id, status.message_id)
         except Exception as e:
             bot.edit_message_text(f"❌ Помилка: {e}", status.chat.id, status.message_id)
+
+    @bot.message_handler(commands=['synonyms_enrich'])
+    def cmd_synonyms_enrich(message):
+        if message.chat.id != ADMIN_ID: return
+        status = bot.reply_to(message, "⏳ Шукаю аналоги в каталозі...")
+        try:
+            from engine.synonyms import enrich_from_catalog
+            r = enrich_from_catalog()
+            bot.edit_message_text(
+                f"✅ Додано {r['added_variants']} аналогів "
+                f"у {r['enriched_keys']} універсальних назвах",
+                status.chat.id, status.message_id)
+        except Exception as e:
+            bot.edit_message_text(f"❌ Помилка: {e}", status.chat.id, status.message_id)
+
+    @bot.message_handler(func=lambda m: m.text == '🧩 Схожі: аналоги')
+    def btn_synonyms_enrich(message):
+        if message.chat.id != ADMIN_ID: return
+        cmd_synonyms_enrich(message)
 
     @bot.message_handler(func=lambda m: m.text == '📤 Схожі: export')
     def btn_synonyms_export(message):
