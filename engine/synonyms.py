@@ -46,10 +46,19 @@ MAX_ALIASES = 20   # скільки формулювань зберігати н
 
 _BRANDS = [
     ('ekoplastik', [r'ekoplastik']),
-    ('raftec',     [r'raftec']),
+    # лінійки RAFTEC — окремі суб-бренди (різна якість/ціна), тому
+    # в ключі вони прибираються як серія, а тут дають окрему колонку
+    ('raftec gold',   [r'raftec\s*gold']),
+    ('raftec black',  [r'raftec\s*black']),
+    ('raftec steel',  [r'raftec\s*steel']),
+    ('raftec brass',  [r'raftec\s*brass']),
+    ('raftec silver', [r'raftec\s*silver']),
+    ('raftec',     [r'rafte[cс]']),   # 'с' може бути кириличною (помилка прайсу)
     ('asg',        [r'(?<![a-z])asg(?![a-z])']),
     ('ostendorf',  [r'ostendorf']),
-    ('fv plast',   [r'fv\s*plast']),
+    ('fv plast',   [r'fv\s*plast', r'(?<![a-z])fv(?![a-z])']),
+    ('plm strong', [r'plm\s*strong']),
+    ('plm base',   [r'plm\s*base']),
     ('plm',        [r'(?<![a-z])plm(?![a-z])']),
     ('eco',        [r'(?<![a-z])eco(?![a-z])']),
     ('rehau',      [r'rehau']),
@@ -86,12 +95,129 @@ _BRANDS = [
     ('ecostar',    [r'ecostar']),
     ('walraven',   [r'walraven']),
     ('gebo',       [r'(?<![a-z])gebo(?![a-z])']),
+    # ── розширений реєстр (витягнутий з каталогу) ────────────────────────────
+    # Радіатори / опалення
+    ('korado',     [r'korado']),
+    ('kermi',      [r'kermi']),
+    ('korad',      [r'(?<![a-z])korad(?![a-z])']),
+    ('vogel noot', [r'vogel\s*&?\s*noot']),
+    ('global',     [r'(?<![a-z])global(?![a-z])']),
+    ('altep',      [r'altep']),
+    ('mirater',    [r'mirater']),
+    ('deffi',      [r'deffi']),
+    ('термобар',   [r'термобар']),
+    # Котли / бойлери / водонагрівачі
+    ('ariston',    [r'ariston']),
+    ('tesy',       [r'(?<![a-z])tesy(?![a-z])']),
+    ('drazice',    [r'drazi[cс]e']),
+    ('bosch',      [r'(?<![a-z])bosch(?![a-z])']),
+    ('atlantic',   [r'atlantic']),
+    ('viessmann',  [r'viessmann']),
+    ('protherm',   [r'protherm']),
+    ('baxi',       [r'(?<![a-z])baxi(?![a-z])']),
+    ('hitherm',    [r'hi\s*therm']),
+    ('kospel',     [r'kospel']),
+    ('тенко',      [r'тенко']),
+    ('дтм',        [r'(?<![а-яіїєґ])дтм(?![а-яіїєґ])']),
+    ('aton',       [r'(?<![a-z])aton(?![a-z])']),
+    ('italtherm',  [r'italtherm']),
+    ('nova florida',[r'nova\s*florida']),
+    ('thermo alliance',[r'thermo\s*alliance']),
+    ('eldom',      [r'eldom']),
+    ('gorenje',    [r'gorenje|tiki']),
+    # Насоси
+    ('pedrollo',   [r'pedrollo']),
+    ('dab',        [r'(?<![a-z])dab(?![a-z])']),
+    ('sprut',      [r'sprut']),
+    ('optima',     [r'(?<![a-z])optima(?![a-z])']),
+    ('euroaqua',   [r'euroaqua']),
+    # Сантехніка / змішувачі
+    ('volle',      [r'volle']),
+    ('qtap',       [r'q\s*tap']),
+    ('cersanit',   [r'cersanit']),
+    ('franke',     [r'franke|тека|teka']),
+    ('fancy marble',[r'fancy\s*marble']),
+    ('miraggio',   [r'miraggio']),
+    ('globus lux', [r'globus\s*lux']),
+    ('lidz',       [r'(?<![a-z])lidz(?![a-z])']),
+    ('koller pool',[r'koller\s*pool']),
+    ('kolo',       [r'(?<![a-z])kolo(?![a-z])']),
+    ('ravak',      [r'ravak']),
+    ('radaway',    [r'radaway']),
+    ('devit',      [r'devit']),
+    ('paffoni',    [r'paffoni']),
+    ('kludi',      [r'kludi']),
+    ('fabiano',    [r'fabiano']),
+    ('besco',      [r'besco']),
+    ('атем',       [r'(?<![а-яіїєґ])атем(?![а-яіїєґ])']),
+    ('adamant',    [r'adamant']),
+    ('kk pol',     [r'kk\s*pol']),
+    ('arte',       [r'(?<![a-z])arte(?![a-z])']),
+    ('liberta',    [r'liberta']),
+    ('moreli',     [r'moreli']),
+    ('epelli',     [r'epelli']),
+    ('trinnity',   [r'trinnity']),
+    ('waveglass',  [r'wave\s*glass']),
+    ('wellss',     [r'wells+']),
+    ('sd forte',   [r'sd\s*forte']),
+    # Труби / фітинги / арматура
+    ('узкм',       [r'(?<![а-яіїєґ])узкм(?![а-яіїєґ])']),
+    ('unidelta',   [r'unidelta']),
+    ('uponor',     [r'uponor']),
+    ('valtec',     [r'valtec']),
+    ('icma',       [r'(?<![a-z])icma(?![a-z])']),
+    ('luxor',      [r'(?<![a-z])luxor(?![a-z])']),
+    ('duker',      [r'd[uü]ker']),
+    ('aniplast',   [r'ani\s*plast']),
+    ('santehplast',[r'santeh\s*plast']),
+    ('solo plast', [r'solo\s*plast']),
+    ('інсталпласт',[r'інсталпласт|instalplast']),
+    ('polmark',    [r'polmark']),
+    ('kalde',      [r'kalde']),
+    ('ovi',        [r'(?<![a-z])ovi(?![a-z])|evci']),
+    ('candan',     [r'candan']),
+    ('viega',      [r'viega']),
+    ('sanha',      [r'sanha']),
+    ('herz',       [r'(?<![a-z])herz(?![a-z])']),
+    ('flamco',     [r'flamco']),
+    ('salus',      [r'salus']),
+    ('tega',       [r'(?<![a-z])tega(?![a-z])']),
+    ('easyfloor',  [r'easy\s*floor']),
+    ('heat-pex',   [r'heat-?pex']),
+    ('aquapex',    [r'aquapex']),
+    ('argo',       [r'(?<![a-z])argo(?![a-z])']),
+    ('fox',        [r'(?<![a-z])fox(?![a-z])']),
+    ('rens',       [r'(?<![a-z])rens(?![a-z])']),
+    ('terra teknik',[r'terra\s*teknik']),
+    ('venta',      [r'(?<![a-z])venta(?![a-z])']),
+    ('breeze',     [r'breeze']),
+    ('weston',     [r'weston']),
+    ('gross',      [r'(?<![a-z])gross(?![a-z])']),
+    ('engel',      [r'(?<![a-z])engel(?![a-z])']),
+    ('маріо',      [r'(?<![а-яіїєґ])маріо(?![а-яіїєґ])|класік\s*маріо']),
+    ('водолій',    [r'водолій']),
+    ('еверест',    [r'еверест']),
+    # Ізоляція
+    ('k-flex',     [r'k-?flex']),
+    ('thermaflex', [r'thermaflex']),
+    ('ecoflex',    [r'ecoflex']),
+    ('теплоізол',  [r'теплоізол']),
+    # Фільтрація
+    ('atlas filtri',[r'atlas\s*filtri']),
+    ('bwt',        [r'(?<![a-z])bwt(?![a-z])']),
+    ('нова вода',  [r'нова\s*вода']),
+    ('filtrons',   [r'filtrons']),
+    ('fil-nox',    [r'fil-?nox']),
+    ('topaz',      [r'topaz']),
+    ('aquastream', [r'aqua\s*stream']),
+    ('ajax',       [r'(?<![a-z])ajax(?![a-z])']),
+    ('kvado',      [r'kvado']),
 ]
 
 # Маркери товарних ліній — прибираємо, бо вони брендозалежні
 _SERIES = [
     r'pp-?rct', r'ht\s*safe', r'(?<![a-z])htr(?![a-z])', r'kg\s*2000',
-    r'(?<![a-z])(black|gold|steel|brass|silver|white)(\s+block)?(?![a-z])',
+    r'rafte[cс]\s*(black|gold|brass|steel|silver)(\s+block)?',   # лінійки RAFTEC лише у зв'язці
     r'(?<![a-z])profi(?![a-z])', r'rautitan', r'raubasic', r'aquapex',
     r'heat-?pex', r'lizoflex(\s+stabil)?(\s+red)?', r'k-?flex',
     r'unigarn', r'glidex', r'sanitary\s+silicone', r'extra(?![a-z])',
@@ -141,6 +267,72 @@ _COLORS = ['синій', 'синя', 'червоний', 'червона', 'сі
            'білий', 'біла', 'біле', 'чорний', 'хром', 'нікель', 'оц']
 
 _SYNONYMS: dict = {}
+
+# ─── Правила канонізації по категоріях (synonym_rules.json) ──────────────────
+
+RULES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'synonym_rules.json')
+_RULES: dict | None = None
+
+
+def _rules() -> dict:
+    """Лінива загрузка synonym_rules.json (правила поруч із модулем)."""
+    global _RULES
+    if _RULES is not None:
+        return _RULES
+    _RULES = {}
+    for path in (RULES_FILE, os.path.join(DATA_DIR, 'synonym_rules.json')):
+        if os.path.exists(path):
+            try:
+                with open(path, encoding='utf-8') as f:
+                    _RULES = json.load(f)
+                n = sum(len(v.get('rules', [])) for k, v in _RULES.items()
+                        if isinstance(v, dict))
+                print(f"📐 Synonyms: правил канонізації {n}", flush=True)
+                break
+            except Exception as e:
+                print(f"⚠️ synonym_rules.json: {e}", flush=True)
+    return _RULES
+
+
+def reload_rules() -> int:
+    """Перечитує правила з диска (після ручного редагування)."""
+    global _RULES
+    _RULES = None
+    r = _rules()
+    return sum(len(v.get('rules', [])) for v in r.values() if isinstance(v, dict))
+
+
+def _apply_rules(s: str, category: str) -> str:
+    """Застосовує drop/map правила категорії до канонізованого рядка."""
+    rules = _rules()
+    if not rules:
+        return s
+    chain = list((rules.get('_common', {}) or {}).get('rules', []))
+    chain += list((rules.get(category, {}) or {}).get('rules', []))
+    for r in chain:
+        try:
+            if r.get('when')   and not re.search(r['when'], s):   continue
+            if r.get('unless') and     re.search(r['unless'], s): continue
+            for d in r.get('drop', []):
+                s = re.sub(d, ' ', s)
+            for a, b in (r.get('map') or {}).items():
+                s = re.sub(a, b, s)
+        except re.error:
+            continue
+    return re.sub(r'\s+', ' ', s).strip()
+
+
+def detect_family(s: str, category: str) -> str:
+    """Мітка групи товару (читабельна, на підбір не впливає)."""
+    for f in ((_rules().get(category, {}) or {}).get('family', [])):
+        try:
+            if re.search(f['match'], s):
+                return f['label']
+        except re.error:
+            continue
+    return ''
+
+
 _CATALOG_IDX: dict | None = None   # {name.lower(): {'code':..., 'category':...}}
 
 
@@ -164,7 +356,7 @@ def _catalog_index() -> dict:
                 nm = (it.get(field) or '').strip().lower()
                 if nm:
                     _CATALOG_IDX.setdefault(nm, meta)
-                    ck = canonical(nm)
+                    ck = canonical(nm)  # без категорії: сирий ключ
                     if ck:
                         _CATALOG_IDX.setdefault('~' + ck, meta)   # ~ = канонічний ключ
         print(f"📇 Synonyms: індекс каталогу {len(_CATALOG_IDX)} ключів", flush=True)
@@ -189,7 +381,7 @@ def _catalog_meta(catalog_name: str) -> dict:
 
 # ─── Канонізація ─────────────────────────────────────────────────────────────
 
-def canonical(name: str) -> str:
+def canonical(name: str, category: str = '') -> str:
     """
     catalog_name → канонічний brand-агностичний ключ.
 
@@ -199,8 +391,8 @@ def canonical(name: str) -> str:
     """
     s = (name or '').lower()
 
+    s = _SERIES_RE.sub(' ', s)   # серії першими: деякі прив'язані до назви бренду
     s = _BRAND_RE.sub(' ', s)
-    s = _SERIES_RE.sub(' ', s)
 
     for pat, repl in _LOOKALIKE:
         s = re.sub(pat, repl, s)
@@ -219,6 +411,8 @@ def canonical(name: str) -> str:
     s = re.sub(r'[°"\'`,;:()\[\]]+', ' ', s)
     s = re.sub(r'\s*/\s*', '/', s)
     s = re.sub(r'\s+', ' ', s).strip()
+    if category:
+        s = _apply_rules(s, category)
     return s
 
 
@@ -262,7 +456,8 @@ def _load():
             if isinstance(v, dict) and 'variants' in v:
                 migrated[k] = v
             elif isinstance(v, dict):
-                migrated[k] = {'variants': v, 'aliases': [], 'category': '', 'attrs': {}}
+                migrated[k] = {'variants': v, 'aliases': [], 'category': '',
+                               'family': '', 'attrs': {}}
         _SYNONYMS = migrated
         print(f"📖 Synonyms: {len(_SYNONYMS)} універсальних назв", flush=True)
     except Exception as e:
@@ -281,7 +476,8 @@ def _save():
 # ─── Публічний API ───────────────────────────────────────────────────────────
 
 def synonyms_add(normalized: str, catalog_name: str,
-                 code: str = '', category: str = '', autosave: bool = True) -> str:
+                 code: str = '', category: str = '', autosave: bool = True,
+                 lookup_catalog: bool = False) -> str:
     """
     Додає підбір у довідник. Ключ — з catalog_name, фраза менеджера йде в aliases.
     Повертає universal_key.
@@ -289,25 +485,31 @@ def synonyms_add(normalized: str, catalog_name: str,
     if not catalog_name or not catalog_name.strip():
         return ''
 
-    ukey  = canonical(catalog_name)
+    # Каталог на гарячому шляху НЕ чіпаємо: побудова індексу займає ~14 с
+    # і заблокувала б обробку замовлення менеджера. Категорію передає cache.py,
+    # коди дозаповнює enrich_from_catalog() (адмінська операція).
+    if lookup_catalog:
+        meta = _catalog_meta(catalog_name)
+        if not code:
+            code = meta.get('code', '')
+        if not category:
+            category = meta.get('category', '')
+
+    ukey  = canonical(catalog_name, category)
     if not ukey:
         return ''
     brand = _detect_brand(catalog_name)
     today = time.strftime('%Y-%m-%d')
 
-    # Артикул і категорія — з каталогу, якщо не передані явно
-    meta = _catalog_meta(catalog_name)
-    if not code:
-        code = meta.get('code', '')
-    if not category:
-        category = meta.get('category', '')
-
     rec = _SYNONYMS.setdefault(ukey, {
         'variants': {}, 'aliases': [], 'category': category,
+        'family': detect_family(ukey, category),
         'attrs': _parse_attrs(catalog_name),
     })
     if category and not rec.get('category'):
         rec['category'] = category
+    if not rec.get('family'):
+        rec['family'] = detect_family(ukey, rec.get('category', ''))
 
     v = rec['variants'].get(brand)
     if v and v.get('catalog_name') == catalog_name:
@@ -361,11 +563,13 @@ def get_synonyms_stats() -> dict:
     total_entries = sum(len(r.get('variants', {})) for r in _SYNONYMS.values())
     multi_brand   = sum(1 for r in _SYNONYMS.values() if len(r.get('variants', {})) > 1)
     total_aliases = sum(len(r.get('aliases', [])) for r in _SYNONYMS.values())
+    families      = len({r.get('family') for r in _SYNONYMS.values() if r.get('family')})
     return {
         'universal_keys': total_keys,
         'total_entries':  total_entries,
         'multi_brand':    multi_brand,
         'aliases':        total_aliases,
+        'families':       families,
     }
 
 
@@ -389,7 +593,7 @@ def _catalog_groups() -> dict:
             nm = (it.get('name') or '').strip()
             if not nm:
                 continue
-            ck = canonical(nm)
+            ck = canonical(nm, it.get('category', ''))
             if not ck:
                 continue
             brand = _detect_brand(nm)
@@ -442,6 +646,8 @@ def enrich_from_catalog(autosave: bool = True) -> dict:
             touched = True
         if not rec.get('category'):
             rec['category'] = next(iter(g.values())).get('category', '')
+        if not rec.get('family'):
+            rec['family'] = detect_family(ukey, rec.get('category', ''))
         if touched:
             enriched += 1
 
@@ -539,16 +745,18 @@ def export_to_sheets(spreadsheet_id: str, credentials_path: str = None) -> int:
     sheet  = client.open_by_key(spreadsheet_id).sheet1
 
     MAX_BRANDS = 5
-    header = ['універсальна назва']
+    header = ['група', 'універсальна назва']
     for i in range(1, MAX_BRANDS + 1):
         header += [f'{i} пріоритет', 'код']
 
     rows = [header]
-    for ukey, rec in sorted(_SYNONYMS.items()):
-        row = [ukey]
+    # сортуємо за групою, потім за назвою — однотипні товари поруч
+    for ukey, rec in sorted(_SYNONYMS.items(),
+                            key=lambda x: (x[1].get('family', '') or 'яяя', x[0])):
+        row = [rec.get('family', ''), ukey]
         for _brand, info in _sorted_variants(rec)[:MAX_BRANDS]:
             row += [info.get('catalog_name', ''), info.get('code', '')]
-        while len(row) < 1 + MAX_BRANDS * 2:
+        while len(row) < 2 + MAX_BRANDS * 2:
             row += ['', '']
         rows.append(row)
 
@@ -579,7 +787,8 @@ def rebuild_from_cache(cache: dict, client_caches: dict = None) -> dict:
         if not catalog_name:
             continue
         synonyms_add(normalized, catalog_name,
-                     category=entry.get('category', ''), autosave=False)
+                     category=entry.get('category', ''), autosave=False,
+                     lookup_catalog=True)
         seen += 1
 
     for slug, ccache in (client_caches or {}).items():
@@ -590,7 +799,8 @@ def rebuild_from_cache(cache: dict, client_caches: dict = None) -> dict:
             if not catalog_name:
                 continue
             synonyms_add(key.split('::')[0], catalog_name,
-                         category=entry.get('category', ''), autosave=False)
+                         category=entry.get('category', ''), autosave=False,
+                         lookup_catalog=True)
             seen += 1
 
     enr = enrich_from_catalog(autosave=False)
