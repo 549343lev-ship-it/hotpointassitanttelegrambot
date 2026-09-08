@@ -369,6 +369,88 @@ def get_synonyms_stats() -> dict:
     }
 
 
+# ─── Збагачення аналогами з каталогу ─────────────────────────────────────────
+
+_CATALOG_GROUPS: dict | None = None
+
+
+def _catalog_groups() -> dict:
+    """Лінива група каталогу: canonical(name) → {brand: {catalog_name, code, category}}."""
+    global _CATALOG_GROUPS
+    if _CATALOG_GROUPS is not None:
+        return _CATALOG_GROUPS
+    _CATALOG_GROUPS = {}
+    try:
+        try:
+            from catalog.catalog import CATALOG
+        except Exception:
+            from catalog import CATALOG
+        for it in CATALOG:
+            nm = (it.get('name') or '').strip()
+            if not nm:
+                continue
+            ck = canonical(nm)
+            if not ck:
+                continue
+            brand = _detect_brand(nm)
+            if brand == '_other':
+                continue
+            g = _CATALOG_GROUPS.setdefault(ck, {})
+            if brand not in g:
+                g[brand] = {
+                    'catalog_name': nm,
+                    'code':         it.get('artikul', '') or '',
+                    'category':     it.get('category', '') or '',
+                }
+        multi = sum(1 for v in _CATALOG_GROUPS.values() if len(v) > 1)
+        print(f"📇 Synonyms: груп каталогу {len(_CATALOG_GROUPS)} ({multi} з аналогами)", flush=True)
+    except Exception as e:
+        print(f"⚠️ synonyms: групи каталогу недоступні ({e})", flush=True)
+    return _CATALOG_GROUPS
+
+
+def enrich_from_catalog(autosave: bool = True) -> dict:
+    """
+    Дозаповнює кожну універсальну назву аналогами інших виробників з каталогу.
+    Варіанти з каталогу отримують hits=0 і source='catalog' — щоб відрізнити
+    від тих, що реально підбирались.
+    """
+    groups = _catalog_groups()
+    if not groups:
+        return {'enriched_keys': 0, 'added_variants': 0}
+
+    enriched = added = 0
+    for ukey, rec in _SYNONYMS.items():
+        g = groups.get(ukey)
+        if not g:
+            continue
+        touched = False
+        for brand, info in g.items():
+            if brand in rec['variants']:
+                # дозаповнюємо код, якщо його бракувало
+                if info['code'] and not rec['variants'][brand].get('code'):
+                    rec['variants'][brand]['code'] = info['code']
+                continue
+            rec['variants'][brand] = {
+                'catalog_name': info['catalog_name'],
+                'code':         info['code'],
+                'hits':         0,
+                'source':       'catalog',
+                'last_seen':    '',
+            }
+            added += 1
+            touched = True
+        if not rec.get('category'):
+            rec['category'] = next(iter(g.values())).get('category', '')
+        if touched:
+            enriched += 1
+
+    if autosave:
+        _save()
+    print(f"✅ Synonyms enrich: +{added} варіантів у {enriched} назвах", flush=True)
+    return {'enriched_keys': enriched, 'added_variants': added}
+
+
 # ─── Пріоритет брендів для експорту ──────────────────────────────────────────
 
 # Локальна копія пріоритетів (щоб не тягнути важкий імпорт engine.search).
@@ -511,11 +593,12 @@ def rebuild_from_cache(cache: dict, client_caches: dict = None) -> dict:
                          category=entry.get('category', ''), autosave=False)
             seen += 1
 
+    enr = enrich_from_catalog(autosave=False)
     _save()
     st = get_synonyms_stats()
     print(f"✅ Synonyms rebuild: {seen} записів → {st['universal_keys']} універсальних назв",
           flush=True)
-    return {'processed': seen, **st}
+    return {'processed': seen, **st, **enr}
 
 
 _load()
