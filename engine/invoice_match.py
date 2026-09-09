@@ -11,13 +11,11 @@ import threading
 from io import BytesIO
 from typing import Optional
 
-from openpyxl import Workbook
-from openpyxl.styles import PatternFill, Font, Alignment
+from openpyxl.styles import PatternFill
 from rapidfuzz import fuzz
 
-GREEN  = PatternFill('solid', fgColor='C6EFCE')
-YELLOW = PatternFill('solid', fgColor='FFF3B0')
 RED    = PatternFill('solid', fgColor='FFC7CE')
+YELLOW = PatternFill('solid', fgColor='FFF3B0')
 
 MATCH_THRESHOLD = 75
 
@@ -181,48 +179,78 @@ def parse_invoice_xlsx(data: bytes, ext: str = 'xlsx') -> list[dict]:
 # ─── Excel вивід ─────────────────────────────────────────────────────────────
 
 def build_match_excel(results: list[dict]) -> BytesIO:
-    # Використовуємо вже завантажений _catalog_ref (не імпортуємо повторно)
+    """Будує Excel у форматі ідентичному до звичайного замовлення."""
+    import pandas as pd
     cat = _catalog_ref
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Зіставлення"
+    rows, flags = [], []
 
-    headers = ['№', 'Назва в рахунку', 'Знайдено у нас', 'Артикул', 'Наша ціна', 'Схожість%']
-    ws.append(headers)
-    hfill = PatternFill('solid', fgColor='1F4E79')
-    for cell in ws[1]:
-        cell.fill      = hfill
-        cell.font      = Font(bold=True, color='FFFFFF')
-        cell.alignment = Alignment(horizontal='center')
+    for i, r in enumerate(results):
+        idx   = r.get('cat_idx', -1)
+        score = r.get('score', 0)
+        found = 0 <= idx < len(cat)
 
-    for r in results:
-        idx       = r.get('cat_idx', -1)
-        score     = r.get('score', 0)
-        found     = cat[idx]['name']                        if 0 <= idx < len(cat) else ''
-        artikul   = cat[idx].get('artikul', '')             if 0 <= idx < len(cat) else ''
-        our_price = cat[idx].get('price', 0)                if 0 <= idx < len(cat) else 0
-        price_str = f"{our_price:.2f}"                      if our_price else ''
+        if found:
+            item      = cat[idx]
+            artikul   = item.get('artikul', '')
+            name_full = item.get('name_full') or item.get('name', '')
+            price     = item.get('price', '')
+            score_str = f"🔍{score}%"
+            src       = '🔍 рахунок'
+            rows.append({
+                '№':            i + 1,
+                'Артикул':      artikul,
+                'Наименование': name_full,
+                'Кількість':    r.get('qty', ''),
+                'Од.':          '',
+                'Ціна':         price,
+                'Збіг':         score_str,
+                'Джерело':      src,
+                'Оригінал':     r.get('name', ''),
+            })
+            flags.append('warn' if score < 90 else '')
+        else:
+            rows.append({
+                '№':            i + 1,
+                'Артикул':      '',
+                'Наименование': '',
+                'Кількість':    r.get('qty', ''),
+                'Од.':          '',
+                'Ціна':         '',
+                'Збіг':         '—',
+                'Джерело':      '❓ НЕ ЗНАЙДЕНО',
+                'Оригінал':     r.get('name', ''),
+            })
+            flags.append('nf')
 
-        ws.append([r.get('n', ''), r.get('name', ''), found,
-                   artikul, price_str, score if found else ''])
+    output = BytesIO()
+    cols = ['№', 'Артикул', 'Наименование', 'Кількість', 'Од.',
+            'Ціна', 'Збіг', 'Джерело', 'Оригінал']
 
-        fill = GREEN if found and score >= 90 else (YELLOW if found else RED)
-        for cell in ws[ws.max_row]:
-            cell.fill      = fill
-            cell.alignment = Alignment(wrap_text=True)
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=cols)
+        df = df[cols]
+        df.to_excel(writer, index=False, sheet_name='Замовлення')
+        ws = writer.sheets['Замовлення']
 
-    ws.column_dimensions['A'].width = 5
-    ws.column_dimensions['B'].width = 52
-    ws.column_dimensions['C'].width = 52
-    ws.column_dimensions['D'].width = 14
-    ws.column_dimensions['E'].width = 12
-    ws.column_dimensions['F'].width = 11
+        ws.column_dimensions['A'].width = 4
+        ws.column_dimensions['B'].width = 12
+        ws.column_dimensions['C'].width = 55
+        ws.column_dimensions['D'].width = 10
+        ws.column_dimensions['E'].width = 6
+        ws.column_dimensions['F'].width = 10
+        ws.column_dimensions['G'].width = 10
+        ws.column_dimensions['H'].width = 14
+        ws.column_dimensions['I'].width = 52
 
-    buf = BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return buf
+        for i, fl in enumerate(flags, start=2):
+            fill = RED if fl == 'nf' else (YELLOW if fl == 'warn' else None)
+            if fill:
+                for cell in ws[i]:
+                    cell.fill = fill
+
+    output.seek(0)
+    return output
 
 
 # ─── Головна точка входу ─────────────────────────────────────────────────────
