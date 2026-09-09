@@ -11,12 +11,48 @@ from engine.search       import BRAND_TOKENS, CATEGORY_ALIASES
 GEMINI_KEY    = os.environ.get("GEMINI_KEY", "")
 gemini_client = genai_new.Client(api_key=GEMINI_KEY)
 try:
-    _GEMCFG = genai_types.GenerateContentConfig(temperature=0)
+    _GEMCFG = genai_types.GenerateContentConfig(
+        temperature=0,
+        max_output_tokens=65536,   # знімає дефолтний ліміт 8192 — критично для 50+ позицій
+    )
 except Exception:
     _GEMCFG = None
 
 DATA_DIR             = os.environ.get("DATA_DIR") or ("/var/data" if os.path.isdir("/var/data") else ".")
 OCR_CORRECTIONS_FILE = os.path.join(DATA_DIR, "ocr_corrections.json")
+
+def _extract_json(raw: str) -> list:
+    """Витягує JSON-масив з відповіді Gemini. Якщо обрізано — відновлює."""
+    raw = raw.strip().replace('```json', '').replace('```', '').strip()
+    start = raw.find('[')
+    if start == -1:
+        return []
+    # Знаходимо закриваючий ] що відповідає відкриваючому [
+    depth, end = 0, -1
+    for i, ch in enumerate(raw[start:], start):
+        if ch == '[':
+            depth += 1
+        elif ch == ']':
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    if end != -1:
+        try:
+            result = json.loads(raw[start:end])
+            if isinstance(result, list):
+                return result
+        except Exception:
+            pass
+    # JSON обрізаний — відновлюємо по окремих об'єктах
+    objects = []
+    for m in re.finditer(r'\{[^{}]*\}', raw[start:]):
+        try:
+            objects.append(json.loads(m.group()))
+        except Exception:
+            pass
+    return objects
+
 
 def _gemini_call(contents):
     kwargs = {"model": "gemini-2.5-flash", "contents": contents}
@@ -143,11 +179,10 @@ JSON масив ТІЛЬКИ:
             genai_types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
             genai_types.Part.from_text(text=prompt),
         ])
-        raw = resp.text.strip().replace('```json','').replace('```','').strip()
-        if '[' in raw and ']' in raw:
-            raw = raw[raw.index('['):raw.rindex(']')+1]
-        return json.loads(raw)
+        result = _extract_json(resp.text)
+        return result  # може бути [] якщо Gemini нічого не знайшов — це нормально
     except Exception as e:
+        print(f"⚠️ normalize_photo: {e}", flush=True)
         return [{"original": f"Помилка OCR: {e}", "normalized": "", "qty": ""}]
 
 def normalize_text(text: str, caption: str = "") -> list[dict]:
@@ -172,11 +207,10 @@ JSON масив ТІЛЬКИ:
 [{{"original":"...","normalized":"...","qty":"...","category":"...","type":"тип одним словом","dia":[25],"angle":null,"thread":"3/4 або null"}}]"""
     try:
         resp = _gemini_call([genai_types.Part.from_text(text=prompt)])
-        raw  = resp.text.strip().replace('```json','').replace('```','').strip()
-        if '[' in raw and ']' in raw:
-            raw = raw[raw.index('['):raw.rindex(']')+1]
-        return json.loads(raw)
+        result = _extract_json(resp.text)
+        return result
     except Exception as e:
+        print(f"⚠️ normalize_text: {e}", flush=True)
         return [{"original": text, "normalized": text, "qty": "", "category": "other"}]
 
 def normalize_pdf(pdf_b64: str, caption: str = "") -> list[dict]:
@@ -204,9 +238,8 @@ JSON масив ТІЛЬКИ:
             genai_types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
             genai_types.Part.from_text(text=prompt),
         ])
-        raw = resp.text.strip().replace('```json','').replace('```','').strip()
-        if '[' in raw and ']' in raw:
-            raw = raw[raw.index('['):raw.rindex(']')+1]
-        return json.loads(raw)
+        result = _extract_json(resp.text)
+        return result
     except Exception as e:
+        print(f"⚠️ normalize_pdf: {e}", flush=True)
         return [{"original": f"Помилка PDF: {e}", "normalized": "", "qty": "", "category": "other"}]
