@@ -63,14 +63,24 @@ def register(bot, state: dict):
                 state.get('_handle_learn_invoice', lambda m: None)(message)
                 return
 
-        doc  = message.document
-        mime = doc.mime_type or ''
+        doc   = message.document
+        mime  = doc.mime_type or ''
+        fname = doc.file_name or ''
+        ext   = fname.rsplit('.', 1)[-1].lower() if '.' in fname else ''
+
         is_image = mime in ('image/jpeg', 'image/png', 'image/webp')
         is_pdf   = mime == 'application/pdf'
+        is_excel = ext in ('xls', 'xlsx')
 
-        if not (is_image or is_pdf):
+        if not (is_image or is_pdf or is_excel):
             bot.reply_to(message, "⚠️ Надсилай фото або PDF."); return
 
+        # PDF або Excel — питаємо: рахунок чи замовлення
+        if is_pdf or is_excel:
+            _ask_invoice_mode(message, bot, state)
+            return
+
+        # Зображення — звичайний флоу
         for attempt in range(3):
             try:
                 file_info  = bot.get_file(doc.file_id)
@@ -92,6 +102,24 @@ def register(bot, state: dict):
                     bot.reply_to(message, f"❌ Помилка: {e}")
                 else:
                     time.sleep(2)
+
+
+# ─── Вибір режиму для PDF/Excel ──────────────────────────────────────────────
+
+def _ask_invoice_mode(message, bot, state: dict):
+    """Питає: зіставити рахунок з каталогом чи розпізнати як замовлення (OCR)."""
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    chat_id = message.chat.id
+    state.setdefault('_pending_invoice', {})[chat_id] = {
+        'file_id':   message.document.file_id,
+        'file_name': message.document.file_name or '',
+    }
+    mk = InlineKeyboardMarkup(row_width=1)
+    mk.add(
+        InlineKeyboardButton("🔍 Знайти у нас (рахунок)",      callback_data="inv_match"),
+        InlineKeyboardButton("📸 Розпізнати замовлення (OCR)", callback_data="inv_ocr"),
+    )
+    bot.reply_to(message, "📄 Що робити з файлом?", reply_markup=mk)
 
 
 # ─── pre-батч і _ask_order_setup ─────────────────────────────────────────────
@@ -141,7 +169,7 @@ def _ask_order_setup(message, item: dict, hint_already: bool,
             active_name = prof['name'] if prof else None
 
         # Якщо є підказка в pending_hints — вона вже готова, не питаємо знову
-        has_hint = bool(state.get('pending_hints', {}).get(cid))
+        has_hint   = bool(state.get('pending_hints', {}).get(cid))
         hint_ready = p.get('hint_already', False) or has_hint
 
         state.setdefault('_order_setup', {})[cid] = {
