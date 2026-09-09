@@ -761,7 +761,10 @@ def export_to_sheets(spreadsheet_id: str, credentials_path: str = None) -> int:
         rows.append(row)
 
     sheet.clear()
-    sheet.update(values=rows, range_name='A1')
+    try:
+        sheet.update(values=rows, range_name='A1')   # gspread >= 6
+    except TypeError:
+        sheet.update('A1', rows)                     # gspread 5.x
     print(f"✅ Synonyms → Sheets: {len(rows)-1} рядків", flush=True)
     return len(rows) - 1
 
