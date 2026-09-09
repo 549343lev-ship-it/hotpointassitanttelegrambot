@@ -779,6 +779,46 @@ ECO PPR — це самостійний виробник, окрема папк�
   category=fasteners_sealants
   ⚠️ НЕ плутати з "нитка пакувальна фумігаційна"!
 
+## КАТЕГОРІЇ — ЧАСТІ ПОМИЛКИ ВИЗНАЧЕННЯ
+
+### ІЗОЛЯЦІЯ / УТЕПЛЮВАЧ (category=insulation — НЕ plastic_ppr!)
+Ізоляція трубна — окрема категорія, НЕ PPR і НЕ пластик:
+  Climaflex / K-flex / каучук / EPDM / утеплювач трубний / термоізоляція →
+    category=insulation
+  PLM ізоляція / PLM утеплювач → category=insulation (НЕ plastic_ppr, хоч PLM є і в PPR!)
+  "Ізоляція труба 22х6 червона" → normalized: "Утеплювач трубний ф22х6 червоний", category=insulation
+  "Climaflex Stabil 28х6" → normalized: "Утеплювач трубний ф28х6 червоний", category=insulation
+  "K-flex 35х6" → normalized: "Утеплювач трубний ф35х6", category=insulation
+  ⚠️ PLM виробляє і PPR і ізоляцію — розрізняй за контекстом!
+
+### РОЗПОВІТРЮВАЧ / ПОВІТРОВІДВОДЧИК (category=heating)
+  "Автоматичний розповітрювач 1/2" → normalized: "Розповітрювач автоматичний DN15 1/2", category=heating
+  "Повітровідводчик DN15" → normalized: "Розповітрювач автоматичний DN15 1/2", category=heating
+  ⚠️ НЕ shutoff_valves! Розповітрювач = компонент системи опалення.
+
+### МАНОМЕТР (category=automation)
+  "Манометр 0-6 бар 1/2" → normalized: "Манометр 0-6 бар DN15 1/2", category=automation
+  "Манометр 0-10 бар 1/4" → normalized: "Манометр 0-10 бар DN8 1/4", category=automation
+  ⚠️ НЕ shutoff_valves і НЕ heating!
+
+### АНЕМОСТАТ (category=automation)
+  "Анемостат витяжний ф100" → normalized: "Анемостат витяжний ф100", category=automation
+  "Анемостат приточний ф125" → normalized: "Анемостат приточний ф125", category=automation
+
+### ВОРОНКА HL (category=siphons_fittings)
+  "Воронка HL20" → normalized: "Воронка HL20", category=siphons_fittings
+  "Воронка підлогова HL310" → normalized: "Воронка підлогова HL310", category=siphons_fittings
+  ⚠️ НЕ каналізація (sewage)! Воронка = сифонна арматура.
+
+### ТЕН ДЛЯ БОЙЛЕРА (category=water_heaters)
+  "ТЕН для бойлера 1 1/2" → normalized: "ТЕН для бойлера DN40 1 1/2", category=water_heaters
+  ⚠️ НЕ heating і НЕ safety_valves!
+
+### КРАН ПРОХІДНИЙ ДЛЯ ТРУБ (category=fasteners_sealants)
+  "Кран прохідний для труб одинарний 14-25" → це фіксатор/кліпса для труб
+  normalized: "Фіксатор для труб одинарний ф14-25", category=fasteners_sealants
+  ⚠️ НЕ shutoff_valves! "Кран прохідний для труб" = кріплення, не запірна арматура.
+
 ### ТРІЙНИК 3/4 БЕЗ PPR/EKO = ЛАТУННИЙ
 "Трійник 3/4" → category=adapters_reducers
   normalized: "Трійник латунь ВВВ DN20 3/4" (без виробника!)
