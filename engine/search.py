@@ -977,7 +977,7 @@ PUSH: гільза≠кільце, "натяжний" обов'язково. Б�
         resp = gemini_client.models.generate_content(
             model="gemini-2.5-flash",
             contents=[genai_types.Part.from_text(text=prompt)],
-            config=genai_types.GenerateContentConfig(temperature=0)
+            config=genai_types.GenerateContentConfig(temperature=0, max_output_tokens=16384)
         )
         parsed = _parse_claude_json(resp.text)
         if not parsed:
@@ -1065,7 +1065,7 @@ JSON рівно {len(позиції)} елементів:
 
     try:
         resp   = claude.messages.create(
-            model="claude-sonnet-4-5", max_tokens=4000,
+            model="claude-sonnet-4-5", max_tokens=16384,
             messages=[{"role": "user", "content": prompt}]
         )
         parsed = _parse_claude_json(resp.content[0].text)
