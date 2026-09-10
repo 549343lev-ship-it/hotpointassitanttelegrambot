@@ -677,12 +677,19 @@ def full_rebuild() -> dict:
 
     r2 = rebuild_from_cache(get_cache(), client_caches, reset=False)
 
+    st = get_synonyms_stats()
     return {
-        'catalog_keys':    r1.get('added_keys', 0),
-        'catalog_variants': r1.get('added_variants', 0),
-        'organic_processed': r2.get('processed', 0),
-        **{k: v for k, v in r2.items()},
+        'catalog_keys':      r1.get('added_keys', 0),
+        'catalog_added':     r1.get('added_variants', 0),
+        'organic_keys':      r2.get('universal_keys', 0),
+        'organic_entries':   r2.get('total_entries', 0),
+        'universal_keys':    st['universal_keys'],
+        'total_entries':     st['total_entries'],
+        'multi_brand':       st['multi_brand'],
     }
+
+
+def reset_to_organic(autosave: bool = True) -> dict:
     """
     Прибирає всі записи що були додані автоматично (hits=0, source='catalog')
     але НЕ були підтверджені реальними підборами.
