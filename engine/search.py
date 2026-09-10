@@ -56,12 +56,25 @@ BRAND_TOKENS = {    # словник: що пише менеджер → офі�
     'plm':         ['plm', 'PLM'],
     'плм':         ['plm', 'PLM'],
     # ── Запірна арматура — крос-бренди → RAFTEC ──────────────────────────────
-    # Майстри пишуть KFA/Giacomini/Fado — ми продаємо RAFTEC аналог
     'kfa':         ['raftec', 'RAFTEC'],
-    'fado':        ['raftec', 'RAFTEC'],
-    'valtec':      ['raftec', 'RAFTEC'],
+    'fado':        ['raftec', 'RAFTEC'],    # FADO → RAFTEC
+    'valtec':      ['raftec', 'RAFTEC'],   # VALTEC → RAFTEC
     'solomon':     ['raftec', 'RAFTEC'],
-    # Giacomini — є в нашому каталозі! Залишаємо як є, але шукаємо і RAFTEC
+    'bugatti':     ['raftec', 'RAFTEC'],   # BUGATTI → RAFTEC
+    'hlv':         ['raftec', 'RAFTEC'],   # HLV → RAFTEC
+    'koer':        ['raftec', 'RAFTEC'],   # KOER → RAFTEC
+    'icma':        ['raftec', 'RAFTEC'],   # ICMA → RAFTEC
+    'sd forte':    ['raftec', 'RAFTEC'],   # SD Forte → RAFTEC
+    'sandi':       ['raftec', 'RAFTEC'],   # Sandi → RAFTEC
+    # ── PUSH — заборонені → RAFTEC ──────────────────────────────────────────
+    'kan':         ['raftec', 'RAFTEC'],   # KAN → RAFTEC PUSH
+    'kan-therm':   ['raftec', 'RAFTEC'],
+    'tece':        ['raftec', 'RAFTEC'],   # TECE → RAFTEC
+    'aquapex':     ['raftec', 'RAFTEC'],   # Aquapex → RAFTEC
+    'heat-pex':    ['raftec', 'RAFTEC'],   # HeatPex → RAFTEC
+    'heatpex':     ['raftec', 'RAFTEC'],
+    'magnaplast':  ['asg', 'ASG'],         # Magnaplast (каналізація) → ASG
+    # ── Giacomini — є в нашому каталозі ────────────────────────────────────
     'giacomini':   ['Giacomini', 'giacomini', 'raftec', 'RAFTEC'],
     'джикоміні':   ['Giacomini', 'giacomini', 'raftec', 'RAFTEC'],
     'гіакоміні':   ['Giacomini', 'giacomini', 'raftec', 'RAFTEC'],
@@ -112,13 +125,10 @@ BRAND_TOKENS = {    # словник: що пише менеджер → офі�
     'valrom':      ['valrom', 'Valrom'],
     'alcaplast':   ['alcaplast', 'AlcaPlast'],
     'esbe':        ['esbe', 'ESBE'],
-    'bonomi':      ['bonomi', 'Bonomi'],
-    'icma':        ['icma', 'Icma'],
     'valsir':      ['valsir', 'Valsir'],
     'flamco':      ['flamco', 'Flamco'],
     'grohe':       ['grohe', 'Grohe'],
     'thermaflex':  ['thermaflex', 'Thermaflex'],
-    'kan':         ['kan', 'KAN'],
 }
 
 # Синоніми для нормалізації запиту перед пошуком в каталозі
@@ -131,6 +141,19 @@ SEARCH_SYNONYMS = {
     'karro':            'RAFTEC',
     'fado':             'RAFTEC',
     'valtec':           'RAFTEC',
+    'bugatti':          'RAFTEC',
+    'hlv':              'RAFTEC',
+    'koer':             'RAFTEC',
+    'icma':             'RAFTEC',
+    'sd forte':         'RAFTEC',
+    'sandi':            'RAFTEC',
+    'kan':              'RAFTEC',
+    'kan-therm':        'RAFTEC',
+    'tece':             'RAFTEC',
+    'aquapex':          'RAFTEC',
+    'heat-pex':         'RAFTEC',
+    'heatpex':          'RAFTEC',
+    'magnaplast':       'ASG',
     # Самоочисний = самопромивний
     'самоочисний':      'самопромивний',
     'самоочищувальний': 'самопромивний',
@@ -1198,8 +1221,8 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
         # ⚡ _global_brand стає жорстким тільки якщо виробник актуальний для цієї категорії
         # "пайка екопластик" → жорстко для PPR, але НЕ для каналізації!
         # "пуш рафтек" → жорстко для push, але НЕ для каналізації і PPR!
-        _PPR_BRANDS  = {'ekoplastik', 'asg', 'plm', 'raftec', 'fv plast', 'kan', 'eco'}
-        _PUSH_BRANDS = {'raftec', 'rehau', 'fado', 'kan', 'uponor', 'heat-pex'}
+        _PPR_BRANDS  = {'ekoplastik', 'asg', 'plm', 'raftec', 'fv plast', 'eco'}
+        _PUSH_BRANDS = {'raftec', 'rehau', 'uponor'}
         _SEW_BRANDS  = {'ostendorf', 'asg', 'valrom', 'plm'}
 
         _CAT_BRAND_MAP = {
