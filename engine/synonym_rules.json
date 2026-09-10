@@ -147,7 +147,22 @@
   },
   "plastic_ppr": {
     "_note": "PN і серію НЕ прибираємо: перевірено — схлопування дає 63% конфліктів усередині бренду (Ekoplastik має EVO і Fiber Basalt одночасно).",
-    "rules": [],
+    "rules": [
+      {
+        "_note": "Серії армування — різні бренди мають свої назви для одного типу",
+        "when": "труба",
+        "drop": [
+          "(?<![а-яa-z])(hot|cold|nano\\s*ag\\s*composite|pp-rct|faser|fiber|basalt|stabi|evo|al-rct|al\\s*rct)(?![а-яa-z])"
+        ]
+      },
+      {
+        "_note": "Товщина стінки у різних виробників різна для однакового діаметру і PN",
+        "when": "труба",
+        "drop": [
+          "х\\s*\\d+[.,]\\d+\\s*мм(?=\\s*,|\\s*$|\\s*\\{)"
+        ]
+      }
+    ],
     "family": [
       {
         "match": "fiber|faser|basalt|glass|stabi|композит|армов",
@@ -247,6 +262,13 @@
           "(?<![а-яa-z])(graphite|plan|ventil|compact|plv|profil|hygiene|klasik)(?![а-яa-z])",
           "\\(\\s*(лижі|настінне\\s*кріплення)\\s*\\)"
         ]
+      },
+      {
+        "_note": "Тип підключення — всі бренди мають і бокове і нижнє, не впливає на вибір аналогу",
+        "drop": [
+          ",\\s*(?<![а-яa-z])[kvch](?![а-яa-z0-9]),",
+          "(?<![а-яa-z])(бокове|нижнє|нижн|бічн)\\.?\\s*підключ[а-я]*"
+        ]
       }
     ],
     "family": [
@@ -281,6 +303,23 @@
     ]
   },
   "metal_plastic": {
+    "rules": [
+      {
+        "_note": "Артикули в назвах (109500 HLV NEW) — виробничі коди",
+        "drop": [
+          "^\\d{5,}\\s+",
+          "(?<![а-яa-z])(new|plus)(?![а-яa-z])"
+        ]
+      },
+      {
+        "_note": "Кут нахилу колектора і комплектація",
+        "when": "колектор",
+        "drop": [
+          "\\d+°",
+          "(?<![а-яa-z])(без\\s*євроконуса?|з\\s*євроконусом|без\\s*євроконуса?)(?![а-яa-z])"
+        ]
+      }
+    ],
     "family": [
       {
         "match": "труба",
@@ -295,8 +334,22 @@
   "underfloor_heating": {
     "rules": [
       {
+        "_note": "Серії колекторів (Brass Line, Steel Line) — матеріал вже є в назві (латунь/сталь)",
         "drop": [
-          "(?<![а-яa-z])(brass|stainless)(?![а-яa-z])"
+          "(?<![а-яa-z])(brass\\s*line|steel\\s*line|brass|stainless)(?![а-яa-z])"
+        ]
+      },
+      {
+        "_note": "Комплектація колектора — євроконус є в кожного виробника",
+        "when": "колектор",
+        "drop": [
+          "(?<![а-яa-z])(єврокон\\.?|без\\s*євроконуса?|з\\s*євроконусом)(?![а-яa-z])"
+        ]
+      },
+      {
+        "_note": "Пошкоджена упаковка — службова позначка",
+        "drop": [
+          "[-–]?\\s*пошкоджен[а-я]*\\.?\\s*(коробк[а-я]*|упаковк[а-я]*)?"
         ]
       }
     ],
@@ -328,6 +381,22 @@
     ]
   },
   "fasteners_sealants": {
+    "rules": [
+      {
+        "_note": "Назви серій Walraven (BIS, BISMAT, BISUPPORT) — маркетингові",
+        "when": "walraven|bis",
+        "drop": [
+          "(?<![а-яa-z])(bismat|bisupport|bis\\s*rapidrail|rapidrail|bis\\s*\\(nl\\)|2000)(?![а-яa-z0-9])"
+        ]
+      },
+      {
+        "_note": "Колір заглушок монтажних — несуттєво",
+        "when": "заглушка монтажна",
+        "drop": [
+          "\\(\\s*(червона|синя|жовта|зелена)\\s*\\)"
+        ]
+      }
+    ],
     "family": [
       {
         "match": "хомут",
@@ -360,6 +429,15 @@
     ]
   },
   "filtration": {
+    "rules": [
+      {
+        "_note": "Серії фільтрів (DP 10 Mono/DUO, SENIOR PLUS) — маркетингові назви",
+        "drop": [
+          "(?<![а-яa-z])(dp\\s*10|senior\\s*plus|mono|duo|trio|junior|atlas|afo|bfo|sx|ts|kit)(?![а-яa-z0-9])",
+          "(?<![а-яa-z0-9])[a-z]{2,3}\\d{3,}[a-z0-9]*(?![а-яa-z])"
+        ]
+      }
+    ],
     "family": [
       {
         "match": "картридж",
@@ -384,6 +462,21 @@
     ]
   },
   "pumps": {
+    "rules": [
+      {
+        "_note": "Артикульні коди насосів (SKD-1, PC-10, CPM 158) — це модель, НЕ прибираємо. Але серії типу Brio 2000-М прибираємо.",
+        "when": "реле|автоматик",
+        "drop": [
+          "(?<![а-яa-z])(brio\\s*2000-?[mмт]?|brio\\s*2000mt|cristal)(?![а-яa-z])"
+        ]
+      },
+      {
+        "_note": "Пошкоджена упаковка — службова позначка",
+        "drop": [
+          "[-–]\\s*пошкодж[а-я]*\\.?\\s*уп\\.?"
+        ]
+      }
+    ],
     "family": [
       {
         "match": "циркуляц",
@@ -412,6 +505,22 @@
     ]
   },
   "heating": {
+    "rules": [
+      {
+        "_note": "Артикульні коди на початку назви (8512, SLP1DF02N1D13, ВЗ001-К)",
+        "drop": [
+          "^[a-zа-яA-ZА-Я0-9]{3,12}\\s+(?=[А-ЯA-Z])",
+          "^\\d{4,}\\s+"
+        ]
+      },
+      {
+        "_note": "Серії автоматики котелень (LIGHT, PROFI PLUS)",
+        "when": "автоматик|контролер|контроллер",
+        "drop": [
+          "(?<![а-яa-z])(light|profi\\s*plus|profi|basic|wifi\\s*rs|i-1m|i-2|i-3|plus|st-i)(?![а-яa-z])"
+        ]
+      }
+    ],
     "family": [
       {
         "match": "колектор",
@@ -428,6 +537,14 @@
     ]
   },
   "siphons_fittings": {
+    "rules": [
+      {
+        "_note": "Артикули AlcaPlast (A160-1/2, SA2000SK) — виробничі коди, не характеристика",
+        "drop": [
+          "(?<![а-яa-z]),?\\s*[a-z]{1,3}\\d{2,4}[a-z0-9\\-\\/]*(?![а-яa-z])"
+        ]
+      }
+    ],
     "family": [
       {
         "match": "сифон",
@@ -438,7 +555,7 @@
         "label": "трап"
       },
       {
-        "match": "арматур|заповнюв",
+        "match": "арматур|заповнюв|впускн|зливн",
         "label": "арматура зливна"
       },
       {
@@ -448,6 +565,14 @@
     ]
   },
   "hoses": {
+    "rules": [
+      {
+        "_note": "Тип оплетення — нерж/хром/поліам залишаємо (різні товари). Але довжина в кроках 0.2/0.3/0.4... — кожна довжина окремий товар, так і повинно бути.",
+        "drop": [
+          "(?<![а-яa-z])(нерж\\.?|ss|flex)(?![а-яa-z])"
+        ]
+      }
+    ],
     "family": [
       {
         "match": "підводк|підведен",
@@ -460,6 +585,22 @@
     ]
   },
   "boilers": {
+    "rules": [
+      {
+        "_note": "Серії котлів — маркетингові назви, не характеристика. Бренд прибирається через _detect_brand.",
+        "when": "котел",
+        "drop": [
+          "(?<![а-яa-z])(force|стандарт|турбо|універсал|mega|max|rinnova|cond|adaptive|light|vitodens|vitoladens|victrix|zeus|luna3?|mynute|extra|quattro|platinum|electronic|duo|trio|pellet|джавелін|автомат|plus|new)(?![а-яa-z])"
+        ]
+      },
+      {
+        "_note": "Тип роботи котла — не потрібен в ключі бо є у назві типу",
+        "when": "котел",
+        "drop": [
+          "(?<![а-яa-z])(конденсацій|парапет|підлогов|настінн|атмосфер|турбован)(?![а-яa-z])"
+        ]
+      }
+    ],
     "family": [
       {
         "match": "газов",
@@ -476,6 +617,24 @@
     ]
   },
   "water_heaters": {
+    "rules": [
+      {
+        "_note": "Назви серій бойлерів — кожен виробник має свої. Залишаємо тільки об'єм і тип.",
+        "when": "водонагрів|бойлер",
+        "drop": [
+          "(?<![а-яa-z])(lydos|velis|pro1|superlux|tronic|round|steatite|elite|genius|cube|classic|prime|vertigo|o'pro|opro|supr|tgrk|ego|pro|r\\s|nts|tech|esp|esd|tr\\d{4}|bcse|lydos|aquabravo|aqualtis|hybrid|wi-fi|eco)(?![а-яa-z])",
+          "(?<![а-яa-z])(vm\\s*\\d+|d\\d+|es-vm|mp-\\d+|v\\d+|h\\d+)(?![а-яa-z])",
+          "(?<![а-яa-z])(ntr|okc|okcv|okce|tpk|ntrr|bp|hp|dt\\d+v|pd|gch|gcv|bilight|bimode|b12|tsrs?)(?![а-яa-z0-9])"
+        ]
+      },
+      {
+        "_note": "Тип ТЕН — мокрий/сухий/керамічний",
+        "when": "водонагрів|бойлер",
+        "drop": [
+          "(?<![а-яa-z])(мокр|сухий|сухим|ceramic|сух\\.?)(?![а-яa-z])\\.?\\s*тен"
+        ]
+      }
+    ],
     "family": [
       {
         "match": "проточн",
@@ -488,6 +647,20 @@
     ]
   },
   "towel_warmers": {
+    "rules": [
+      {
+        "_note": "Серії рушникосушок — маркетингові назви виробника",
+        "drop": [
+          "(?<![а-яa-z])(авангард|symmetry|fito|tristar|aquatristar|aqua|hygge|hotel|lotos|ellipse|avalon|marlin|luxury|lx-\\d+|escada|genesis|наvin|mario|laris|arte|deffi|bukovyna|polywarm|bureviy)(?![а-яa-z])"
+        ]
+      },
+      {
+        "_note": "Тип підключення — несуттєво для ключа",
+        "drop": [
+          "(?<![а-яa-z])(прихован|бічн|бокове|нижн|центр)\\.?\\s*підключ[а-я]*"
+        ]
+      }
+    ],
     "family": [
       {
         "match": "електричн",
@@ -516,6 +689,15 @@
     ]
   },
   "automation": {
+    "rules": [
+      {
+        "_note": "Артикули на початку назви (18427, 7R5R4, i-1m)",
+        "drop": [
+          "^\\d{4,}\\s+",
+          "^[a-z0-9]{3,6}\\s+(?=[А-ЯA-Z])"
+        ]
+      }
+    ],
     "family": [
       {
         "match": "насосн.?груп",
@@ -536,6 +718,21 @@
     ]
   },
   "mixers_faucets": {
+    "rules": [
+      {
+        "_note": "Артикули змішувачів і серії — кожен виробник унікальний артикул, не характеристика",
+        "drop": [
+          "(?<![а-яa-z0-9])(bla|crm|nks|wcr|watt)\\s*\\d[\\w\\-]*",
+          "(?<![а-яa-z])(lx-\\d+|hs\\d+|bhs\\d+|bro\\d+|klo\\d+|leb\\d+)(?![а-яa-z])"
+        ]
+      },
+      {
+        "_note": "Тип картриджу — не потрібен в ключі",
+        "drop": [
+          "кер/?карт\\s*ф?\\d+"
+        ]
+      }
+    ],
     "family": [
       {
         "match": "умивальник|раковин",
@@ -552,6 +749,44 @@
     ]
   },
   "sanitary_ware": {
+    "rules": [
+      {
+        "_note": "Назви серій ванн — не характеристика, а маркетингова назва. Прибираємо щоб ванна однакового розміру/типу різних серій мала один ключ.",
+        "when": "ванн",
+        "drop": [
+          "(?<![а-яa-z])(albenia|albert|anastasia|anna|ariane|avita|bali|bonita|chrome|classic|comfort|dolores|edward|estella|favorit|florida|formy|freedom|greenland|harmony|infiniti|koller|lady|maddalena|madonna|maria|marina|mateo|melbourne|melite|molly|neon|newton|praktika|providence|quadro|rima|roca|saniform|santorini|shea|siena|surfex|tasmania|vanda|crea|intro|virgo|cetus|sela|kolo|ravak|aquaform|besco|miraggio|mirasoft|venta|smavit|eurowa)(?![а-яa-z])"
+        ]
+      },
+      {
+        "_note": "Тип зливу — не характеристика ванни, а комплектація",
+        "when": "ванн",
+        "drop": [
+          "\\+?\\s*(слив|злив|сифон|перелив)\\s*(глянець|матов|mirasoft|matte)?",
+          "без\\s+(перелива|переливу|сифон)"
+        ]
+      },
+      {
+        "_note": "Колір ванни якщо не вказано спеціально — зазвичай біла",
+        "when": "ванн",
+        "drop": [
+          "(?<![а-яa-z])(белая|біла|white)(?![а-яa-z])"
+        ]
+      },
+      {
+        "_note": "Покриття — mirasoft/matt/глянець — різниця в ціні але не в типі товару для підбору аналогу",
+        "when": "ванн",
+        "drop": [
+          "(?<![а-яa-z])(mirasoft|matt|матов|глянець|глянцев|matte)(?![а-яa-z])"
+        ]
+      },
+      {
+        "_note": "Унітаз: назви серій",
+        "when": "унітаз",
+        "drop": [
+          "(?<![а-яa-z])(cersanit|roca|kolo|ravak|geberit|duravit|ideal\\s*standard|villeroy|grohe|hansgrohe)(?![а-яa-z])"
+        ]
+      }
+    ],
     "family": [
       {
         "match": "унітаз",
