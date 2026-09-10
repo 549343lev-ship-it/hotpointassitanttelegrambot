@@ -166,23 +166,44 @@ def register(bot, state: dict):
         except Exception as e:
             bot.edit_message_text(f"❌ Помилка: {e}", status.chat.id, status.message_id)
 
-    @bot.message_handler(commands=['synonyms_init'])
-    def cmd_synonyms_init(message):
+    @bot.message_handler(commands=['synonyms_build'])
+    def cmd_synonyms_build(message):
         if message.chat.id != ADMIN_ID: return
-        status = bot.reply_to(message, "⏳ Заповнюю synonyms з каталогу (~15 сек)...")
+        status = bot.reply_to(message, "⏳ Будую synonyms з каталогу (~15 сек)...")
         try:
             import threading
             def _run():
-                from engine.synonyms import init_from_catalog
-                r = init_from_catalog()
+                from engine.synonyms import build_from_catalog_groups
+                r = build_from_catalog_groups()
                 bot.edit_message_text(
-                    f"✅ *Synonyms init завершено*\n"
-                    f"Нових ключів: {r['added_keys']}\n"
-                    f"Нових варіантів: {r['added_variants']}\n"
-                    f"Пропущено: {r['skipped']}\n"
+                    f"✅ *Synonyms build завершено*\n"
+                    f"Ключів з аналогами: {r['added_keys']}\n"
+                    f"Каталожних варіантів: {r['added_variants']}\n"
+                    f"Одиночних пропущено: {r['skipped']}\n"
                     f"Всього ключів: {r['universal_keys']}\n"
                     f"Всього варіантів: {r['total_entries']}\n"
                     f"З кількома брендами: {r['multi_brand']}",
+                    status.chat.id, status.message_id,
+                    parse_mode="Markdown")
+            threading.Thread(target=_run, daemon=True).start()
+        except Exception as e:
+            bot.edit_message_text(f"❌ Помилка: {e}", status.chat.id, status.message_id)
+
+    @bot.message_handler(commands=['synonyms_reset'])
+    def cmd_synonyms_reset(message):
+        if message.chat.id != ADMIN_ID: return
+        status = bot.reply_to(message, "⏳ Прибираю каталожні записи без реальних підборів...")
+        try:
+            import threading
+            def _run():
+                from engine.synonyms import reset_to_organic
+                r = reset_to_organic()
+                bot.edit_message_text(
+                    f"✅ *Synonyms reset завершено*\n"
+                    f"Видалено ключів: {r['removed_keys']}\n"
+                    f"Видалено варіантів: {r['removed_variants']}\n"
+                    f"Залишилось ключів: {r['kept_keys']}\n"
+                    f"Всього варіантів: {r['total_entries']}",
                     status.chat.id, status.message_id,
                     parse_mode="Markdown")
             threading.Thread(target=_run, daemon=True).start()
@@ -193,6 +214,16 @@ def register(bot, state: dict):
     def btn_synonyms_enrich(message):
         if message.chat.id != ADMIN_ID: return
         cmd_synonyms_enrich(message)
+
+    @bot.message_handler(func=lambda m: m.text == '🏗 Схожі: build')
+    def btn_synonyms_build(message):
+        if message.chat.id != ADMIN_ID: return
+        cmd_synonyms_build(message)
+
+    @bot.message_handler(func=lambda m: m.text == '🗑 Схожі: reset')
+    def btn_synonyms_reset(message):
+        if message.chat.id != ADMIN_ID: return
+        cmd_synonyms_reset(message)
 
     @bot.message_handler(func=lambda m: m.text == '📤 Схожі: export')
     def btn_synonyms_export(message):
