@@ -7,17 +7,13 @@ def main_keyboard(uid: int) -> ReplyKeyboardMarkup:
     """Будує головну клавіатуру. Адміни бачать додаткові кнопки."""
     kb = ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
     kb.add(
-        KeyboardButton("📸 Як користуватись"),
         KeyboardButton("📊 Кеш"),
         KeyboardButton("👥 Клієнти"),
+        KeyboardButton("👥 Кеш клієнта"),
     )
     kb.add(
-        KeyboardButton("👥 Кеш клієнта"),
         KeyboardButton("📚 Навчання"),
         KeyboardButton("🛑 Стоп"),
-    )
-    kb.add(
-        KeyboardButton("📋 Правило"),
     )
     if uid == ADMIN_ID:
         kb.add(
@@ -26,9 +22,7 @@ def main_keyboard(uid: int) -> ReplyKeyboardMarkup:
             KeyboardButton("👑 Діри каталогу"),
         )
         kb.add(
-            KeyboardButton("👑 Правила на розгляд"),
             KeyboardButton("👑 Перевір кеш"),
-            KeyboardButton("📖 Словник"),
         )
         kb.add(
             KeyboardButton("🔄 Схожі: rebuild"),
@@ -38,8 +32,6 @@ def main_keyboard(uid: int) -> ReplyKeyboardMarkup:
         kb.add(
             KeyboardButton("🏗 Схожі: build"),
             KeyboardButton("🗑 Схожі: reset"),
-        )
-        kb.add(
             KeyboardButton("🔄 Схожі: повний rebuild"),
         )
     return kb
