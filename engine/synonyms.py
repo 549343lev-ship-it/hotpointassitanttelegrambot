@@ -653,7 +653,36 @@ def enrich_from_catalog(autosave: bool = True) -> dict:
     return {'enriched_keys': enriched, 'added_variants': added}
 
 
-def reset_to_organic(autosave: bool = True) -> dict:
+def full_rebuild() -> dict:
+    """
+    Повний rebuild:
+    1. build_from_catalog_groups — будує базу груп з каталогу (2+ бренди)
+    2. rebuild_from_cache — поверх додає органічні aliases і hits з кешу
+    """
+    from clients.cache import get_cache
+    from clients import clients as _clients
+
+    # Крок 1: будуємо базу з каталогу
+    r1 = build_from_catalog_groups(autosave=False)
+
+    # Крок 2: органічні aliases і hits з кешу бота + кешів клієнтів
+    try:
+        client_caches = {}
+        for slug, _ in _clients.list_clients().items():
+            cc = _clients.get_client_cache(slug)
+            if cc:
+                client_caches[slug] = cc
+    except Exception:
+        client_caches = {}
+
+    r2 = rebuild_from_cache(get_cache(), client_caches, reset=False)
+
+    return {
+        'catalog_keys':    r1.get('added_keys', 0),
+        'catalog_variants': r1.get('added_variants', 0),
+        'organic_processed': r2.get('processed', 0),
+        **{k: v for k, v in r2.items()},
+    }
     """
     Прибирає всі записи що були додані автоматично (hits=0, source='catalog')
     але НЕ були підтверджені реальними підборами.
@@ -905,13 +934,15 @@ def export_to_sheets(spreadsheet_id: str, credentials_path: str = None) -> int:
 
 # ─── Перебудова з кешу ───────────────────────────────────────────────────────
 
-def rebuild_from_cache(cache: dict, client_caches: dict = None) -> dict:
+def rebuild_from_cache(cache: dict, client_caches: dict = None, reset: bool = True) -> dict:
     """
-    Повністю перебудовує довідник з кешу бота (+ опційно клієнтських кешів).
-    Повертає статистику.
+    Перебудовує довідник з кешу бота (+ опційно клієнтських кешів).
+    reset=True (дефолт) — скидає і будує з нуля.
+    reset=False — мерджить поверх існуючих даних (використовується в full_rebuild).
     """
     global _SYNONYMS
-    _SYNONYMS = {}
+    if reset:
+        _SYNONYMS = {}
 
     seen = 0
     for key, entry in cache.items():
