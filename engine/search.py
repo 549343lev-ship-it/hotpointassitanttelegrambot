@@ -193,20 +193,21 @@ CATEGORY_ALIASES = {    # словник: що пише менеджер у пі
 }
 
 DEFAULT_BRAND_PRIORITY = {  # якщо менеджер не вказав виробника — беремо з цього списку за пріоритетом
-    'sewage':                  [['asg', 'ASG'], ['ostendorf', 'OSTENDORF']],   # ASG першим для внутрішньої!
-    'plastic_ppr':             [['ekoplastik', 'Ekoplastik', 'PP-RCT'], ['asg', 'ASG'], ['raftec', 'RAFTEC']],
-    'shutoff_valves':          [['raftec', 'RAFTEC']],
-    'adapters_reducers':       [['raftec', 'RAFTEC']],
-    'filtration':              [['raftec', 'RAFTEC'], ['ecosoft', 'Ecosoft']],  # фільтр під пломбу RAFTEC першим
-    'radiators_radiatorsvalve':[['mirado', 'MIRADO'], ['hidros', 'Hidros'], ['idmar', 'IDMAR']],  # MIRADO першим
-    'pumps':                   [['lider', 'Lider'], ['tatra', 'TATRA'], ['termojet', 'Termojet']],  # Lider першим
-    'insulation':              [['plm', 'PLM']],
+    'plastic_ppr':             [['ekoplastik', 'Ekoplastik', 'PP-RCT'], ['asg', 'ASG'], ['raftec', 'RAFTEC'], ['fv plast', 'FV Plast'], ['plm', 'PLM']],
     'push_systems':            [['raftec', 'RAFTEC'], ['rehau', 'REHAU']],
-    'metal_plastic':           [['raftec', 'RAFTEC']],
-    'fasteners_sealants':      [['eco', 'ECO'], ['raftec', 'RAFTEC'], ['walraven', 'Walraven']],
+    'shutoff_valves':          [['raftec', 'RAFTEC'], ['asg', 'ASG']],
+    'adapters_reducers':       [['raftec', 'RAFTEC'], ['lexline', 'LEXLINE']],
+    'sewage':                  [['asg', 'ASG'], ['ostendorf', 'OSTENDORF'], ['plm', 'PLM']],
+    'metal_plastic':           [['raftec', 'RAFTEC'], ['tweetop', 'Tweetop']],
+    'pumps':                   [['termojet', 'Termojet'], ['tatra', 'Tatra-line'], ['grundfos', 'Grundfos'], ['raftec', 'RAFTEC'], ['wilo', 'Wilo'], ['lider', 'Lider']],
+    'radiators_radiatorsvalve':[['idmar', 'IDMAR'], ['biasi', 'BIASI'], ['hidros', 'Hidros'], ['purmo', 'PURMO']],
+    'insulation':              [['plm', 'PLM'], ['теплоізол', 'Теплоізол'], ['k-flex', 'K-FLEX']],
     'underfloor_heating':      [['raftec', 'RAFTEC'], ['plm', 'PLM']],
-    'heating':                 [['ekoplastik', 'Ekoplastik'], ['raftec', 'RAFTEC']],
-    'water_meters':            [['ecostar', 'Ecostar', 'ECOSTAR']],
+    'filtration':              [['ecosoft', 'Ecosoft'], ['filtrons', 'Filtrons'], ['bwt', 'BWT']],
+    'safety_valves':           [['raftec', 'RAFTEC'], ['herz', 'HERZ'], ['flamco', 'Flamco'], ['caleffi', 'CALEFFI']],
+    'heating':                 [['esbe', 'ESBE'], ['caleffi', 'CALEFFI'], ['honeywell', 'HONEYWELL'], ['herz', 'HERZ'], ['afriso', 'AFRISO']],
+    'fasteners_sealants':      [['eco', 'ECO'], ['raftec', 'RAFTEC'], ['walraven', 'Walraven']],
+    'water_meters':            [['ecostar', 'Ecostar', 'ECOSTAR'], ['gidrotek', 'GIDROTEK']],
 }
 
 
