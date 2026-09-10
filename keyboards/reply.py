@@ -35,4 +35,8 @@ def main_keyboard(uid: int) -> ReplyKeyboardMarkup:
             KeyboardButton("🧩 Схожі: аналоги"),
             KeyboardButton("📤 Схожі: export"),
         )
+        kb.add(
+            KeyboardButton("🏗 Схожі: build"),
+            KeyboardButton("🗑 Схожі: reset"),
+        )
     return kb
