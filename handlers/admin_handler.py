@@ -246,6 +246,11 @@ def register(bot, state: dict):
         if message.chat.id != ADMIN_ID: return
         cmd_synonyms_build(message)
 
+    @bot.message_handler(func=lambda m: m.text == '🏗 Схожі: build')
+    def btn_synonyms_build(message):
+        if message.chat.id != ADMIN_ID: return
+        cmd_synonyms_build(message)
+
     @bot.message_handler(func=lambda m: m.text == '🗑 Схожі: reset')
     def btn_synonyms_reset(message):
         if message.chat.id != ADMIN_ID: return
