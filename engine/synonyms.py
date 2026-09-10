@@ -657,99 +657,140 @@ def enrich_from_catalog(autosave: bool = True) -> dict:
     return {'enriched_keys': enriched, 'added_variants': added}
 
 
-def init_from_catalog(autosave: bool = True) -> dict:
+def reset_to_organic(autosave: bool = True) -> dict:
     """
-    Одноразова адмін-операція: заповнює synonyms ВСІМА товарами каталогу.
-    Існуючі записи (hits > 0) — НЕ чіпає.
-    Нові записи отримують hits=0, source='catalog'.
-    Запускати через адмін-команду, не автоматично — ~14 сек на 49k товарів.
+    Прибирає всі записи що були додані автоматично (hits=0, source='catalog')
+    але НЕ були підтверджені реальними підборами.
+    Залишає тільки органічні записи (hits > 0).
     """
     global _SYNONYMS
-    try:
-        from catalog.catalog import CATALOG
-    except ImportError:
-        try:
-            from catalog import CATALOG
-        except ImportError:
-            print("⚠️ init_from_catalog: CATALOG недоступний", flush=True)
-            return {'added_keys': 0, 'added_variants': 0, 'skipped': 0}
+    removed_keys = removed_variants = kept_keys = 0
 
-    added_keys = added_variants = skipped = 0
-    today = time.strftime('%Y-%m-%d')
+    for ukey in list(_SYNONYMS.keys()):
+        rec = _SYNONYMS[ukey]
+        variants = rec.get('variants', {})
 
-    for item in CATALOG:
-        nm  = (item.get('name') or '').strip()
-        if not nm:
-            continue
-        cat   = item.get('category', '') or ''
-        code  = item.get('artikul', '')  or ''
-        brand = _detect_brand(nm)
-        if brand == '_other':
-            skipped += 1
-            continue
+        organic = {
+            b: v for b, v in variants.items()
+            if v.get('hits', 0) > 0 or v.get('source', '') != 'catalog'
+        }
+        removed_variants += len(variants) - len(organic)
 
-        ukey = canonical(nm, cat)
-        if not ukey:
-            skipped += 1
-            continue
-
-        if ukey in _SYNONYMS:
-            rec = _SYNONYMS[ukey]
-            # Існуючий запис — тільки дозаповнюємо код якщо бракує
-            if brand in rec['variants']:
-                if code and not rec['variants'][brand].get('code'):
-                    rec['variants'][brand]['code'] = code
-                skipped += 1
-                continue
-            # Додаємо новий варіант бренду до існуючого ключа
-            rec['variants'][brand] = {
-                'catalog_name': nm,
-                'code':         code,
-                'hits':         0,
-                'source':       'catalog',
-                'last_seen':    '',
-            }
-            if not rec.get('category'):
-                rec['category'] = cat
-            if not rec.get('family'):
-                rec['family'] = detect_family(ukey, cat)
-            added_variants += 1
+        if not organic:
+            del _SYNONYMS[ukey]
+            removed_keys += 1
         else:
-            # Новий ключ — створюємо повністю
-            _SYNONYMS[ukey] = {
-                'variants': {
-                    brand: {
-                        'catalog_name': nm,
-                        'code':         code,
-                        'hits':         0,
-                        'source':       'catalog',
-                        'last_seen':    '',
-                    }
-                },
-                'aliases':  [],
-                'category': cat,
-                'family':   detect_family(ukey, cat),
-                'attrs':    _parse_attrs(nm),
-            }
-            added_keys     += 1
-            added_variants += 1
+            rec['variants'] = organic
+            kept_keys += 1
 
     if autosave:
         _save()
 
     st = get_synonyms_stats()
     print(
-        f"✅ init_from_catalog: +{added_keys} нових ключів, "
-        f"+{added_variants} варіантів, {skipped} пропущено. "
-        f"Всього: {st['universal_keys']} ключів, {st['total_entries']} варіантів.",
+        f"✅ reset_to_organic: видалено {removed_keys} каталожних ключів, "
+        f"{removed_variants} варіантів. Залишилось {kept_keys} органічних.",
         flush=True
     )
-    return {
-        'added_keys':      added_keys,
-        'added_variants':  added_variants,
-        'skipped':         skipped,
-        **st,
-    }
+    return {'removed_keys': removed_keys, 'removed_variants': removed_variants,
+            'kept_keys': kept_keys, **st}
+
+
+def build_from_catalog_groups(autosave: bool = True) -> dict:
+    """
+    Будує synonyms з _catalog_groups() — так само як кнопка 'схожі',
+    але для всього каталогу.
+
+    Логіка:
+    - canonical(name, category) групує товари різних брендів в один ключ
+    - Тільки групи з 2+ брендами (реальні аналоги) або органічні записи
+    - Органічні записи (hits > 0) зберігаються і мерджаться
+    - Результат: ~2-3k ключів, ~10-20k варіантів
+    """
+    global _SYNONYMS
+
+    groups = _catalog_groups()
+    if not groups:
+        print("⚠️ build_from_catalog_groups: CATALOG недоступний", flush=True)
+        return {'added_keys': 0, 'added_variants': 0}
+
+    # Зберігаємо органічні записи (реальні підбори)
+    organic = {}
+    for ukey, rec in _SYNONYMS.items():
+        has_organic = any(
+            v.get('hits', 0) > 0 or v.get('source', '') != 'catalog'
+            for v in rec.get('variants', {}).values()
+        )
+        if has_organic:
+            organic[ukey] = rec
+
+    # Будуємо новий словник з груп каталогу
+    new_synonyms = {}
+    added_keys = added_variants = skipped = 0
+
+    for ukey, variants_by_brand in groups.items():
+        # Беремо тільки групи з 2+ брендами (справжні аналоги)
+        # АБО якщо є органічний запис для цього ключа
+        has_organic_match = ukey in organic
+        if len(variants_by_brand) < 2 and not has_organic_match:
+            skipped += 1
+            continue
+
+        # Беремо мета-дані з першого варіанту
+        first = next(iter(variants_by_brand.values()))
+        cat   = first.get('category', '')
+
+        rec = new_synonyms.setdefault(ukey, {
+            'variants': {},
+            'aliases':  organic.get(ukey, {}).get('aliases', []),
+            'category': cat,
+            'family':   detect_family(ukey, cat),
+            'attrs':    _parse_attrs(first.get('catalog_name', ukey)),
+        })
+
+        # Мерджимо органічні варіанти (пріоритет)
+        if has_organic_match:
+            for brand, v in organic[ukey]['variants'].items():
+                rec['variants'][brand] = v
+
+        # Додаємо каталожні варіанти
+        for brand, info in variants_by_brand.items():
+            if brand in rec['variants']:
+                # Органічний вже є — тільки дозаповнюємо код
+                if info['code'] and not rec['variants'][brand].get('code'):
+                    rec['variants'][brand]['code'] = info['code']
+                continue
+            rec['variants'][brand] = {
+                'catalog_name': info['catalog_name'],
+                'code':         info['code'],
+                'hits':         0,
+                'source':       'catalog',
+                'last_seen':    '',
+            }
+            added_variants += 1
+
+        added_keys += 1
+
+    # Додаємо органічні записи яких немає в каталожних групах
+    for ukey, rec in organic.items():
+        if ukey not in new_synonyms:
+            new_synonyms[ukey] = rec
+
+    _SYNONYMS = new_synonyms
+
+    if autosave:
+        _save()
+
+    st = get_synonyms_stats()
+    print(
+        f"✅ build_from_catalog_groups: {added_keys} ключів з аналогами, "
+        f"+{added_variants} каталожних варіантів, {skipped} одиночних пропущено. "
+        f"Всього: {st['universal_keys']} ключів, {st['total_entries']} варіантів, "
+        f"{st['multi_brand']} з кількома брендами.",
+        flush=True
+    )
+    return {'added_keys': added_keys, 'added_variants': added_variants,
+            'skipped': skipped, **st}
 
 
 # ─── Пріоритет брендів для експорту ──────────────────────────────────────────
@@ -840,19 +881,20 @@ def export_to_sheets(spreadsheet_id: str, credentials_path: str = None) -> int:
     client = gspread.authorize(creds)
     sheet  = client.open_by_key(spreadsheet_id).sheet1
 
-    MAX_BRANDS = 5
-    header = ['група', 'універсальна назва']
+    MAX_BRANDS = 8
+    header = ['категорія', 'група', 'універсальна назва']
     for i in range(1, MAX_BRANDS + 1):
         header += [f'{i} пріоритет', 'код']
 
     rows = [header]
     # сортуємо за групою, потім за назвою — однотипні товари поруч
     for ukey, rec in sorted(_SYNONYMS.items(),
-                            key=lambda x: (x[1].get('family', '') or 'яяя', x[0])):
-        row = [rec.get('family', ''), ukey]
+                            key=lambda x: (x[1].get('category', '') or '',
+                                          x[1].get('family', '') or 'яяя', x[0])):
+        row = [rec.get('category', ''), rec.get('family', ''), ukey]
         for _brand, info in _sorted_variants(rec)[:MAX_BRANDS]:
             row += [info.get('catalog_name', ''), info.get('code', '')]
-        while len(row) < 2 + MAX_BRANDS * 2:
+        while len(row) < 3 + MAX_BRANDS * 2:
             row += ['', '']
         rows.append(row)
 
