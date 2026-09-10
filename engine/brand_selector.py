@@ -37,8 +37,8 @@ CATEGORY_BRANDS: dict[str, dict] = {
     'sewage': {
         'label': '🚿 Каналізація',
         'brands': [
-            ('OSTENDORF',   'ostendorf'),
             ('ASG',         'asg'),
+            ('OSTENDORF',   'ostendorf'),
             ('VALROM',      'valrom'),
             ('PLM',         'plm'),
             ('Дефолт',      ''),
@@ -58,10 +58,11 @@ CATEGORY_BRANDS: dict[str, dict] = {
     'shutoff_valves': {
         'label': '🔴 Запірна арматура',
         'brands': [
-            ('RAFTEC',      'raftec'),
+            ('RAFTEC GOLD', 'raftec'),
+            ('RAFTEC BLACK','raftec black'),
+            ('PLM STRONG',  'plm strong'),
+            ('PLM BASE',    'plm base'),
             ('ASG',         'asg'),
-            ('HLV',         'hlv'),
-            ('LEXLINE',     'lexline'),
             ('ECO',         'eco'),
             ('Дефолт',      ''),
         ],
@@ -69,8 +70,10 @@ CATEGORY_BRANDS: dict[str, dict] = {
     'adapters_reducers': {
         'label': '🔩 Перехідники',
         'brands': [
-            ('RAFTEC GOLD', 'raftec'),
-            ('LEXLINE',     'lexline'),
+            ('RAFTEC Нікель','raftec'),
+            ('RAFTEC GOLD', 'raftec gold'),
+            ('LEXLINE жовта','lexline'),
+            ('LEXLINE нікель','lexline nickel'),
             ('УЗКМ',        'узкм'),
             ('HLV',         'hlv'),
             ('Мідь',        'мідь'),
@@ -80,11 +83,12 @@ CATEGORY_BRANDS: dict[str, dict] = {
     'radiators_radiatorsvalve': {
         'label': '🌡️ Радіатори',
         'brands': [
-            ('MIRADO',      'mirado'),
-            ('PURMO',       'purmo'),
-            ('KORAD',       'korad'),
             ('IDMAR',       'idmar'),
+            ('BIASI',       'biasi'),
             ('HIDROS',      'hidros'),
+            ('PURMO',       'purmo'),
+            ('MIRADO',      'mirado'),
+            ('KORAD',       'korad'),
             ('Дефолт',      ''),
         ],
     },
@@ -102,10 +106,10 @@ CATEGORY_BRANDS: dict[str, dict] = {
     'insulation': {
         'label': '🧱 Утеплювач',
         'brands': [
-            ('K-FLEX',      'k-flex'),
             ('PLM',         'plm'),
             ('Теплоізол',   'теплоізол'),
             ('SANFLEX',     'sanflex'),
+            ('K-FLEX',      'k-flex'),
             ('Дефолт',      ''),
         ],
     },
@@ -123,10 +127,12 @@ CATEGORY_BRANDS: dict[str, dict] = {
     'pumps': {
         'label': '💧 Насоси',
         'brands': [
-            ('Lider',       'lider'),
-            ('WILO',        'wilo'),
-            ('TATRA',       'tatra'),
+            ('Termojet',    'termojet'),
+            ('Tatra-line',  'tatra'),
             ('Grundfos',    'grundfos'),
+            ('RAFTEC',      'raftec'),
+            ('Wilo',        'wilo'),
+            ('Lider',       'lider'),
             ('Дефолт',      ''),
         ],
     },
@@ -143,6 +149,7 @@ CATEGORY_BRANDS: dict[str, dict] = {
         'label': '🔧 Металопластик',
         'brands': [
             ('RAFTEC',      'raftec'),
+            ('Tweetop',     'tweetop'),
             ('FADO',        'fado'),
             ('KAN',         'kan'),
             ('HLV',         'hlv'),
@@ -169,12 +176,11 @@ CATEGORY_BRANDS: dict[str, dict] = {
         ],
     },
     'fasteners_sealants': {
-        'label': '🔨 Кріплення/Герметики',
+        'label': '🔩 Хомути/Кріплення',
         'brands': [
-            ('Walraven',    'walraven'),
+            ('ECO',         'eco'),
             ('RAFTEC',      'raftec'),
-            ('UNIPAK',      'unipak'),
-            ('PLM',         'plm'),
+            ('Walraven',    'walraven'),
             ('Дефолт',      ''),
         ],
     },
