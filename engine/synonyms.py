@@ -657,25 +657,121 @@ def enrich_from_catalog(autosave: bool = True) -> dict:
     return {'enriched_keys': enriched, 'added_variants': added}
 
 
+def init_from_catalog(autosave: bool = True) -> dict:
+    """
+    Одноразова адмін-операція: заповнює synonyms ВСІМА товарами каталогу.
+    Існуючі записи (hits > 0) — НЕ чіпає.
+    Нові записи отримують hits=0, source='catalog'.
+    Запускати через адмін-команду, не автоматично — ~14 сек на 49k товарів.
+    """
+    global _SYNONYMS
+    try:
+        from catalog.catalog import CATALOG
+    except ImportError:
+        try:
+            from catalog import CATALOG
+        except ImportError:
+            print("⚠️ init_from_catalog: CATALOG недоступний", flush=True)
+            return {'added_keys': 0, 'added_variants': 0, 'skipped': 0}
+
+    added_keys = added_variants = skipped = 0
+    today = time.strftime('%Y-%m-%d')
+
+    for item in CATALOG:
+        nm  = (item.get('name') or '').strip()
+        if not nm:
+            continue
+        cat   = item.get('category', '') or ''
+        code  = item.get('artikul', '')  or ''
+        brand = _detect_brand(nm)
+        if brand == '_other':
+            skipped += 1
+            continue
+
+        ukey = canonical(nm, cat)
+        if not ukey:
+            skipped += 1
+            continue
+
+        if ukey in _SYNONYMS:
+            rec = _SYNONYMS[ukey]
+            # Існуючий запис — тільки дозаповнюємо код якщо бракує
+            if brand in rec['variants']:
+                if code and not rec['variants'][brand].get('code'):
+                    rec['variants'][brand]['code'] = code
+                skipped += 1
+                continue
+            # Додаємо новий варіант бренду до існуючого ключа
+            rec['variants'][brand] = {
+                'catalog_name': nm,
+                'code':         code,
+                'hits':         0,
+                'source':       'catalog',
+                'last_seen':    '',
+            }
+            if not rec.get('category'):
+                rec['category'] = cat
+            if not rec.get('family'):
+                rec['family'] = detect_family(ukey, cat)
+            added_variants += 1
+        else:
+            # Новий ключ — створюємо повністю
+            _SYNONYMS[ukey] = {
+                'variants': {
+                    brand: {
+                        'catalog_name': nm,
+                        'code':         code,
+                        'hits':         0,
+                        'source':       'catalog',
+                        'last_seen':    '',
+                    }
+                },
+                'aliases':  [],
+                'category': cat,
+                'family':   detect_family(ukey, cat),
+                'attrs':    _parse_attrs(nm),
+            }
+            added_keys     += 1
+            added_variants += 1
+
+    if autosave:
+        _save()
+
+    st = get_synonyms_stats()
+    print(
+        f"✅ init_from_catalog: +{added_keys} нових ключів, "
+        f"+{added_variants} варіантів, {skipped} пропущено. "
+        f"Всього: {st['universal_keys']} ключів, {st['total_entries']} варіантів.",
+        flush=True
+    )
+    return {
+        'added_keys':      added_keys,
+        'added_variants':  added_variants,
+        'skipped':         skipped,
+        **st,
+    }
+
+
 # ─── Пріоритет брендів для експорту ──────────────────────────────────────────
 
 # Локальна копія пріоритетів (щоб не тягнути важкий імпорт engine.search).
 # Має збігатися з DEFAULT_BRAND_PRIORITY у search.py.
 BRAND_PRIORITY = {
-    'sewage':                   ['asg', 'ostendorf'],
-    'plastic_ppr':              ['ekoplastik', 'asg', 'raftec'],
-    'shutoff_valves':           ['raftec'],
-    'adapters_reducers':        ['raftec'],
-    'filtration':               ['raftec', 'ecosoft'],
-    'radiators_radiatorsvalve': ['mirado', 'hidros', 'idmar'],
-    'pumps':                    ['lider', 'tatra', 'termojet'],
-    'insulation':               ['plm'],
-    'push_systems':             ['raftec', 'rehau'],
-    'metal_plastic':            ['raftec'],
-    'fasteners_sealants':       ['eco', 'raftec', 'walraven'],
-    'underfloor_heating':       ['raftec', 'plm'],
-    'heating':                  ['ekoplastik', 'raftec'],
-    'water_meters':             ['ecostar'],
+    'plastic_ppr':             ['ekoplastik', 'asg', 'raftec', 'fv plast', 'plm'],
+    'push_systems':            ['raftec', 'rehau', 'fado', 'kan', 'uponor'],
+    'shutoff_valves':          ['raftec gold', 'raftec black', 'plm strong', 'plm base', 'asg', 'eco'],
+    'adapters_reducers':       ['raftec', 'raftec gold', 'lexline', 'узкм', 'hlv'],
+    'sewage':                  ['asg', 'ostendorf', 'plm', 'valrom'],
+    'metal_plastic':           ['raftec', 'tweetop', 'fado', 'kan', 'hlv'],
+    'pumps':                   ['termojet', 'tatra', 'grundfos', 'raftec', 'wilo', 'lider'],
+    'radiators_radiatorsvalve':['idmar', 'biasi', 'hidros', 'purmo', 'mirado', 'korad'],
+    'insulation':              ['plm', 'теплоізол', 'sanflex', 'k-flex'],
+    'underfloor_heating':      ['raftec', 'plm', 'rehau', 'kan', 'danfoss'],
+    'filtration':              ['ecosoft', 'filtrons', 'bwt'],
+    'safety_valves':           ['raftec', 'herz', 'flamco', 'caleffi', 'plm'],
+    'heating':                 ['esbe', 'caleffi', 'honeywell', 'herz', 'afriso'],
+    'fasteners_sealants':      ['eco', 'raftec', 'walraven'],
+    'water_meters':            ['ecostar', 'gidrotek'],
 }
 
 _PRIORITY_SYNCED = False
