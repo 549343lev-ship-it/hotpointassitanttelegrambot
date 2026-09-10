@@ -149,10 +149,10 @@
     "_note": "PN і серію НЕ прибираємо: перевірено — схлопування дає 63% конфліктів усередині бренду (Ekoplastik має EVO і Fiber Basalt одночасно).",
     "rules": [
       {
-        "_note": "Серії армування — різні бренди мають свої назви для одного типу",
+        "_note": "Службові позначки серій армування — але НЕ evo/fiber/basalt/stabi: це різні лінійки з різним призначенням (опалення vs ХВС), вони НЕ аналоги.",
         "when": "труба",
         "drop": [
-          "(?<![а-яa-z])(hot|cold|nano\\s*ag\\s*composite|pp-rct|faser|fiber|basalt|stabi|evo|al-rct|al\\s*rct)(?![а-яa-z])"
+          "(?<![а-яa-z])(hot|cold|nano\\s*ag\\s*composite|pp-rct|al-rct|al\\s*rct)(?![а-яa-z])"
         ]
       },
       {
