@@ -39,4 +39,7 @@ def main_keyboard(uid: int) -> ReplyKeyboardMarkup:
             KeyboardButton("🏗 Схожі: build"),
             KeyboardButton("🗑 Схожі: reset"),
         )
+        kb.add(
+            KeyboardButton("🔄 Схожі: повний rebuild"),
+        )
     return kb
