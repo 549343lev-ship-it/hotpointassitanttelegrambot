@@ -166,6 +166,29 @@ def register(bot, state: dict):
         except Exception as e:
             bot.edit_message_text(f"❌ Помилка: {e}", status.chat.id, status.message_id)
 
+    @bot.message_handler(commands=['synonyms_init'])
+    def cmd_synonyms_init(message):
+        if message.chat.id != ADMIN_ID: return
+        status = bot.reply_to(message, "⏳ Заповнюю synonyms з каталогу (~15 сек)...")
+        try:
+            import threading
+            def _run():
+                from engine.synonyms import init_from_catalog
+                r = init_from_catalog()
+                bot.edit_message_text(
+                    f"✅ *Synonyms init завершено*\n"
+                    f"Нових ключів: {r['added_keys']}\n"
+                    f"Нових варіантів: {r['added_variants']}\n"
+                    f"Пропущено: {r['skipped']}\n"
+                    f"Всього ключів: {r['universal_keys']}\n"
+                    f"Всього варіантів: {r['total_entries']}\n"
+                    f"З кількома брендами: {r['multi_brand']}",
+                    status.chat.id, status.message_id,
+                    parse_mode="Markdown")
+            threading.Thread(target=_run, daemon=True).start()
+        except Exception as e:
+            bot.edit_message_text(f"❌ Помилка: {e}", status.chat.id, status.message_id)
+
     @bot.message_handler(func=lambda m: m.text == '🧩 Схожі: аналоги')
     def btn_synonyms_enrich(message):
         if message.chat.id != ADMIN_ID: return
