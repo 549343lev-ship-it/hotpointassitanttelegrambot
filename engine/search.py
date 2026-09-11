@@ -1293,7 +1293,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
         if cached:
             ok = True
             if hard_brand:
-                nl = cached.get('catalog_name', '').lower()
+                nl = (cached.get('catalog_name') or '').lower()
                 ok = any(t.lower() in nl for t in hard_brand)
             if ok:
                 результати[i] = {
