@@ -39,8 +39,8 @@ def expand_insulation(позиції: list[dict], build_qa_fn) -> list[dict]:
     out = []
     for п in позиції:
         out.append(п)
-        orig = п.get('original', '').lower()
-        norm = п.get('normalized', '').lower()
+        orig = (п.get('original') or '').lower()
+        norm = (п.get('normalized') or '').lower()
         qa   = п.get('_qa') or build_qa_fn(п)
         п['_qa'] = qa
         if qa.get('type') != 'труба':
@@ -114,7 +114,7 @@ def _push_outlets(п: dict, build_qa_fn) -> list:
 def expand_push_sleeves(позиції: list[dict], build_qa_fn) -> list[dict]:
     """Автоматично додає гільзи до PUSH-фітингів."""
     if any(
-        'гільз' in (п.get('original', '') + п.get('normalized', '')).lower()
+        'гільз' in ((п.get('original') or '') + (п.get('normalized') or '')).lower()
         and (п.get('_qa') or build_qa_fn(п)).get('type') == 'гільза'
         for п in позиції
     ):
