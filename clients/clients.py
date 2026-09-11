@@ -380,7 +380,7 @@ def client_cache_lookup(slug: str, original: str,
         if entry.get('status') == 'banned':
             return False
         if required_brand_tokens:
-            name_lower = entry.get('catalog_name', '').lower()
+            name_lower = (entry.get('catalog_name') or '').lower()
             if not any(tok.lower() in name_lower for tok in required_brand_tokens):
                 return False
         return True
