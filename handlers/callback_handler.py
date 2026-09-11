@@ -1,6 +1,4 @@
 """handlers/callback_handler.py — Загальний диспетчер callback_query."""
-import base64
-import threading
 
 
 def _safe_edit(bot, chat_id, msg_id, text, parse_mode=None, reply_markup=None):
@@ -15,6 +13,18 @@ def _safe_edit(bot, chat_id, msg_id, text, parse_mode=None, reply_markup=None):
             print(f"⚠️ safe_edit: {e}", flush=True)
 
 
+def _answer(bot, call_id, text=None):
+    """answer_callback_query що ковтає 'query is too old'."""
+    try:
+        if text:
+            bot.answer_callback_query(call_id, text)
+        else:
+            bot.answer_callback_query(call_id)
+    except Exception as e:
+        if 'query is too old' not in str(e) and 'query ID is invalid' not in str(e):
+            print(f"⚠️ answer_callback: {e}", flush=True)
+
+
 def register(bot, state: dict):
     from clients import clients
 
@@ -23,9 +33,9 @@ def register(bot, state: dict):
     def cb_brand_selector(call):
         from engine.brand_selector import handle_callback as bs_handle
         if bs_handle(call.message.chat.id, call.data, bot):
-            bot.answer_callback_query(call.id)
+            _answer(bot, call.id)
         else:
-            bot.answer_callback_query(call.id, "⏱ Сесія закінчилась")
+            _answer(bot, call.id, "⏱ Сесія закінчилась")
 
     # ── osetup: вибір клієнта і підказки ─────────────────────────────────────
     @bot.callback_query_handler(func=lambda c: c.data.startswith('osetup_')
@@ -37,8 +47,8 @@ def register(bot, state: dict):
         setup   = state.get('_order_setup', {}).get(chat_id)
 
         if not setup:
-            bot.answer_callback_query(call.id, "⏱ Сесія закінчилась"); return
-        bot.answer_callback_query(call.id)
+            _answer(bot, call.id, "⏱ Сесія закінчилась"); return
+        _answer(bot, call.id)
 
         if data.startswith('osetup_cl_'):
             slug = data[10:]
@@ -74,69 +84,17 @@ def register(bot, state: dict):
         setup   = state.get('_order_setup', {}).pop(chat_id, {})
         items   = setup.get('items') or ([setup['item']] if setup.get('item') else [])
         if not items:
-            bot.answer_callback_query(call.id, "⏱ Сесія закінчилась"); return
+            _answer(bot, call.id, "⏱ Сесія закінчилась"); return
         slug = setup.get('slug')
         if slug:
             clients.set_active(chat_id, slug)
-        bot.answer_callback_query(call.id)
+        _answer(bot, call.id)
         p     = clients.get_profile(slug) if slug else None
         label = p['name'] if p else "без клієнта"
         _safe_edit(bot, chat_id, call.message.message_id,
                    f"✅ {label} | без підказки\n⏳ Обробляю...")
         for it in items:
             _add_to_batch(chat_id, it, state, bot)
-
-    # ── inv_match / inv_ocr: обробка рахунку ─────────────────────────────────
-    @bot.callback_query_handler(func=lambda c: c.data.startswith('inv_'))
-    def cb_invoice_mode(call):
-        chat_id = call.message.chat.id
-        pending = state.get('_pending_invoice', {}).pop(chat_id, None)
-        if not pending:
-            bot.answer_callback_query(call.id, "⏱ Сесія закінчилась"); return
-        bot.answer_callback_query(call.id)
-
-        if call.data == 'inv_ocr':
-            from handlers.photo_handler import _ask_order_setup
-            try:
-                file_info  = bot.get_file(pending['file_id'])
-                downloaded = bot.download_file(file_info.file_path)
-                data_b64   = base64.b64encode(downloaded).decode('utf-8')
-                _safe_edit(bot, chat_id, call.message.message_id,
-                           "📸 Обробляю як замовлення...")
-                _ask_order_setup(call.message, {
-                    'type': 'pdf', 'data': data_b64, 'caption': '',
-                    'fuid': pending['file_id'],
-                    'username': call.from_user.username or str(call.from_user.id),
-                }, hint_already=False, bot=bot, state=state)
-            except Exception as e:
-                bot.send_message(chat_id, f"❌ Помилка: {e}")
-
-        elif call.data == 'inv_match':
-            _safe_edit(bot, chat_id, call.message.message_id,
-                       "🔍 Зіставляю з каталогом...")
-
-            def _run():
-                try:
-                    from engine.invoice_match import process_invoice
-                    file_info  = bot.get_file(pending['file_id'])
-                    downloaded = bot.download_file(file_info.file_path)
-                    excel, found, total = process_invoice(downloaded, pending['file_name'])
-                    if excel is None:
-                        bot.send_message(chat_id, "❌ Не вдалося прочитати файл."); return
-                    pct = int(found / total * 100) if total else 0
-                    bot.send_document(
-                        chat_id,
-                        ('match_result.xlsx', excel),
-                        caption=(f"✅ Знайдено *{found}/{total}* позицій ({pct}%)\n"
-                                 f"🟩 ≥90%  🟨 75–89%  🟥 не знайдено"),
-                        parse_mode="Markdown",
-                    )
-                except Exception as e:
-                    import traceback
-                    bot.send_message(chat_id, f"❌ Помилка зіставлення: {e}")
-                    print(traceback.format_exc(), flush=True)
-
-            threading.Thread(target=_run, daemon=True).start()
 
 
 def _finish_order_setup(msg, setup: dict, slug, bot, state: dict):
