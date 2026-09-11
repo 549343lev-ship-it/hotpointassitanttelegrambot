@@ -91,7 +91,7 @@ def _push_outlets(п: dict, build_qa_fn) -> list:
     qa  = п.get('_qa') or build_qa_fn(п)
     п['_qa'] = qa
     typ  = qa.get('type')
-    text = f"{п.get('normalized', '')} {п.get('original', '')}"
+    text = f"{п.get('normalized') or ''} {п.get('original') or ''}"
     g    = re.search(r'(\d{2})\s*[хx×]\s*(\d{2})(?:\s*[хx×]\s*(\d{2}))?', text)
     dims = [int(x) for x in g.groups() if x] if g else list(qa.get('dia') or [])
     has_thread = bool(qa.get('thread')) or bool(
