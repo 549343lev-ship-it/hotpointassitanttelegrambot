@@ -40,7 +40,7 @@ def process_batch(chat_id: int, bot, state: dict):
             elif item['type'] == 'pdf':
                 pos = normalize_pdf(item['data'], item.get('caption', ''))
             else:
-                pos = normalize_text(item['text'], item.get('caption', ''))
+                pos = normalize_text(item.get('text', ''), item.get('caption', ''))
             всі_позиції.extend(pos)
         except Exception as e:
             errors.append(f"❌ Файл {idx}: {e}")
