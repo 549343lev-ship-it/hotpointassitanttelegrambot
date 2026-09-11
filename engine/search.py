@@ -1020,7 +1020,7 @@ PUSH: гільза≠кільце, "натяжний" обов'язково. Б�
         resp = gemini_client.models.generate_content(
             model="gemini-2.5-flash",
             contents=[genai_types.Part.from_text(text=prompt)],
-            config=genai_types.GenerateContentConfig(temperature=0, max_output_tokens=16384)
+            config=genai_types.GenerateContentConfig(temperature=0, max_output_tokens=8192)
         )
         parsed = _parse_claude_json(resp.text)
         if not parsed:
@@ -1045,10 +1045,24 @@ import os as _os
 _PICKER = _os.getenv('PICKER_MODEL', 'claude').lower()  # 'claude' або 'gemini'
 
 
+_PICK_CHUNK = 50   # макс позицій за один виклик Claude/Gemini
+
+
 def pick_batch(позиції: list[dict], _retry=True) -> list[dict]:     # єдина точка входу — делегує до Claude або Gemini залежно від PICKER_MODEL
-    if _PICKER == 'gemini':
-        return gemini_pick_batch(позиції, _retry=_retry)
-    return claude_pick_batch(позиції, _retry=_retry)
+    if len(позиції) <= _PICK_CHUNK:
+        if _PICKER == 'gemini':
+            return gemini_pick_batch(позиції, _retry=_retry)
+        return claude_pick_batch(позиції, _retry=_retry)
+
+    # Великий батч — розбиваємо на чанки
+    results = []
+    for i in range(0, len(позиції), _PICK_CHUNK):
+        chunk = позиції[i:i + _PICK_CHUNK]
+        if _PICKER == 'gemini':
+            results.extend(gemini_pick_batch(chunk, _retry=_retry))
+        else:
+            results.extend(claude_pick_batch(chunk, _retry=_retry))
+    return results
 
 
 def claude_pick_batch(позиції: list[dict], _retry=True) -> list[dict]:  # відправляє батч кандидатів до Claude; він вибирає правильний товар для кожної позиції
@@ -1114,7 +1128,7 @@ JSON рівно {len(позиції)} елементів:
 
     try:
         resp   = claude.messages.create(
-            model="claude-sonnet-4-5", max_tokens=16384,
+            model="claude-sonnet-4-5", max_tokens=8192,
             messages=[{"role": "user", "content": prompt}]
         )
         parsed = _parse_claude_json(resp.content[0].text)
