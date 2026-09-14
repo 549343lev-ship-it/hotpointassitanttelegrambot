@@ -16,12 +16,12 @@ def register(bot, state: dict):
 
     # ── Запуск навчання ───────────────────────────────────────────────────────
 
-    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() == '🌐 навчання бота')
+    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('🌐 навчання бота', 'навчання бота'))
     def handle_learn_global(message):
         """Глобальне навчання — без прив'язки до клієнта."""
         _start_learn_session(message.chat.id, slug='_global', reply_to=message)
 
-    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('навчання', '📚 навчання'))
+    @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('навчання', '📚 навчання', '📚 навчання клієнта', 'навчання клієнта'))
     def handle_learn_start(message):
         from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
         slug = clients.get_active(message.chat.id)
