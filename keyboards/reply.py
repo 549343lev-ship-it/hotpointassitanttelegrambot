@@ -12,7 +12,8 @@ def main_keyboard(uid: int) -> ReplyKeyboardMarkup:
         KeyboardButton("👥 Кеш клієнта"),
     )
     kb.add(
-        KeyboardButton("📚 Навчання"),
+        KeyboardButton("🌐 Навчання бота"),
+        KeyboardButton("📚 Навчання клієнта"),
         KeyboardButton("🛑 Стоп"),
     )
     if uid == ADMIN_ID:
