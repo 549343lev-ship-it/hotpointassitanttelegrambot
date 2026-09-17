@@ -1,8 +1,9 @@
-"""handlers/learn_handler.py — Навчання бота на парах фото+рахунок клієнта."""
+"""handlers/learn_handler.py — Навчання бота на парах замовлення+рахунок."""
 import os
 import re
 import threading
 import json
+import base64
 
 from config.settings import BATCH_TIMEOUT
 
@@ -18,7 +19,6 @@ def register(bot, state: dict):
 
     @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('🌐 навчання бота', 'навчання бота'))
     def handle_learn_global(message):
-        """Глобальне навчання — без прив'язки до клієнта."""
         _start_learn_session(message.chat.id, slug='_global', reply_to=message)
 
     @bot.message_handler(func=lambda m: m.text and m.text.lower().strip() in ('навчання', '📚 навчання', '📚 навчання клієнта', 'навчання клієнта'))
@@ -38,9 +38,9 @@ def register(bot, state: dict):
             return
         _start_learn_session(message.chat.id, slug, reply_to=message)
 
-    # ── Вибір клієнта для навчання ────────────────────────────────────────────
+    # ── Вибір клієнта ─────────────────────────────────────────────────────────
 
-    @bot.callback_query_handler(func=lambda c: c.data.startswith('lrn_') and c.data != 'lrn_photos_done')
+    @bot.callback_query_handler(func=lambda c: c.data.startswith('lrn_') and c.data != 'lrn_order_done')
     def cb_learn_pick_client(call):
         slug = call.data[4:]
         p    = clients.get_profile(slug)
@@ -61,39 +61,43 @@ def register(bot, state: dict):
         p         = clients.get_profile(slug) if not is_global else None
         _, ex_n   = clients.get_next_example_dir(slug) if not is_global else (None, 1)
         _learn_state[chat_id] = {
-            'slug':            slug,
-            'example_n':       ex_n,
-            'stage':           'photos',
-            'photo_paths':     [],
-            'photo_count':     0,
+            'slug':             slug,
+            'example_n':        ex_n,
+            'stage':            'order',      # order → invoice
+            # Замовлення від майстра — три можливих джерела
+            'photo_paths':      [],           # фото
+            'photo_count':      0,
+            'order_text':       '',           # текст
+            'order_file_path':  None,         # xlsx/pdf файл
+            'order_file_type':  None,         # 'xlsx' / 'pdf'
             'invoice_received': False,
         }
         client_label = 'ВЕСЬ БОТ (для всіх клієнтів)' if is_global else (p['name'] if p else slug)
         text = (
             f"📚 Навчання *{client_label}*\n"
             f"Приклад #{ex_n}\n\n"
-            f"Крок 1️⃣: Кидай фото замовлення від майстра\n"
-            f"_(можна кілька — коли всі кинув, натисни_ *Готово* _або одразу кидай рахунок)_"
+            f"Крок 1️⃣: Кидай замовлення від майстра у будь-якому форматі:\n"
+            f"  📸 Фото (можна кілька)\n"
+            f"  💬 Текст (просто надішли)\n"
+            f"  📄 Excel або PDF файл\n\n"
+            f"_Коли готово — натисни кнопку або одразу кидай рахунок_"
         )
         mk = InlineKeyboardMarkup()
-        mk.add(InlineKeyboardButton("✅ Фото готові — кидай рахунок", callback_data="lrn_photos_done"))
+        mk.add(InlineKeyboardButton("✅ Замовлення готове — кидай рахунок", callback_data="lrn_order_done"))
         if reply_to:
             bot.reply_to(reply_to, text, parse_mode="Markdown", reply_markup=mk)
         else:
             bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=mk)
 
-    # ── Прийом фото ───────────────────────────────────────────────────────────
+    # ── Крок 1А: Фото замовлення ──────────────────────────────────────────────
 
     @bot.message_handler(content_types=['photo'],
                          func=lambda m: m.chat.id in state.get('_learn_state', {})
-                         and state['_learn_state'][m.chat.id].get('stage') in ('photos', 'invoice')
-                         and not state['_learn_state'][m.chat.id].get('invoice_received'))
+                         and state['_learn_state'][m.chat.id].get('stage') == 'order')
     def handle_learn_photo(message):
         from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
         st = _learn_state.get(message.chat.id)
-        if not st or st.get('invoice_received'):
-            return
-        st['stage'] = 'photos'
+        if not st: return
 
         chat_id = message.chat.id
         ex_n    = st['example_n']
@@ -110,8 +114,7 @@ def register(bot, state: dict):
             batch  = _learn_photo_batch.pop(cid, [])
             _learn_photo_timers.pop(cid, None)
             lstate = _learn_state.get(cid)
-            if not lstate:
-                return
+            if not lstate: return
             count_before = lstate.get('photo_count', 0)
             for i, (fdata, fext) in enumerate(batch, start=count_before + 1):
                 fpath = os.path.join(
@@ -125,10 +128,10 @@ def register(bot, state: dict):
             lstate['photo_count'] = count_before + len(batch)
             total = lstate['photo_count']
             mk = InlineKeyboardMarkup()
-            mk.add(InlineKeyboardButton("✅ Фото готові — кидай рахунок",
-                                        callback_data="lrn_photos_done"))
+            mk.add(InlineKeyboardButton("✅ Замовлення готове — кидай рахунок",
+                                        callback_data="lrn_order_done"))
             bot.send_message(cid,
-                f"✅ Збережено фото: *{total}* шт.\nКидай ще або натисни кнопку і кидай рахунок.",
+                f"✅ Збережено фото: *{total}* шт.\nКидай ще або натисни кнопку.",
                 parse_mode="Markdown", reply_markup=mk)
 
         t = threading.Timer(BATCH_TIMEOUT, _flush, args=[chat_id])
@@ -136,16 +139,81 @@ def register(bot, state: dict):
         t.start()
         _learn_photo_timers[chat_id] = t
 
-    # ── Кнопка "фото готові" ──────────────────────────────────────────────────
+    # ── Крок 1Б: Текст замовлення ─────────────────────────────────────────────
 
-    @bot.callback_query_handler(func=lambda c: c.data == 'lrn_photos_done')
-    def cb_learn_photos_done(call):
+    @bot.message_handler(content_types=['text'],
+                         func=lambda m: m.chat.id in state.get('_learn_state', {})
+                         and state['_learn_state'][m.chat.id].get('stage') == 'order'
+                         and m.text and not m.text.startswith('/')
+                         and m.text.lower().strip() not in (
+                             'навчання', '📚 навчання', '📚 навчання клієнта',
+                             '🌐 навчання бота', 'навчання клієнта', '🛑 стоп'))
+    def handle_learn_text(message):
+        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+        st = _learn_state.get(message.chat.id)
+        if not st: return
+        # Додаємо текст (може бути кілька повідомлень)
+        existing = st.get('order_text', '')
+        st['order_text'] = (existing + '\n' + message.text).strip()
+        mk = InlineKeyboardMarkup()
+        mk.add(InlineKeyboardButton("✅ Замовлення готове — кидай рахунок",
+                                    callback_data="lrn_order_done"))
+        bot.reply_to(message,
+            f"✅ Текст збережено ({len(st['order_text'])} символів).\n"
+            f"Можеш дописати ще або натисни кнопку.",
+            reply_markup=mk)
+
+    # ── Крок 1В: Excel/PDF замовлення ────────────────────────────────────────
+
+    @bot.message_handler(content_types=['document'],
+                         func=lambda m: m.chat.id in state.get('_learn_state', {})
+                         and state['_learn_state'][m.chat.id].get('stage') == 'order')
+    def handle_learn_order_file(message):
+        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+        st    = _learn_state.get(message.chat.id)
+        if not st: return
+        doc   = message.document
+        fname = doc.file_name or ''
+        ext   = fname.rsplit('.', 1)[-1].lower() if '.' in fname else ''
+        mime  = doc.mime_type or ''
+
+        if ext not in ('xls', 'xlsx', 'pdf') and not mime.startswith('image/'):
+            bot.reply_to(message, "⚠️ Підтримуються: .xlsx, .xls, .pdf або фото"); return
+
+        file_info = bot.get_file(doc.file_id)
+        file_data = bot.download_file(file_info.file_path)
+
+        # Зберігаємо файл замовлення
+        ex_n = st['example_n']
+        slug = st['slug']
+        fpath = os.path.join(
+            clients.CLIENTS_DIR, slug, "examples",
+            f"приклад_{ex_n}", f"order.{ext}"
+        )
+        os.makedirs(os.path.dirname(fpath), exist_ok=True)
+        with open(fpath, 'wb') as f:
+            f.write(file_data)
+
+        st['order_file_path'] = fpath
+        st['order_file_type'] = ext
+
+        mk = InlineKeyboardMarkup()
+        mk.add(InlineKeyboardButton("✅ Замовлення готове — кидай рахунок",
+                                    callback_data="lrn_order_done"))
+        bot.reply_to(message,
+            f"✅ Файл замовлення збережено ({fname}).\nТепер кидай рахунок Excel.",
+            reply_markup=mk)
+
+    # ── Кнопка "замовлення готове" ────────────────────────────────────────────
+
+    @bot.callback_query_handler(func=lambda c: c.data == 'lrn_order_done')
+    def cb_learn_order_done(call):
         chat_id = call.message.chat.id
         st = _learn_state.get(chat_id)
         if not st:
             bot.answer_callback_query(call.id, "Сесія завершена"); return
 
-        # Примусово скидаємо батч фото якщо таймер ще не спрацював
+        # Примусово скидаємо батч фото
         if chat_id in _learn_photo_timers:
             _learn_photo_timers[chat_id].cancel()
             _learn_photo_timers.pop(chat_id, None)
@@ -163,72 +231,92 @@ def register(bot, state: dict):
                 st.setdefault('photo_paths', []).append(fpath)
             st['photo_count'] = count_before + len(pending)
 
-        if st.get('photo_count', 0) == 0:
-            bot.answer_callback_query(call.id, "⚠️ Спочатку кинь хоча б одне фото!"); return
+        # Перевіряємо що є хоч щось
+        has_photos = st.get('photo_count', 0) > 0
+        has_text   = bool(st.get('order_text', '').strip())
+        has_file   = bool(st.get('order_file_path'))
+
+        if not (has_photos or has_text or has_file):
+            bot.answer_callback_query(call.id, "⚠️ Спочатку кинь замовлення!"); return
+
         st['stage'] = 'invoice'
+        sources = []
+        if has_photos: sources.append(f"📸 {st['photo_count']} фото")
+        if has_text:   sources.append(f"💬 текст")
+        if has_file:   sources.append(f"📄 файл ({st['order_file_type']})")
+
         bot.edit_message_text(
-            f"✅ Фото збережено: {st['photo_count']} шт.\n\n"
-            f"Крок 2️⃣: Кидай файл рахунку (.xls або .xlsx)",
+            f"✅ Замовлення збережено: {', '.join(sources)}\n\n"
+            f"Крок 2️⃣: Кидай рахунок Excel (.xls або .xlsx)",
             call.message.chat.id, call.message.message_id)
         bot.answer_callback_query(call.id)
 
-    # ── Прийом рахунку ────────────────────────────────────────────────────────
+    # ── Крок 2: Рахунок Excel ─────────────────────────────────────────────────
 
     @bot.message_handler(content_types=['document'],
                          func=lambda m: m.chat.id in state.get('_learn_state', {})
-                         and state['_learn_state'][m.chat.id].get('stage') == 'invoice')
+                         and state['_learn_state'][m.chat.id].get('stage') == 'invoice'
+                         and not state['_learn_state'][m.chat.id].get('invoice_received'))
     def handle_learn_invoice(message):
-        st   = _learn_state.get(message.chat.id)
+        st    = _learn_state.get(message.chat.id)
+        if not st: return
+        fname = message.document.file_name or ''
+        ext   = fname.rsplit('.', 1)[-1].lower() if '.' in fname else ''
+
+        if ext not in ('xls', 'xlsx'):
+            bot.reply_to(message, "⚠️ Рахунок має бути Excel (.xls або .xlsx)"); return
+
+        file_info = bot.get_file(message.document.file_id)
+        file_data = bot.download_file(file_info.file_path)
+
+        st['invoice_received'] = True
         slug = st['slug']
         ex_n = st['example_n']
 
-        fname = message.document.file_name or ''
-        ext   = fname.rsplit('.', 1)[-1].lower() if '.' in fname else 'xlsx'
-        if ext not in ('xls', 'xlsx'):
-            bot.reply_to(message, "⚠️ Потрібен файл .xls або .xlsx"); return
-
-        file_info    = bot.get_file(message.document.file_id)
-        file_data    = bot.download_file(file_info.file_path)
-        invoice_path = clients.save_example_invoice(slug, ex_n, file_data, ext)
-
-        st['stage']            = 'invoice'
-        st['invoice_received'] = True
-
-        status_msg = bot.reply_to(message, "⏳ Зіставляю фото з рахунком через Gemini...")
-
+        invoice_path  = clients.save_example_invoice(slug, ex_n, file_data, ext)
         invoice_items = clients.parse_invoice(invoice_path)
-        print(f"📄 parse_invoice: {len(invoice_items)} позицій з {invoice_path}", flush=True)
+
+        print(f"📄 parse_invoice: {len(invoice_items)} позицій", flush=True)
         if not invoice_items:
-            bot.edit_message_text(
-                "❌ Не вдалося прочитати рахунок. Перевір формат файлу.",
-                message.chat.id, status_msg.message_id); return
+            st['invoice_received'] = False
+            bot.reply_to(message, "❌ Не вдалося прочитати рахунок. Перевір формат файлу.")
+            return
 
-        photo_paths = st.get('photo_paths', [])
-        print(f"📸 Фото для навчання: {photo_paths}", flush=True)
-        if not photo_paths:
-            bot.edit_message_text(
-                "❌ Фото не знайдено. Почни навчання знову: `навчання`",
-                message.chat.id, status_msg.message_id, parse_mode="Markdown"); return
+        status_msg = bot.reply_to(message, "⏳ Зіставляю замовлення з рахунком через Gemini...")
 
+        # Збираємо матеріали замовлення
         photos_bytes = []
-        for pp in photo_paths:
+        for pp in st.get('photo_paths', []):
             if os.path.exists(pp):
                 with open(pp, 'rb') as f:
-                    photos_bytes.append(f.read())
-                print(f"  ✅ {pp} ({os.path.getsize(pp)} байт)", flush=True)
-            else:
-                print(f"  ❌ Не знайдено: {pp}", flush=True)
+                    photos_bytes.append(('image', f.read()))
 
-        if not photos_bytes:
-            bot.edit_message_text("❌ Файли фото не читаються. Спробуй знову.",
-                                  message.chat.id, status_msg.message_id); return
+        order_text      = st.get('order_text', '').strip()
+        order_file_path = st.get('order_file_path')
+        order_file_type = st.get('order_file_type', '')
+
+        order_file_bytes = None
+        if order_file_path and os.path.exists(order_file_path):
+            with open(order_file_path, 'rb') as f:
+                order_file_bytes = f.read()
+
+        if not photos_bytes and not order_text and not order_file_bytes:
+            bot.edit_message_text(
+                "❌ Матеріали замовлення не знайдені. Спробуй знову.",
+                message.chat.id, status_msg.message_id); return
 
         bot.edit_message_text(
-            f"⏳ Gemini аналізує {len(photos_bytes)} фото та {len(invoice_items)} позицій...",
+            f"⏳ Gemini аналізує замовлення та {len(invoice_items)} позицій рахунку...",
             message.chat.id, status_msg.message_id)
 
         try:
-            pairs, raw_response = _gemini_match(photos_bytes, invoice_items)
+            pairs, raw_response = _gemini_match(
+                photos_bytes=photos_bytes,
+                order_text=order_text,
+                order_file_bytes=order_file_bytes,
+                order_file_type=order_file_type,
+                invoice_items=invoice_items,
+            )
             print(f"🤖 Gemini (перші 500):\n{raw_response[:500]}", flush=True)
         except Exception as e:
             import traceback
@@ -239,27 +327,27 @@ def register(bot, state: dict):
 
         if not pairs:
             bot.edit_message_text(
-                f"⚠️ Gemini не знайшов збігів між фото і рахунком.\n\n"
+                f"⚠️ Gemini не знайшов збігів між замовленням і рахунком.\n\n"
                 f"Можливі причини:\n"
-                f"• Фото і рахунок від різних замовлень\n"
+                f"• Замовлення і рахунок від різних об'єктів\n"
                 f"• Фото нечітке або погано освітлене\n"
                 f"• Gemini не зміг розібрати почерк\n\n"
                 f"_Відповідь Gemini:_\n`{raw_response[:300]}`",
                 message.chat.id, status_msg.message_id, parse_mode="Markdown"); return
 
         if slug == '_global':
-            # Глобальне навчання → зберігаємо в загальний кеш бота
             from clients.cache import cache_confirm
             saved = 0
             for pair in pairs:
-                orig = pair.get('original', '').strip()
-                name = pair.get('catalog_name', '').strip()
+                orig = (pair.get('original') or '').strip()
+                name = (pair.get('catalog_name') or '').strip()
                 cat  = pair.get('category', 'other')
                 if orig and name:
                     cache_confirm(orig, {}, orig, name, cat, source='global_train')
                     saved += 1
         else:
             saved = clients.learn_from_example(slug, ex_n, pairs)
+
         _learn_state.pop(message.chat.id, None)
         print(f"✅ Навчання: збережено {saved}/{len(pairs)} пар", flush=True)
 
@@ -269,52 +357,84 @@ def register(bot, state: dict):
             f"✅ Навчання завершено!\n"
             f"👤 Клієнт: *{client_label}*\n"
             f"📚 Приклад #{ex_n}\n"
-            f"📸 Фото: {len(photos_bytes)} шт.\n"
             f"🔗 Знайдено збігів: *{len(pairs)}*\n"
             f"💾 Збережено в кеш: *{saved}*\n\n"
-            f"Для ще одного прикладу: натисни *📚 Навчання*",
+            f"Для ще одного прикладу: натисни *📚 Навчання клієнта*",
             message.chat.id, status_msg.message_id, parse_mode="Markdown")
 
-    # Expose handlers до photo_handler через state (делегування)
+    # Expose handlers до photo_handler через state
     state['_handle_learn_photo']   = handle_learn_photo
     state['_handle_learn_invoice'] = handle_learn_invoice
 
 
 # ── Gemini зіставлення ────────────────────────────────────────────────────────
 
-def _gemini_match(photos_bytes: list[bytes],
-                  invoice_items: list[str]) -> tuple[list[dict], str]:
+def _gemini_match(
+    photos_bytes: list[tuple],   # [('image', bytes), ...]
+    order_text: str,
+    order_file_bytes: bytes | None,
+    order_file_type: str,
+    invoice_items: list[str],
+) -> tuple[list[dict], str]:
     from google import genai as _genai
     from google.genai import types as _gtypes
+    import re, json
 
-    GEMINI_KEY   = os.environ.get("GEMINI_KEY", "")
-    client       = _genai.Client(api_key=GEMINI_KEY)
+    GEMINI_KEY = os.environ.get("GEMINI_KEY", "")
+    client     = _genai.Client(api_key=GEMINI_KEY)
     invoice_text = "\n".join(f"{i+1}. {name}" for i, name in enumerate(invoice_items))
 
-    prompt = f"""Ти — експерт з читання рукописних замовлень сантехніки українською мовою.
+    contents = []
 
-На фото — рукописний список замовлення від майстра-сантехніка (може бути кілька сторінок).
-Нижче — рахунок з правильними назвами товарів з бази.
+    # Додаємо фото замовлення
+    for _, pb in photos_bytes:
+        contents.append(_gtypes.Part.from_bytes(data=pb, mime_type="image/jpeg"))
 
-РАХУНОК (товари з бази, {len(invoice_items)} позицій):
+    # Додаємо файл замовлення (xlsx або pdf)
+    if order_file_bytes:
+        if order_file_type == 'pdf':
+            contents.append(_gtypes.Part.from_bytes(data=order_file_bytes, mime_type="application/pdf"))
+        elif order_file_type in ('xls', 'xlsx'):
+            # xlsx Gemini не вміє читати напряму — конвертуємо в текст
+            try:
+                import pandas as pd, io
+                engine = 'xlrd' if order_file_type == 'xls' else 'openpyxl'
+                df = pd.read_excel(io.BytesIO(order_file_bytes), header=None, engine=engine)
+                xlsx_text = df.to_string(index=False, header=False)
+                order_text = (order_text + '\n' + xlsx_text).strip()
+            except Exception as e:
+                print(f"⚠️ xlsx→text: {e}", flush=True)
+
+    # Будуємо промпт
+    order_section = ''
+    if order_text:
+        order_section = f"\nТЕКСТ ЗАМОВЛЕННЯ:\n{order_text}\n"
+    if photos_bytes:
+        order_section += f"\n(+ {len(photos_bytes)} фото замовлення вище)"
+
+    prompt = f"""Ти — експерт з читання замовлень сантехніки українською мовою.
+
+ЗАМОВЛЕННЯ від майстра:{order_section}
+
+РАХУНОК (правильні назви товарів з бази, {len(invoice_items)} позицій):
 {invoice_text}
 
 ЗАВДАННЯ:
-1. Прочитай кожен рядок з фото (скорочення, абревіатури, каракулі — все читай)
+1. Прочитай кожен рядок замовлення (скорочення, абревіатури, каракулі — все читай)
 2. Знайди найближчий товар з рахунку
-3. Якщо рядок з фото точно відповідає товару з рахунку — включай в результат
+3. Якщо рядок з замовлення точно відповідає товару з рахунку — включай в результат
 
-ПРАВИЛА зіставлення:
-- "Труба ф25" на фото → "Труба PPR..." в рахунку ✓
-- "Трійник ф25" → "Трійник однозначний рівний PPR ф 25..." ✓
+ПРАВИЛА:
+- "Труба ф25" → "Труба PPR..." ✓
+- "Трійник ф25" → "Трійник PPR ф 25..." ✓
 - "Кол ф25 90" → "Коліно PPR 90° ф 25..." ✓
-- Скорочення: "Тр" = Трійник, "Кол/Кут" = Коліно, "Тр-ба" = Труба
-- Ігноруй кількість (шт, м) — вона не є назвою товару
+- Скорочення: "Тр"=Трійник, "Кол/Кут"=Коліно, "Тр-ба"=Труба
+- Ігноруй кількість (шт, м)
 - Якщо немає відповідника — НЕ включай
 
 Поверни ТІЛЬКИ JSON масив (без пояснень, без markdown):
 [
-  {{"original": "що написано на фото", "catalog_name": "точна назва з рахунку", "category": "категорія"}},
+  {{"original": "що написано в замовленні", "catalog_name": "точна назва з рахунку", "category": "категорія"}},
   ...
 ]
 
@@ -323,14 +443,15 @@ metal_plastic, filtration, insulation, radiators_radiatorsvalve, underfloor_heat
 water_heaters, boilers, pumps, mixers_faucets, sanitary_ware, siphons_fittings,
 hoses, water_meters, towel_warmers, safety_valves, automation, other"""
 
-    contents = [_gtypes.Part.from_bytes(data=pb, mime_type="image/jpeg")
-                for pb in photos_bytes]
     contents.append(_gtypes.Part.from_text(text=prompt))
 
     resp = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=contents,
-        config=_gtypes.GenerateContentConfig(temperature=0),
+        config=_gtypes.GenerateContentConfig(
+            temperature=0,
+            max_output_tokens=8192,
+        ),
     )
     raw  = (resp.text or '').strip()
     text = re.sub(r'^```json\s*', '', raw)
