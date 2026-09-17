@@ -56,9 +56,14 @@ def register(bot, state: dict):
     def handle_document(message):
         chat_id = message.chat.id
 
-        # Навчання — рахунок
+        # Навчання — делегуємо в learn_handler для обох стадій
         if chat_id in state.get('_learn_state', {}):
             st = state['_learn_state'].get(chat_id, {})
+            # Стадія замовлення — файл іде як замовлення майстра
+            if st.get('stage') == 'order':
+                state.get('_handle_learn_order_file', lambda m: None)(message)
+                return
+            # Стадія рахунку — файл іде як рахунок менеджера
             if st.get('stage') == 'invoice' and not st.get('invoice_received'):
                 state.get('_handle_learn_invoice', lambda m: None)(message)
                 return
@@ -73,7 +78,7 @@ def register(bot, state: dict):
         is_excel = ext in ('xls', 'xlsx')
 
         if not (is_image or is_pdf or is_excel):
-            bot.reply_to(message, "⚠️ Надсилай фото або PDF."); return
+            bot.reply_to(message, "⚠️ Надсилай фото, PDF або Excel (xls/xlsx)."); return
 
         # PDF або Excel — питаємо: рахунок чи замовлення
         if is_pdf or is_excel:
@@ -89,10 +94,9 @@ def register(bot, state: dict):
                 caption    = message.caption or ""
                 hint       = state.get('pending_hints', {}).pop(chat_id, '')
                 full_cap   = ' | '.join(filter(None, [caption, hint]))
-                dtype      = 'photo' if is_image else 'pdf'
 
                 _ask_order_setup(message, {
-                    'type': dtype, 'data': data_b64,
+                    'type': 'photo', 'data': data_b64,
                     'caption': full_cap, 'fuid': doc.file_unique_id,
                     'username': message.from_user.username or str(message.from_user.id),
                 }, hint_already=bool(hint), bot=bot, state=state)
@@ -169,7 +173,7 @@ def _ask_order_setup(message, item: dict, hint_already: bool,
             active_name = prof['name'] if prof else None
 
         # Якщо є підказка в pending_hints — вона вже готова, не питаємо знову
-        has_hint   = bool(state.get('pending_hints', {}).get(cid))
+        has_hint = bool(state.get('pending_hints', {}).get(cid))
         hint_ready = p.get('hint_already', False) or has_hint
 
         state.setdefault('_order_setup', {})[cid] = {
