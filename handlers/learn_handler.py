@@ -363,8 +363,9 @@ def register(bot, state: dict):
             message.chat.id, status_msg.message_id, parse_mode="Markdown")
 
     # Expose handlers до photo_handler через state
-    state['_handle_learn_photo']   = handle_learn_photo
-    state['_handle_learn_invoice'] = handle_learn_invoice
+    state['_handle_learn_photo']      = handle_learn_photo
+    state['_handle_learn_invoice']    = handle_learn_invoice
+    state['_handle_learn_order_file'] = handle_learn_order_file
 
 
 # ── Gemini зіставлення ────────────────────────────────────────────────────────
