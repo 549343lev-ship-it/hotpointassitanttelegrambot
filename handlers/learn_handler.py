@@ -321,19 +321,21 @@ def register(bot, state: dict):
         except Exception as e:
             import traceback
             print(f"❌ Gemini exception:\n{traceback.format_exc()}", flush=True)
+            safe_e = str(e)[:200].replace('`', "'")
             bot.edit_message_text(
-                f"❌ Помилка Gemini:\n`{str(e)[:200]}`",
-                message.chat.id, status_msg.message_id, parse_mode="Markdown"); return
+                f"❌ Помилка Gemini:\n{safe_e}",
+                message.chat.id, status_msg.message_id); return
 
         if not pairs:
+            safe_raw = raw_response[:300].replace('`', "'").replace('_', '').replace('*', '')
             bot.edit_message_text(
                 f"⚠️ Gemini не знайшов збігів між замовленням і рахунком.\n\n"
                 f"Можливі причини:\n"
                 f"• Замовлення і рахунок від різних об'єктів\n"
                 f"• Фото нечітке або погано освітлене\n"
                 f"• Gemini не зміг розібрати почерк\n\n"
-                f"_Відповідь Gemini:_\n`{raw_response[:300]}`",
-                message.chat.id, status_msg.message_id, parse_mode="Markdown"); return
+                f"Відповідь Gemini:\n{safe_raw}",
+                message.chat.id, status_msg.message_id); return
 
         if slug == '_global':
             from clients.cache import cache_confirm
@@ -451,7 +453,7 @@ hoses, water_meters, towel_warmers, safety_valves, automation, other"""
         contents=contents,
         config=_gtypes.GenerateContentConfig(
             temperature=0,
-            max_output_tokens=8192,
+            max_output_tokens=16384,
         ),
     )
     raw  = (resp.text or '').strip()
@@ -459,8 +461,16 @@ hoses, water_meters, towel_warmers, safety_valves, automation, other"""
     text = re.sub(r'\s*```$', '', text).strip()
 
     try:
-        pairs = json.loads(text)
-        return (pairs if isinstance(pairs, list) else []), raw
-    except json.JSONDecodeError as e:
-        print(f"❌ JSON parse: {e}\nRaw: {raw[:500]}", flush=True)
-        return [], raw
+        from engine.ocr import _extract_json
+        pairs = _extract_json(raw)
+    except Exception:
+        pairs = []
+        try:
+            pairs = json.loads(text)
+        except Exception:
+            pass
+
+    if not isinstance(pairs, list):
+        pairs = []
+
+    return pairs, raw
