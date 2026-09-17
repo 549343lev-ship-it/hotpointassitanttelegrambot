@@ -372,8 +372,46 @@ def register(bot, state: dict):
 
 # ── Gemini зіставлення ────────────────────────────────────────────────────────
 
+def _extract_order_items_from_xlsx(file_bytes: bytes, ext: str) -> list[str]:
+    """Витягує список позицій замовлення з xlsx/xls файлу."""
+    try:
+        import pandas as pd, io, re
+        engine = 'xlrd' if ext == 'xls' else 'openpyxl'
+        df = pd.read_excel(io.BytesIO(file_bytes), header=None, engine=engine)
+
+        # Шукаємо колонку з назвами (Номенклатура, Найменування, Назва)
+        nom_col = header_row = None
+        for ri in range(min(20, len(df))):
+            for ci in range(len(df.columns)):
+                val = str(df.iloc[ri, ci] or '').strip().lower()
+                if any(k in val for k in ('номенклатур', 'найменуван', 'назва', 'товар')):
+                    nom_col, header_row = ci, ri
+                    break
+            if nom_col is not None:
+                break
+
+        if nom_col is None:
+            nom_col, header_row = 1, 0
+
+        items = []
+        for ri in range((header_row or 0) + 1, len(df)):
+            val = str(df.iloc[ri, nom_col] or '').strip()
+            if not val or val in ('nan', 'None') or len(val) < 4:
+                continue
+            if any(s in val for s in ['Покупець', 'Виконавець', 'оплат', 'реквізит']):
+                continue
+            val = re.sub(r'\s*\{[^}]+\}', '', val).strip()
+            val = re.sub(r'^NEW!\s*', '', val).strip()
+            if val and len(val) > 3:
+                items.append(val)
+        return items
+    except Exception as e:
+        print(f"⚠️ _extract_order_items_from_xlsx: {e}", flush=True)
+        return []
+
+
 def _gemini_match(
-    photos_bytes: list[tuple],   # [('image', bytes), ...]
+    photos_bytes: list[tuple],
     order_text: str,
     order_file_bytes: bytes | None,
     order_file_type: str,
@@ -389,35 +427,74 @@ def _gemini_match(
 
     contents = []
 
-    # Додаємо фото замовлення
+    # Фото замовлення
     for _, pb in photos_bytes:
         contents.append(_gtypes.Part.from_bytes(data=pb, mime_type="image/jpeg"))
 
-    # Додаємо файл замовлення (xlsx або pdf)
+    # Файл замовлення
+    order_items_from_file = []
     if order_file_bytes:
         if order_file_type == 'pdf':
-            contents.append(_gtypes.Part.from_bytes(data=order_file_bytes, mime_type="application/pdf"))
+            contents.append(_gtypes.Part.from_bytes(
+                data=order_file_bytes, mime_type="application/pdf"))
         elif order_file_type in ('xls', 'xlsx'):
-            # xlsx Gemini не вміє читати напряму — конвертуємо в текст
-            try:
-                import pandas as pd, io
-                engine = 'xlrd' if order_file_type == 'xls' else 'openpyxl'
-                df = pd.read_excel(io.BytesIO(order_file_bytes), header=None, engine=engine)
-                xlsx_text = df.to_string(index=False, header=False)
-                order_text = (order_text + '\n' + xlsx_text).strip()
-            except Exception as e:
-                print(f"⚠️ xlsx→text: {e}", flush=True)
+            # xlsx → витягуємо позиції правильно
+            order_items_from_file = _extract_order_items_from_xlsx(
+                order_file_bytes, order_file_type)
+            print(f"📄 order xlsx: {len(order_items_from_file)} позицій", flush=True)
 
-    # Будуємо промпт
-    order_section = ''
-    if order_text:
-        order_section = f"\nТЕКСТ ЗАМОВЛЕННЯ:\n{order_text}\n"
+    # Будуємо секцію замовлення
+    order_parts = []
+    if order_items_from_file:
+        order_text_from_file = "\n".join(
+            f"{i+1}. {name}" for i, name in enumerate(order_items_from_file))
+        order_parts.append(f"ФАЙЛ ЗАМОВЛЕННЯ ({len(order_items_from_file)} позицій):\n{order_text_from_file}")
+    if order_text.strip():
+        order_parts.append(f"ТЕКСТ ЗАМОВЛЕННЯ:\n{order_text.strip()}")
     if photos_bytes:
-        order_section += f"\n(+ {len(photos_bytes)} фото замовлення вище)"
+        order_parts.append(f"(+ {len(photos_bytes)} фото замовлення вище)")
 
-    prompt = f"""Ти — експерт з читання замовлень сантехніки українською мовою.
+    order_section = "\n\n".join(order_parts) if order_parts else "(дивись фото вище)"
 
-ЗАМОВЛЕННЯ від майстра:{order_section}
+    # Якщо є файл замовлення — змінюємо промпт: зіставляємо позиція до позиції
+    if order_items_from_file:
+        prompt = f"""Ти — експерт з комерційних пропозицій і кошторисів сантехніки.
+
+СПИСОК ПІДІБРАНИХ ТОВАРІВ (наша комерційна пропозиція, {len(order_items_from_file)} позицій):
+{order_text_from_file}
+
+КОШТОРИС ЗАМОВНИКА (еталонні назви, {len(invoice_items)} позицій):
+{invoice_text}
+
+ЗАВДАННЯ:
+Для кожної позиції з нашої КП знайди відповідну позицію в кошторисі замовника.
+Це потрібно щоб навчити бота: "коли замовник пише X — підбирай Y".
+
+ПРАВИЛА зіставлення:
+- Труба PPR ф75 (КП) ↔ Труба поліпропіленова SDR 7,4 75 мм (кошторис) ✓
+- Кран кульовий DN50 (КП) ↔ Кран кульковий 2' ВН (кошторис) ✓
+- Ізоляція каучукова Ø64х9 (КП) ↔ Теплоізоляція Kaiflex 9мм 76мм (кошторис) ✓
+- Хомут DN10 ф15-19 (КП) ↔ Матеріали для кріплення (кошторис) ✗ (занадто загально)
+- Якщо в кошторисі лише загальна назва розділу — НЕ включай
+- Включай тільки конкретні товари, не заголовки розділів
+
+Поверни ТІЛЬКИ JSON масив де:
+- "original" = назва з КОШТОРИСУ ЗАМОВНИКА (що він пише)
+- "catalog_name" = назва з нашої КП (що підбираємо)
+[
+  {{"original": "назва з кошторису", "catalog_name": "назва з КП", "category": "категорія"}},
+  ...
+]
+
+Категорії: plastic_ppr, push_systems, sewage, adapters_reducers, shutoff_valves, heating,
+metal_plastic, filtration, insulation, radiators_radiatorsvalve, underfloor_heating,
+water_heaters, boilers, pumps, mixers_faucets, sanitary_ware, siphons_fittings,
+hoses, water_meters, towel_warmers, safety_valves, automation, other"""
+    else:
+        prompt = f"""Ти — експерт з читання замовлень сантехніки українською мовою.
+
+ЗАМОВЛЕННЯ від майстра:
+{order_section}
 
 РАХУНОК (правильні назви товарів з бази, {len(invoice_items)} позицій):
 {invoice_text}
@@ -425,7 +502,7 @@ def _gemini_match(
 ЗАВДАННЯ:
 1. Прочитай кожен рядок замовлення (скорочення, абревіатури, каракулі — все читай)
 2. Знайди найближчий товар з рахунку
-3. Якщо рядок з замовлення точно відповідає товару з рахунку — включай в результат
+3. Якщо рядок з замовлення відповідає товару з рахунку — включай
 
 ПРАВИЛА:
 - "Труба ф25" → "Труба PPR..." ✓
@@ -433,9 +510,9 @@ def _gemini_match(
 - "Кол ф25 90" → "Коліно PPR 90° ф 25..." ✓
 - Скорочення: "Тр"=Трійник, "Кол/Кут"=Коліно, "Тр-ба"=Труба
 - Ігноруй кількість (шт, м)
-- Якщо немає відповідника — НЕ включай
+- Якщо немає конкретного відповідника — НЕ включай
 
-Поверни ТІЛЬКИ JSON масив (без пояснень, без markdown):
+Поверни ТІЛЬКИ JSON масив:
 [
   {{"original": "що написано в замовленні", "catalog_name": "точна назва з рахунку", "category": "категорія"}},
   ...
@@ -453,12 +530,10 @@ hoses, water_meters, towel_warmers, safety_valves, automation, other"""
         contents=contents,
         config=_gtypes.GenerateContentConfig(
             temperature=0,
-            max_output_tokens=16384,
+            max_output_tokens=32768,
         ),
     )
     raw  = (resp.text or '').strip()
-    text = re.sub(r'^```json\s*', '', raw)
-    text = re.sub(r'\s*```$', '', text).strip()
 
     try:
         from engine.ocr import _extract_json
@@ -466,6 +541,9 @@ hoses, water_meters, towel_warmers, safety_valves, automation, other"""
     except Exception:
         pairs = []
         try:
+            import re as _re
+            text = _re.sub(r'^```json\s*', '', raw)
+            text = _re.sub(r'\s*```$', '', text).strip()
             pairs = json.loads(text)
         except Exception:
             pass
