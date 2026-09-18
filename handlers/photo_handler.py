@@ -73,16 +73,23 @@ def register(bot, state: dict):
         fname = doc.file_name or ''
         ext   = fname.rsplit('.', 1)[-1].lower() if '.' in fname else ''
 
+        EXCEL_MIMES = (
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.ms-excel',
+            'application/excel', 'application/x-excel', 'application/x-msexcel',
+        )
+
         is_image = mime in ('image/jpeg', 'image/png', 'image/webp')
-        is_pdf   = mime == 'application/pdf'
-        is_excel = ext in ('xls', 'xlsx')
+        is_pdf   = mime == 'application/pdf' or ext == 'pdf'
+        is_excel = ext in ('xls', 'xlsx') or mime in EXCEL_MIMES
 
         if not (is_image or is_pdf or is_excel):
             bot.reply_to(message, "⚠️ Надсилай фото, PDF або Excel (xls/xlsx)."); return
 
         # PDF або Excel — питаємо: рахунок чи замовлення
         if is_pdf or is_excel:
-            _ask_invoice_mode(message, bot, state)
+            kind = 'excel' if is_excel else 'pdf'
+            _ask_invoice_mode(message, bot, state, kind=kind, ext=ext)
             return
 
         # Зображення — звичайний флоу
@@ -110,13 +117,17 @@ def register(bot, state: dict):
 
 # ─── Вибір режиму для PDF/Excel ──────────────────────────────────────────────
 
-def _ask_invoice_mode(message, bot, state: dict):
+def _ask_invoice_mode(message, bot, state: dict, kind: str = 'pdf', ext: str = ''):
     """Питає: зіставити рахунок з каталогом чи розпізнати як замовлення (OCR)."""
     from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
     chat_id = message.chat.id
+    if kind == 'excel' and ext not in ('xls', 'xlsx'):
+        ext = 'xlsx'          # розширення в імені немає — визначили за mime
     state.setdefault('_pending_invoice', {})[chat_id] = {
         'file_id':   message.document.file_id,
         'file_name': message.document.file_name or '',
+        'kind':      kind,
+        'ext':       ext,
     }
     mk = InlineKeyboardMarkup(row_width=1)
     mk.add(
@@ -189,8 +200,9 @@ def _ask_order_setup(message, item: dict, hint_already: bool,
             InlineKeyboardButton("👤 Без клієнта",     callback_data="osetup_none"),
             InlineKeyboardButton("🔍 Вибрати клієнта", callback_data="osetup_pick"),
         )
-        n_photos = len(p['items'])
-        text = f"📋 *Для кого замовлення?* ({n_photos} фото)"
+        n_items = len(p['items'])
+        word    = "файл" if any(it.get('type') == 'xlsx' for it in p['items']) else "фото"
+        text = f"📋 *Для кого замовлення?* ({n_items} {word})"
         bot.send_message(cid, text, parse_mode="Markdown", reply_markup=mk)
 
     t = threading.Timer(BATCH_TIMEOUT, _flush, args=[chat_id, message])
