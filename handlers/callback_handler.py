@@ -111,18 +111,46 @@ def register(bot, state: dict):
         if call.data == 'inv_ocr':
             from handlers.photo_handler import _ask_order_setup
             try:
+                fname = pending.get('file_name') or ''
+                ext   = pending.get('ext') or (
+                    fname.rsplit('.', 1)[-1].lower() if '.' in fname else '')
+                is_excel = pending.get('kind') == 'excel' or ext in ('xls', 'xlsx')
+                username = call.from_user.username or str(call.from_user.id)
+
                 file_info  = bot.get_file(pending['file_id'])
                 downloaded = bot.download_file(file_info.file_path)
-                data_b64   = base64.b64encode(downloaded).decode('utf-8')
-                _safe_edit(bot, chat_id, call.message.message_id,
-                           "📸 Обробляю як замовлення...")
-                _ask_order_setup(call.message, {
-                    'type': 'pdf', 'data': data_b64, 'caption': '',
-                    'fuid': pending['file_id'],
-                    'username': call.from_user.username or str(call.from_user.id),
-                }, hint_already=False, bot=bot, state=state)
+
+                if is_excel:
+                    # Excel читаємо як таблицю, а не як картинку/PDF
+                    from engine.xlsx_reader import extract_order_rows, MAX_ROWS
+                    rows = extract_order_rows(downloaded, ext or 'xlsx')
+                    if not rows:
+                        _safe_edit(bot, chat_id, call.message.message_id,
+                                   "😕 Не вдалося прочитати позиції з Excel.\n"
+                                   "Перевір, чи є в файлі колонка з назвами товарів, "
+                                   "або надішли фото/PDF замовлення.")
+                        return
+                    note = (f"\n⚠️ Беру перші {MAX_ROWS} позицій."
+                            if len(rows) >= MAX_ROWS else "")
+                    _safe_edit(bot, chat_id, call.message.message_id,
+                               f"📊 Excel прочитано: {len(rows)} позицій.{note}\n"
+                               f"Обробляю як замовлення...")
+                    _ask_order_setup(call.message, {
+                        'type': 'xlsx', 'rows': rows, 'caption': '',
+                        'fuid': pending['file_id'], 'username': username,
+                    }, hint_already=False, bot=bot, state=state)
+                else:
+                    data_b64 = base64.b64encode(downloaded).decode('utf-8')
+                    _safe_edit(bot, chat_id, call.message.message_id,
+                               "📸 Обробляю як замовлення...")
+                    _ask_order_setup(call.message, {
+                        'type': 'pdf', 'data': data_b64, 'caption': '',
+                        'fuid': pending['file_id'], 'username': username,
+                    }, hint_already=False, bot=bot, state=state)
             except Exception as e:
+                import traceback
                 bot.send_message(chat_id, f"❌ Помилка: {e}")
+                print(traceback.format_exc(), flush=True)
 
         elif call.data == 'inv_match':
             _safe_edit(bot, chat_id, call.message.message_id,
@@ -131,9 +159,16 @@ def register(bot, state: dict):
             def _run():
                 try:
                     from engine.invoice_match import process_invoice
+                    fname = pending.get('file_name') or ''
+                    ext   = pending.get('ext') or (
+                        fname.rsplit('.', 1)[-1].lower() if '.' in fname else '')
+                    if not ext:
+                        ext = 'xlsx' if pending.get('kind') == 'excel' else 'pdf'
+                    if not fname.lower().endswith('.' + ext):
+                        fname = f"{fname or 'file'}.{ext}"
                     file_info  = bot.get_file(pending['file_id'])
                     downloaded = bot.download_file(file_info.file_path)
-                    excel, found, total = process_invoice(downloaded, pending['file_name'])
+                    excel, found, total = process_invoice(downloaded, fname)
                     if excel is None:
                         bot.send_message(chat_id, "❌ Не вдалося прочитати файл."); return
                     pct = int(found / total * 100) if total else 0
@@ -181,8 +216,9 @@ def _finish_order_setup(msg, setup: dict, slug, bot, state: dict):
         hint  = state.get('pending_hints', {}).pop(chat_id, '')
         label = f"👤 {name}" if name else "без клієнта"
         n     = len(items)
+        word  = "файл" if any(it.get('type') == 'xlsx' for it in items) else "фото"
         _safe_edit(bot, chat_id, msg.message_id,
-                   f"✅ Прийнято ({label}, {n} фото)\n⏳ Обробляю...")
+                   f"✅ Прийнято ({label}, {n} {word})\n⏳ Обробляю...")
         _add_all(hint)
     else:
         # Немає підказки — питаємо
