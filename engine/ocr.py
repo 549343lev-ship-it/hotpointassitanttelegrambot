@@ -213,6 +213,110 @@ JSON масив ТІЛЬКИ:
         print(f"⚠️ normalize_text: {e}", flush=True)
         return [{"original": text, "normalized": text, "qty": "", "category": "other"}]
 
+def _brand_hint_block(caption: str) -> str:
+    """Спільний блок підказки виробників для промптів."""
+    brand_map = parse_caption_brands(caption)
+    if not brand_map:
+        return ""
+    global_b   = brand_map.get('_global')
+    cat_brands = {k: v for k, v in brand_map.items() if k != '_global'}
+    lines = []
+    if global_b:
+        lines.append(f"  загальний пріоритет → {global_b[0]}")
+    lines.extend(f"  {cat} → {toks[0]}" for cat, toks in cat_brands.items())
+    if not lines:
+        return ""
+    return "\n\n⚠️ ВИРОБНИКИ (пріоритет!):\n" + "\n".join(lines)
+
+
+XLSX_CHUNK = 50   # позицій на один виклик Gemini
+
+
+def _normalize_xlsx_chunk(chunk: list[dict], caption: str,
+                          brand_hint: str) -> list[dict]:
+    """Один пакет рядків Excel → нормалізовані позиції."""
+    lines = []
+    for i, r in enumerate(chunk, 1):
+        q = (r.get('qty') or '').strip()
+        lines.append(f"{i}. {r.get('name', '')}" + (f"   [к-ть: {q}]" if q else ""))
+    listing = "\n".join(lines)
+
+    prompt = f"""Ти — досвідчений менеджер з продажу сантехніки.
+Нижче — ДРУКОВАНИЙ список позицій із Excel-файлу замовлення клієнта
+(це НЕ рукопис — текст читається однозначно, не «виправляй» його здогадками).
+ПІДКАЗКА: {caption}{brand_hint}
+БАЗА ЗНАНЬ:
+{_get_full_knowledge()}
+
+СПИСОК ({len(chunk)} позицій):
+{listing}
+
+ЗАВДАННЯ: для КОЖНОГО рядка зроби рівно один JSON-об'єкт.
+ЖОРСТКІ ПРАВИЛА:
+- Рівно {len(chunk)} об'єктів, по одному на рядок. Нічого не об'єднуй, не ділі й не пропускай.
+- Поле "i" = номер рядка зі списку вище (1…{len(chunk)}).
+- "normalized" — КОРОТКА назва для пошуку в каталозі. Зберігай виробника й усі
+  розміри/різьби з оригіналу. Не вигадуй те, чого в рядку немає.
+- "qty" — бери з [к-ть: ...]. Якщо к-ті немає — постав "".
+JSON масив ТІЛЬКИ:
+[{{"i":1,"normalized":"коротка назва","qty":"кількість",
+"category":"plastic_ppr/sewage/push_systems/shutoff_valves/pumps/radiators_radiatorsvalve/filtration/insulation/metal_plastic/adapters_reducers/heating/underfloor_heating/water_heaters/boilers/mixers_faucets/sanitary_ware/siphons_fittings/hoses/water_meters/towel_warmers/safety_valves/automation/fasteners_sealants/other",
+"type":"труба/коліно/трійник/муфта/кран/гільза/перехід/...","dia":[25],"angle":null,"thread":"1/2 або null"}}]"""
+
+    data = []
+    try:
+        resp = _gemini_call([genai_types.Part.from_text(text=prompt)])
+        data = _extract_json(resp.text)
+    except Exception as e:
+        print(f"⚠️ normalize_xlsx chunk: {e}", flush=True)
+
+    by_i: dict[int, dict] = {}
+    for obj in data:
+        if not isinstance(obj, dict):
+            continue
+        try:
+            idx = int(str(obj.get('i', '')).strip())
+        except (TypeError, ValueError):
+            continue
+        if 1 <= idx <= len(chunk) and idx not in by_i:
+            by_i[idx] = obj
+
+    out = []
+    for i, r in enumerate(chunk, 1):
+        obj  = by_i.get(i) or {}
+        name = r.get('name', '')
+        norm = str(obj.get('normalized') or '').strip() or name
+        qty  = (r.get('qty') or '').strip() or str(obj.get('qty') or '').strip()
+        dia  = obj.get('dia')
+        out.append({
+            'original':   name,
+            'normalized': norm,
+            'qty':        qty,
+            'category':   obj.get('category') or 'other',
+            'type':       obj.get('type'),
+            'dia':        dia if isinstance(dia, list) else None,
+            'angle':      obj.get('angle'),
+            'thread':     obj.get('thread'),
+        })
+    return out
+
+
+def normalize_xlsx(rows: list[dict], caption: str = "") -> list[dict]:
+    """
+    Позиції з Excel-замовлення → той самий формат, що й OCR фото.
+    Жоден рядок не губиться: якщо Gemini не повернув об'єкт —
+    позиція йде в пошук з оригінальною назвою.
+    """
+    if not rows:
+        return []
+    brand_hint = _brand_hint_block(caption)
+    out: list[dict] = []
+    for start in range(0, len(rows), XLSX_CHUNK):
+        out.extend(_normalize_xlsx_chunk(rows[start:start + XLSX_CHUNK],
+                                         caption, brand_hint))
+    return out
+
+
 def normalize_pdf(pdf_b64: str, caption: str = "") -> list[dict]:
     ocr_block  = _get_ocr_prompt_block()
     brand_map  = parse_caption_brands(caption)
