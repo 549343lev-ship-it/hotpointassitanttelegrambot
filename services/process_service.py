@@ -1,5 +1,6 @@
 """services/process_service.py — process_batch: OCR → brand_selector → find_items → Excel."""
-from engine.ocr import normalize_photo, normalize_text, normalize_pdf, parse_caption_brands
+from engine.ocr import (normalize_photo, normalize_text, normalize_pdf,
+                        normalize_xlsx, parse_caption_brands)
 from engine.brand_selector import start_brand_selection, inject_brand_map_to_positions
 from engine.search import find_items, build_qa
 from engine.excel_builder import create_excel
@@ -34,12 +35,19 @@ def process_batch(chat_id: int, bot, state: dict):
         if state.get('stop_flags', {}).get(chat_id):
             _safe_edit(bot, chat_id, msg_id, "🛑 Зупинено."); return
         try:
-            _safe_edit(bot, chat_id, msg_id, f"📖 Читаю файл {idx}/{len(items)}...")
             if item['type'] == 'photo':
+                _safe_edit(bot, chat_id, msg_id, f"📖 Читаю файл {idx}/{len(items)}...")
                 pos = normalize_photo(item['data'], item.get('caption', ''))
             elif item['type'] == 'pdf':
+                _safe_edit(bot, chat_id, msg_id, f"📖 Читаю файл {idx}/{len(items)}...")
                 pos = normalize_pdf(item['data'], item.get('caption', ''))
+            elif item['type'] == 'xlsx':
+                rows = item.get('rows') or []
+                _safe_edit(bot, chat_id, msg_id,
+                           f"📊 Excel {idx}/{len(items)}: {len(rows)} позицій, нормалізую...")
+                pos = normalize_xlsx(rows, item.get('caption', ''))
             else:
+                _safe_edit(bot, chat_id, msg_id, f"📖 Читаю файл {idx}/{len(items)}...")
                 pos = normalize_text(item.get('text', ''), item.get('caption', ''))
             всі_позиції.extend(pos)
         except Exception as e:
