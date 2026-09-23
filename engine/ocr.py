@@ -19,7 +19,7 @@ except Exception:
 DATA_DIR             = os.environ.get("DATA_DIR") or ("/var/data" if os.path.isdir("/var/data") else ".")
 OCR_CORRECTIONS_FILE = os.path.join(DATA_DIR, "ocr_corrections.json")
 
-OCR_MODEL = os.environ.get("GEMINI_OCR_MODEL", "gemini-2.5-pro")   # п.2: перемикач через ENV
+OCR_MODEL = os.environ.get("GEMINI_OCR_MODEL", "gemini-2.5-flash")   # п.2: перемикач через ENV
 
 
 def _gemini_call(contents):
@@ -185,9 +185,21 @@ JSON масив ТІЛЬКИ:
         raw = resp.text.strip().replace('```json', '').replace('```', '').strip()
         if '[' in raw and ']' in raw:
             raw = raw[raw.index('['):raw.rindex(']') + 1]
-        return json.loads(raw)
+        rows = json.loads(raw)
+        if rows:
+            return rows
+        print(f"⚠️ OCR {OCR_MODEL}: порожній результат на {len(images_b64)} фото", flush=True)
     except Exception as e:
-        return [{"original": f"Помилка OCR: {e}", "normalized": "", "qty": ""}]
+        print(f"⚠️ OCR {OCR_MODEL} одним викликом не вдався: {type(e).__name__}: {e}", flush=True)
+
+    rows = []                       # запасний шлях: кожне фото окремо, як було раніше
+    for i, b64 in enumerate(images_b64, 1):
+        try:
+            rows.extend(normalize_photo(b64, caption))
+        except Exception as e:
+            print(f"⚠️ OCR фото {i}: {type(e).__name__}: {e}", flush=True)
+    return rows or [{"original": "Помилка OCR: жодне фото не прочитано",
+                     "normalized": "", "qty": ""}]
 
 
 def normalize_text(text: str, caption: str = "") -> list[dict]:
