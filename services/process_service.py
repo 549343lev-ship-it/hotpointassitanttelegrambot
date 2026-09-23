@@ -4,6 +4,7 @@ from engine.order_context import analyze_order, apply_order_context
 from engine.cross_check import fix_system_gaps, check_pairs
 from engine.kits import resolve_kit_items
 from engine.project_spec import spec_report
+from engine.review import review_and_fix, missing_note
 from catalog.catalog import CATALOG
 from engine.brand_selector import start_brand_selection, inject_brand_map_to_positions
 from engine.search import find_items, build_qa
@@ -121,6 +122,8 @@ def _run_search(chat_id: int, всі_позиції: list, items: list,
 
     результати = find_items(всі_позиції, progress_cb=progress)
     check_pairs(результати)                                           # п.15–16
+    _safe_edit(bot, chat_id, msg_id, "🔎 Перевіряю підбір...")         # самоперевірка результату
+    результати = review_and_fix(всі_позиції, результати)
 
     for r, п in zip(результати, всі_позиції):
         if r is not None:
@@ -137,6 +140,9 @@ def _run_search(chat_id: int, всі_позиції: list, items: list,
     bot.send_document(chat_id, excel, visible_file_name="замовлення.xlsx")
 
     звіт = f"✅ Знайдено: {len(знайдено)}/{total}\n"
+    _missing = missing_note(результати)
+    if _missing:
+        звіт += _missing + "\n"
     if not_found: звіт += f"🟥 Не знайдено: {len(not_found)}\n"
     if warn:      звіт += f"🟨 Перевір: {len(warn)}\n"
     _safe_edit(bot, chat_id, msg_id, звіт)
