@@ -54,14 +54,14 @@ def resolve_kit_items(позиції: list[dict], catalog: list[dict]) -> None:
                 continue
             pat = pat.replace("{CAB}", cab)
         rx = re.compile(pat, re.I)
-        hits = [it for it in catalog if rx.search(it["name"]) and not _BAD.search(it["name"])]
+        hits = [it for it in catalog if rx.search(it.get("name_full") or it["name"]) and not _BAD.search(it.get("name_full") or it["name"])]
         if not hits:
             п.setdefault("notes", []).append(f"⚠️ комплект {п['_kit']}: роль «{role}» не знайдена в прайсі")
             continue
         if role == "труба_тп":                 # найменша бухта, що покриває кількість
             need = _qty(п)
-            hits.sort(key=lambda h: _coil(h["name"]))
-            hits = [h for h in hits if _coil(h["name"]) >= need] or hits[-1:]
+            hits.sort(key=lambda h: _coil(h.get("name_full") or h["name"]))
+            hits = [h for h in hits if _coil(h.get("name_full") or h["name"]) >= need] or hits[-1:]
         п["_forced"] = hits[0]
         if cab:
             п.setdefault("notes", []).append(f"⚠️ шафа №{cab} під {n} контурів — перевірити")
