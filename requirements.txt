@@ -13,3 +13,4 @@ gspread
 google-auth
 rapidfuzz>=3.0.0
 pdfplumber>=0.11.0
+pypdf==5.1.0
