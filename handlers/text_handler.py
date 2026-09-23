@@ -84,6 +84,15 @@ def register(bot, state: dict):
     def handle_text_hint(message):
         """Довільний текст: список → питаємо підбір чи підказка; інакше → підказка виробника."""
         text = message.text.strip()
+        # п.4: текст під час збору батча фото → підказка до цього замовлення
+        batch = state.get('user_batches', {}).get(message.chat.id)
+        if batch and batch.get('items') and batch.get('timer'):
+            for it in batch['items']:
+                cap = it.get('caption', '')
+                if text not in cap:
+                    it['caption'] = ' | '.join(filter(None, [cap, text]))
+            bot.reply_to(message, "✅ Врахую як підказку до замовлення")
+            return
         # Схожий на список (є цифри і переноси або крапки з комою)
         import re
         is_list = bool(re.search(r'\d', text)) and (
@@ -120,12 +129,13 @@ def register(bot, state: dict):
         bot.answer_callback_query(call.id)
         if call.data == "txts" and text:
             from engine.ocr import normalize_text
-            from services.process_service import _run_search
-            позиції = normalize_text(text, '')
-            status  = bot.send_message(chat_id, "🔍 Шукаю...")
+            from services.process_service import _run_search, prepare_positions
+            hint    = state.get('pending_hints', {}).pop(chat_id, '')
+            status  = bot.send_message(chat_id, "🧠 Аналізую замовлення...")
+            позиції = prepare_positions(normalize_text(text, hint), hint)
             _run_search(
                 chat_id=chat_id, всі_позиції=позиції, items=[],
-                caption='', chosen_brand_map={},
+                caption=hint, chosen_brand_map={},
                 msg_id=status.message_id, bot=bot, _state=state)
         elif call.data == "txth" and text:
             state.setdefault('pending_hints', {})[chat_id] = text
