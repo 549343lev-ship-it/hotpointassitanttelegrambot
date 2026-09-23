@@ -1,6 +1,10 @@
 """services/process_service.py — process_batch: OCR → brand_selector → find_items → Excel."""
-from engine.ocr import (normalize_photo, normalize_text, normalize_pdf,
-                        normalize_xlsx, parse_caption_brands)
+from engine.ocr import normalize_photos, normalize_text, normalize_pdf, parse_caption_brands
+from engine.order_context import analyze_order, apply_order_context
+from engine.cross_check import fix_system_gaps, check_pairs
+from engine.kits import resolve_kit_items
+from engine.project_spec import spec_report
+from catalog.catalog import CATALOG
 from engine.brand_selector import start_brand_selection, inject_brand_map_to_positions
 from engine.search import find_items, build_qa
 from engine.excel_builder import create_excel
@@ -8,6 +12,20 @@ from engine.logger import log_not_found, log_usage
 from services.batch_service import (expand_push_marker, expand_insulation,
                                      expand_push_sleeves)
 from clients import clients
+
+
+def prepare_positions(позиції: list[dict], caption: str, mode: str = "order") -> list[dict]:
+    """Після OCR, до пошуку: контекст замовлення → дірки систем → розгортання → комплекти.
+
+    mode="project" — джерело PDF-специфікація: контекст лише доповнює рядки, не переписує їх.
+    """
+    apply_order_context(позиції, analyze_order(позиції, caption, mode), mode)   # п.3–6, 20
+    fix_system_gaps(позиції)                                        # п.11–12
+    позиції = expand_push_marker(позиції)                           # п.5
+    позиції = expand_insulation(позиції, build_qa)                  # п.13
+    позиції = expand_push_sleeves(позиції, build_qa)                # п.14
+    resolve_kit_items(позиції, CATALOG)                             # п.6, 17
+    return позиції
 
 
 def process_batch(chat_id: int, bot, state: dict):
@@ -30,25 +48,26 @@ def process_batch(chat_id: int, bot, state: dict):
                               f"⏳ Обробляю {len(items)} файл(ів)...{client_line}")
     msg_id = status.message_id
 
+    all_captions = [it.get('caption', '') for it in items if it.get('caption')]
+    caption      = ' | '.join(dict.fromkeys(all_captions))            # без дублів
+
     всі_позиції, errors = [], []
-    for idx, item in enumerate(items, 1):
+    photos = [it for it in items if it['type'] == 'photo']
+    if photos:                                                        # п.1: усі фото одним викликом
+        _safe_edit(bot, chat_id, msg_id, f"📖 Читаю {len(photos)} фото...")
+        try:
+            всі_позиції.extend(normalize_photos([p['data'] for p in photos], caption))
+        except Exception as e:
+            errors.append(f"❌ Фото: {e}")
+    for idx, item in enumerate([it for it in items if it['type'] != 'photo'], 1):
         if state.get('stop_flags', {}).get(chat_id):
             _safe_edit(bot, chat_id, msg_id, "🛑 Зупинено."); return
         try:
-            if item['type'] == 'photo':
-                _safe_edit(bot, chat_id, msg_id, f"📖 Читаю файл {idx}/{len(items)}...")
-                pos = normalize_photo(item['data'], item.get('caption', ''))
-            elif item['type'] == 'pdf':
-                _safe_edit(bot, chat_id, msg_id, f"📖 Читаю файл {idx}/{len(items)}...")
+            _safe_edit(bot, chat_id, msg_id, f"📖 Читаю файл {idx}...")
+            if item['type'] == 'pdf':
                 pos = normalize_pdf(item['data'], item.get('caption', ''))
-            elif item['type'] == 'xlsx':
-                rows = item.get('rows') or []
-                _safe_edit(bot, chat_id, msg_id,
-                           f"📊 Excel {idx}/{len(items)}: {len(rows)} позицій, нормалізую...")
-                pos = normalize_xlsx(rows, item.get('caption', ''))
             else:
-                _safe_edit(bot, chat_id, msg_id, f"📖 Читаю файл {idx}/{len(items)}...")
-                pos = normalize_text(item.get('text', ''), item.get('caption', ''))
+                pos = normalize_text(item['text'], item.get('caption', ''))
             всі_позиції.extend(pos)
         except Exception as e:
             errors.append(f"❌ Файл {idx}: {e}")
@@ -57,12 +76,11 @@ def process_batch(chat_id: int, bot, state: dict):
         _safe_edit(bot, chat_id, msg_id,
                    "😕 Не розпізнано позицій.\n" + "\n".join(errors)); return
 
-    всі_позиції = expand_push_marker(всі_позиції)
-    всі_позиції = expand_insulation(всі_позиції, build_qa)
-    всі_позиції = expand_push_sleeves(всі_позиції, build_qa)
-
-    all_captions      = [it.get('caption', '') for it in items if it.get('caption')]
-    caption           = ' | '.join(all_captions)
+    _safe_edit(bot, chat_id, msg_id, "🧠 Аналізую замовлення...")
+    is_project  = any(it['type'] == 'pdf' for it in items)
+    всі_позиції = prepare_positions(всі_позиції, caption, 'project' if is_project else 'order')
+    if is_project:
+        bot.send_message(chat_id, spec_report(всі_позиції))
     caption_brand_map = parse_caption_brands(caption)
 
     for п in всі_позиції:
@@ -102,6 +120,7 @@ def _run_search(chat_id: int, всі_позиції: list, items: list,
             _safe_edit(bot, chat_id, msg_id, f"🔍 Пошук: {cur}/{total}...")
 
     результати = find_items(всі_позиції, progress_cb=progress)
+    check_pairs(результати)                                           # п.15–16
 
     for r, п in zip(результати, всі_позиції):
         if r is not None:
