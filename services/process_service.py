@@ -13,6 +13,9 @@ from engine.logger import log_not_found, log_usage
 from services.batch_service import (expand_push_marker, expand_insulation,
                                      expand_push_sleeves)
 from clients import clients
+import os
+
+PIPELINE = os.getenv("PIPELINE", "classic")        # classic | agent
 
 
 def prepare_positions(позиції: list[dict], caption: str, mode: str = "order") -> list[dict]:
@@ -51,6 +54,10 @@ def process_batch(chat_id: int, bot, state: dict):
 
     all_captions = [it.get('caption', '') for it in items if it.get('caption')]
     caption      = ' | '.join(dict.fromkeys(all_captions))            # без дублів
+
+    if PIPELINE == "agent":
+        _run_agent(chat_id, items, caption, msg_id, bot, state)
+        return
 
     всі_позиції, errors = [], []
     photos = [it for it in items if it['type'] == 'photo']
@@ -102,6 +109,44 @@ def process_batch(chat_id: int, bot, state: dict):
     )
 
 
+def _run_agent(chat_id: int, items: list, caption: str, msg_id: int, bot, state: dict):
+    """PIPELINE=agent: модель сама читає замовлення і сама шукає в прайсі (як Claude у чаті)."""
+    from engine.agent import transcribe_order, match_order, positions_to_order
+
+    photos = [it['data'] for it in items if it['type'] == 'photo']
+    texts  = [it['text'] for it in items if it['type'] == 'text']
+    pdfs   = [it for it in items if it['type'] == 'pdf']
+    try:
+        if photos or texts:
+            _safe_edit(bot, chat_id, msg_id, f"📖 Читаю замовлення ({len(photos)} фото)...")
+            order = transcribe_order(photos, "\n".join(texts), caption)
+        else:
+            order = {"lines": []}
+        for it in pdfs:                     # PDF-проекти: витяг специфікації лишається Gemini
+            _safe_edit(bot, chat_id, msg_id, "📄 Читаю проект...")
+            extra = positions_to_order(normalize_pdf(it['data'], it.get('caption', '')))
+            base = len(order.get("lines", []))
+            for l in extra["lines"]:
+                l["i"] += base
+            order.setdefault("lines", []).extend(extra["lines"])
+    except Exception as e:
+        print(f"❌ agent transcribe: {type(e).__name__}: {e}", flush=True)
+        _safe_edit(bot, chat_id, msg_id, f"😕 Не вдалося прочитати замовлення: {e}")
+        return
+
+    lines = order.get("lines", [])
+    if not lines:
+        _safe_edit(bot, chat_id, msg_id, "😕 Не розпізнано позицій.")
+        return
+    _safe_edit(bot, chat_id, msg_id, f"🔍 Підбираю {len(lines)} позицій...")
+
+    def progress(cur, total):
+        _safe_edit(bot, chat_id, msg_id, f"🔍 Підбір: {cur}/{total}...")
+
+    результати = match_order(order, progress_cb=progress)
+    _finish(chat_id, результати, msg_id, bot, state, None, caption, items)
+
+
 def _run_search(chat_id: int, всі_позиції: list, items: list,
                 caption: str, chosen_brand_map: dict, msg_id: int,
                 bot=None, _state: dict = None):
@@ -128,7 +173,14 @@ def _run_search(chat_id: int, всі_позиції: list, items: list,
     for r, п in zip(результати, всі_позиції):
         if r is not None:
             r.setdefault('розділ', п.get('section', ''))
+    _finish(chat_id, результати, msg_id, bot, state, active_slug, caption, items)
 
+
+def _finish(chat_id: int, результати: list, msg_id: int, bot, state: dict,
+            active_slug: str | None = None, caption: str = "", items: list | None = None):
+    """Excel + звіт + кнопка «Навчання». Спільне для classic і agent."""
+    from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+    active_slug = active_slug or clients.get_active(chat_id)
     log_not_found([r for r in результати if r and not r.get('знайдено')])
 
     _safe_edit(bot, chat_id, msg_id, "📊 Формую Excel...")
@@ -168,6 +220,7 @@ def _run_search(chat_id: int, всі_позиції: list, items: list,
         except Exception as e:
             print(f"⚠️ Історія клієнта: {e}")
 
+    items    = items or []
     username = items[0].get('username', str(chat_id)) if items else str(chat_id)
     log_usage(chat_id, username, total, len(знайдено), len(items))
 
