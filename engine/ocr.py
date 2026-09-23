@@ -7,55 +7,23 @@ from google.genai import types as genai_types
 from knowledge.knowledge import get_knowledge
 from knowledge.rules     import get_rules
 from engine.search       import BRAND_TOKENS, CATEGORY_ALIASES
+from engine.project_spec import PROJECT_PROMPT_BLOCK, split_pdf, merge_duplicates
 
 GEMINI_KEY    = os.environ.get("GEMINI_KEY", "")
 gemini_client = genai_new.Client(api_key=GEMINI_KEY)
 try:
-    _GEMCFG = genai_types.GenerateContentConfig(
-        temperature=0,
-        max_output_tokens=65536,   # знімає дефолтний ліміт 8192 — критично для 50+ позицій
-    )
+    _GEMCFG = genai_types.GenerateContentConfig(temperature=0)
 except Exception:
     _GEMCFG = None
 
 DATA_DIR             = os.environ.get("DATA_DIR") or ("/var/data" if os.path.isdir("/var/data") else ".")
 OCR_CORRECTIONS_FILE = os.path.join(DATA_DIR, "ocr_corrections.json")
 
-def _extract_json(raw: str) -> list:
-    """Витягує JSON-масив з відповіді Gemini. Якщо обрізано — відновлює."""
-    raw = raw.strip().replace('```json', '').replace('```', '').strip()
-    start = raw.find('[')
-    if start == -1:
-        return []
-    # Знаходимо закриваючий ] що відповідає відкриваючому [
-    depth, end = 0, -1
-    for i, ch in enumerate(raw[start:], start):
-        if ch == '[':
-            depth += 1
-        elif ch == ']':
-            depth -= 1
-            if depth == 0:
-                end = i + 1
-                break
-    if end != -1:
-        try:
-            result = json.loads(raw[start:end])
-            if isinstance(result, list):
-                return result
-        except Exception:
-            pass
-    # JSON обрізаний — відновлюємо по окремих об'єктах
-    objects = []
-    for m in re.finditer(r'\{[^{}]*\}', raw[start:]):
-        try:
-            objects.append(json.loads(m.group()))
-        except Exception:
-            pass
-    return objects
+OCR_MODEL = os.environ.get("GEMINI_OCR_MODEL", "gemini-2.5-pro")   # п.2: перемикач через ENV
 
 
 def _gemini_call(contents):
-    kwargs = {"model": "gemini-2.5-flash", "contents": contents}
+    kwargs = {"model": OCR_MODEL, "contents": contents}
     if _GEMCFG is not None:
         kwargs["config"] = _GEMCFG
     return gemini_client.models.generate_content(**kwargs)
@@ -168,6 +136,8 @@ def normalize_photo(image_b64: str, caption: str = "", client_prefs: dict = None
 ПІДКАЗКА: {caption}{brand_hint}{ocr_block}
 БАЗА ЗНАНЬ:
 {_get_full_knowledge()}
+ПРАВИЛО ПРОДОВЖЕННЯ: рядок без типу ("0,5м – 3шт", "ф110×30° – 1шт") — продовження попереднього рядка:
+допиши тип і діаметр попереднього.
 ЗАВДАННЯ: прочитай кожен рядок, нормалізуй назву (КОРОТКО!), витягни кількість.
 JSON масив ТІЛЬКИ:
 [{{"original":"що написано","normalized":"коротка назва","qty":"кількість",
@@ -179,11 +149,46 @@ JSON масив ТІЛЬКИ:
             genai_types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
             genai_types.Part.from_text(text=prompt),
         ])
-        result = _extract_json(resp.text)
-        return result  # може бути [] якщо Gemini нічого не знайшов — це нормально
+        raw = resp.text.strip().replace('```json','').replace('```','').strip()
+        if '[' in raw and ']' in raw:
+            raw = raw[raw.index('['):raw.rindex(']')+1]
+        return json.loads(raw)
     except Exception as e:
-        print(f"⚠️ normalize_photo: {e}", flush=True)
         return [{"original": f"Помилка OCR: {e}", "normalized": "", "qty": ""}]
+
+def normalize_photos(images_b64: list[str], caption: str = "") -> list[dict]:
+    """п.1: усі фото замовлення — ОДНИМ викликом, як сторінки одного документа."""
+    if len(images_b64) == 1:
+        return normalize_photo(images_b64[0], caption)
+    brand_map = parse_caption_brands(caption)
+    lines = []
+    if brand_map.get('_global'):
+        lines.append(f"  загальний пріоритет → {brand_map['_global'][0]}")
+    lines.extend(f"  {c} → {t[0]}" for c, t in brand_map.items() if c != '_global')
+    brand_hint = ("\n\n⚠️ ВИРОБНИКИ (пріоритет!):\n" + "\n".join(lines)) if lines else ""
+    prompt = f"""Ти — досвідчений менеджер з продажу сантехніки. {len(images_b64)} фото — це СТОРІНКИ ОДНОГО
+замовлення по порядку. Читай їх як один список.
+ПІДКАЗКА: {caption}{brand_hint}{_get_ocr_prompt_block()}
+БАЗА ЗНАНЬ:
+{_get_full_knowledge()}
+ПРАВИЛО ПРОДОВЖЕННЯ: рядок без типу ("0,5м – 3шт", "ф110×30° – 1шт") — продовження попереднього рядка:
+допиши тип і діаметр попереднього.
+ЗАВДАННЯ: прочитай кожен рядок, нормалізуй назву (КОРОТКО!), витягни кількість.
+JSON масив ТІЛЬКИ:
+[{{"original":"що написано","normalized":"коротка назва","qty":"кількість",
+"category":"plastic_ppr/sewage/push_systems/shutoff_valves/pumps/radiators_radiatorsvalve/filtration/insulation/metal_plastic/adapters_reducers/heating/underfloor_heating/water_heaters/boilers/mixers_faucets/sanitary_ware/siphons_fittings/hoses/water_meters/towel_warmers/safety_valves/automation/fasteners_sealants/other",
+"type":"труба/коліно/трійник/муфта/кран/гільза/перехід/...","dia":[110,50],"angle":87,"thread":"1/2 або null"}}]"""
+    try:
+        parts = [genai_types.Part.from_bytes(data=base64.b64decode(b), mime_type="image/jpeg")
+                 for b in images_b64]
+        resp = _gemini_call(parts + [genai_types.Part.from_text(text=prompt)])
+        raw = resp.text.strip().replace('```json', '').replace('```', '').strip()
+        if '[' in raw and ']' in raw:
+            raw = raw[raw.index('['):raw.rindex(']') + 1]
+        return json.loads(raw)
+    except Exception as e:
+        return [{"original": f"Помилка OCR: {e}", "normalized": "", "qty": ""}]
+
 
 def normalize_text(text: str, caption: str = "") -> list[dict]:
     ocr_block = _get_ocr_prompt_block()
@@ -207,115 +212,12 @@ JSON масив ТІЛЬКИ:
 [{{"original":"...","normalized":"...","qty":"...","category":"...","type":"тип одним словом","dia":[25],"angle":null,"thread":"3/4 або null"}}]"""
     try:
         resp = _gemini_call([genai_types.Part.from_text(text=prompt)])
-        result = _extract_json(resp.text)
-        return result
+        raw  = resp.text.strip().replace('```json','').replace('```','').strip()
+        if '[' in raw and ']' in raw:
+            raw = raw[raw.index('['):raw.rindex(']')+1]
+        return json.loads(raw)
     except Exception as e:
-        print(f"⚠️ normalize_text: {e}", flush=True)
         return [{"original": text, "normalized": text, "qty": "", "category": "other"}]
-
-def _brand_hint_block(caption: str) -> str:
-    """Спільний блок підказки виробників для промптів."""
-    brand_map = parse_caption_brands(caption)
-    if not brand_map:
-        return ""
-    global_b   = brand_map.get('_global')
-    cat_brands = {k: v for k, v in brand_map.items() if k != '_global'}
-    lines = []
-    if global_b:
-        lines.append(f"  загальний пріоритет → {global_b[0]}")
-    lines.extend(f"  {cat} → {toks[0]}" for cat, toks in cat_brands.items())
-    if not lines:
-        return ""
-    return "\n\n⚠️ ВИРОБНИКИ (пріоритет!):\n" + "\n".join(lines)
-
-
-XLSX_CHUNK = 50   # позицій на один виклик Gemini
-
-
-def _normalize_xlsx_chunk(chunk: list[dict], caption: str,
-                          brand_hint: str) -> list[dict]:
-    """Один пакет рядків Excel → нормалізовані позиції."""
-    lines = []
-    for i, r in enumerate(chunk, 1):
-        q = (r.get('qty') or '').strip()
-        lines.append(f"{i}. {r.get('name', '')}" + (f"   [к-ть: {q}]" if q else ""))
-    listing = "\n".join(lines)
-
-    prompt = f"""Ти — досвідчений менеджер з продажу сантехніки.
-Нижче — ДРУКОВАНИЙ список позицій із Excel-файлу замовлення клієнта
-(це НЕ рукопис — текст читається однозначно, не «виправляй» його здогадками).
-ПІДКАЗКА: {caption}{brand_hint}
-БАЗА ЗНАНЬ:
-{_get_full_knowledge()}
-
-СПИСОК ({len(chunk)} позицій):
-{listing}
-
-ЗАВДАННЯ: для КОЖНОГО рядка зроби рівно один JSON-об'єкт.
-ЖОРСТКІ ПРАВИЛА:
-- Рівно {len(chunk)} об'єктів, по одному на рядок. Нічого не об'єднуй, не ділі й не пропускай.
-- Поле "i" = номер рядка зі списку вище (1…{len(chunk)}).
-- "normalized" — КОРОТКА назва для пошуку в каталозі. Зберігай виробника й усі
-  розміри/різьби з оригіналу. Не вигадуй те, чого в рядку немає.
-- "qty" — бери з [к-ть: ...]. Якщо к-ті немає — постав "".
-JSON масив ТІЛЬКИ:
-[{{"i":1,"normalized":"коротка назва","qty":"кількість",
-"category":"plastic_ppr/sewage/push_systems/shutoff_valves/pumps/radiators_radiatorsvalve/filtration/insulation/metal_plastic/adapters_reducers/heating/underfloor_heating/water_heaters/boilers/mixers_faucets/sanitary_ware/siphons_fittings/hoses/water_meters/towel_warmers/safety_valves/automation/fasteners_sealants/other",
-"type":"труба/коліно/трійник/муфта/кран/гільза/перехід/...","dia":[25],"angle":null,"thread":"1/2 або null"}}]"""
-
-    data = []
-    try:
-        resp = _gemini_call([genai_types.Part.from_text(text=prompt)])
-        data = _extract_json(resp.text)
-    except Exception as e:
-        print(f"⚠️ normalize_xlsx chunk: {e}", flush=True)
-
-    by_i: dict[int, dict] = {}
-    for obj in data:
-        if not isinstance(obj, dict):
-            continue
-        try:
-            idx = int(str(obj.get('i', '')).strip())
-        except (TypeError, ValueError):
-            continue
-        if 1 <= idx <= len(chunk) and idx not in by_i:
-            by_i[idx] = obj
-
-    out = []
-    for i, r in enumerate(chunk, 1):
-        obj  = by_i.get(i) or {}
-        name = r.get('name', '')
-        norm = str(obj.get('normalized') or '').strip() or name
-        qty  = (r.get('qty') or '').strip() or str(obj.get('qty') or '').strip()
-        dia  = obj.get('dia')
-        out.append({
-            'original':   name,
-            'normalized': norm,
-            'qty':        qty,
-            'category':   obj.get('category') or 'other',
-            'type':       obj.get('type'),
-            'dia':        dia if isinstance(dia, list) else None,
-            'angle':      obj.get('angle'),
-            'thread':     obj.get('thread'),
-        })
-    return out
-
-
-def normalize_xlsx(rows: list[dict], caption: str = "") -> list[dict]:
-    """
-    Позиції з Excel-замовлення → той самий формат, що й OCR фото.
-    Жоден рядок не губиться: якщо Gemini не повернув об'єкт —
-    позиція йде в пошук з оригінальною назвою.
-    """
-    if not rows:
-        return []
-    brand_hint = _brand_hint_block(caption)
-    out: list[dict] = []
-    for start in range(0, len(rows), XLSX_CHUNK):
-        out.extend(_normalize_xlsx_chunk(rows[start:start + XLSX_CHUNK],
-                                         caption, brand_hint))
-    return out
-
 
 def normalize_pdf(pdf_b64: str, caption: str = "") -> list[dict]:
     ocr_block  = _get_ocr_prompt_block()
@@ -332,18 +234,39 @@ def normalize_pdf(pdf_b64: str, caption: str = "") -> list[dict]:
             brand_hint = "\n⚠️ ВИРОБНИКИ (пріоритет!):\n" + "\n".join(lines)
     prompt = f"""Ти — досвідчений менеджер з продажу сантехніки. ПРОЕКТНА СПЕЦИФІКАЦІЯ (PDF).
 ПІДКАЗКА: {caption}{brand_hint}{ocr_block}
+{PROJECT_PROMPT_BLOCK}
 БАЗА ЗНАНЬ:
 {_get_full_knowledge()}
 JSON масив ТІЛЬКИ:
 [{{"original":"як у специфікації","normalized":"коротка назва","qty":"к-ть з од","category":"...","section":"розділ","type":"тип одним словом","dia":[32],"angle":null,"thread":null}}]"""
-    try:
-        pdf_bytes = base64.b64decode(pdf_b64)
+    def _call(chunk: bytes) -> list[dict]:
         resp = _gemini_call([
-            genai_types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
+            genai_types.Part.from_bytes(data=chunk, mime_type="application/pdf"),
             genai_types.Part.from_text(text=prompt),
         ])
-        result = _extract_json(resp.text)
-        return result
-    except Exception as e:
-        print(f"⚠️ normalize_pdf: {e}", flush=True)
-        return [{"original": f"Помилка PDF: {e}", "normalized": "", "qty": "", "category": "other"}]
+        raw = resp.text.strip().replace('```json', '').replace('```', '').strip()
+        if '[' in raw and ']' in raw:
+            raw = raw[raw.index('['):raw.rindex(']') + 1]
+        return json.loads(raw)
+
+    pdf_bytes = base64.b64decode(pdf_b64)
+    try:                                   # основний шлях: весь документ одним викликом
+        rows = _call(pdf_bytes)
+        if rows:
+            return merge_duplicates(rows)
+    except (json.JSONDecodeError, ValueError) as e:
+        rows_err = str(e)
+    except Exception as e:                 # помилка API — пробуємо частинами
+        rows_err = str(e)
+    else:
+        rows_err = "порожній результат"
+
+    rows: list[dict] = []                  # запасний шлях: по частинах
+    for chunk in split_pdf(pdf_bytes):
+        try:
+            rows.extend(_call(chunk))
+        except Exception:
+            continue
+    if not rows:
+        return [{"original": f"Помилка PDF: {rows_err}", "normalized": "", "qty": "", "category": "other"}]
+    return merge_duplicates(rows)
