@@ -23,8 +23,8 @@ def expand_push_marker(позиції: list[dict]) -> list[dict]:
         'гільз' in ((п.get('original') or '') + (п.get('normalized') or '')).lower()
         for п in позиції
     )
-    if not has_sleeve:
-        return позиції
+    if not has_sleeve or any(п.get('_ctx_category') for п in позиції):
+        return позиції   # контекст замовлення вже визначив системи
     for п in позиції:
         if п.get('category') in ('plastic_ppr', 'metal_plastic', 'other'):
             п['category'] = 'push_systems'
@@ -39,10 +39,14 @@ def expand_insulation(позиції: list[dict], build_qa_fn) -> list[dict]:
     out = []
     for п in позиції:
         out.append(п)
-        orig = (п.get('original') or '').lower()
-        norm = (п.get('normalized') or '').lower()
+        orig = п.get('original', '').lower()
+        norm = п.get('normalized', '').lower()
         qa   = п.get('_qa') or build_qa_fn(п)
         п['_qa'] = qa
+        if qa.get('type') in ('утеплювач', 'ізоляція') or re.search(r'ізол|изол|утепл', norm[:12]):
+            out.pop()
+            out.extend(_split_insulation_line(п, qa))
+            continue
         if qa.get('type') != 'труба':
             continue
         if not re.search(r'ізол|изол|утепл', orig):
@@ -86,21 +90,49 @@ def expand_insulation(позиції: list[dict], build_qa_fn) -> list[dict]:
     return out
 
 
+def _split_insulation_line(п: dict, qa: dict) -> list[dict]:
+    """'Ізоляція ф18 – 24м (син, червона)' → два рядки по половині. Без кольорів — як є."""
+    orig = (п.get('original') or '').lower()
+    if not (re.search(r'син', orig) and re.search(r'черв', orig)):
+        return [п]
+    dia = (qa.get('dia') or [None])[0]
+    ins = dia if dia in INSUL_DIA_MAP.values() else INSUL_DIA_MAP.get(str(dia))
+    if not ins:
+        return [п]
+    half = _qty_num(п.get('qty')) / 2
+    if half <= 0:
+        return [п]
+    half_s = str(int(half)) if half == int(half) else f"{half:.1f}"
+    return [{
+        'original':   f"{п.get('original', '')} ({color})",
+        'normalized': f"Утеплювач ламін. для труб ф {ins}х6 {color} PLM",
+        'qty':        f"{half_s} м",
+        'category':   'insulation', 'type': 'утеплювач', 'dia': [ins],
+        'section':    п.get('section', ''), 'notes': list(п.get('notes', [])),
+    } for color in ('синій', 'червоний')]
+
+
 def _push_outlets(п: dict, build_qa_fn) -> list:
     """Скільки трубних виходів має PUSH-фітинг."""
     qa  = п.get('_qa') or build_qa_fn(п)
     п['_qa'] = qa
     typ  = qa.get('type')
-    text = f"{п.get('normalized') or ''} {п.get('original') or ''}"
+    text = f"{п.get('normalized', '')} {п.get('original', '')}"
     g    = re.search(r'(\d{2})\s*[хx×]\s*(\d{2})(?:\s*[хx×]\s*(\d{2}))?', text)
     dims = [int(x) for x in g.groups() if x] if g else list(qa.get('dia') or [])
     has_thread = bool(qa.get('thread')) or bool(
         re.search(r'мрз|мрв|рз|вр|різьб', text.lower()))
 
     if typ == 'трійник':
-        outs = dims if len(dims) == 3 else (dims * 3)[:3] if dims else []
+        if has_thread:     # 20х1/2"х20 → 2 трубні виходи
+            outs = (dims * 2)[:2] if dims else []
+        else:
+            outs = dims if len(dims) == 3 else (dims * 3)[:3] if dims else []
     elif typ == 'коліно':
-        outs = dims if len(dims) == 2 else (dims * 2)[:2] if dims else []
+        if has_thread:     # настінне / різьбове 20х1/2" → 1 трубний вихід
+            outs = dims[:1]
+        else:
+            outs = dims if len(dims) == 2 else (dims * 2)[:2] if dims else []
     elif typ in ('муфта', 'перехід'):
         outs = dims[:1] if has_thread else (
             dims if len(dims) == 2 else (dims * 2)[:2] if dims else [])
@@ -114,7 +146,7 @@ def _push_outlets(п: dict, build_qa_fn) -> list:
 def expand_push_sleeves(позиції: list[dict], build_qa_fn) -> list[dict]:
     """Автоматично додає гільзи до PUSH-фітингів."""
     if any(
-        'гільз' in ((п.get('original') or '') + (п.get('normalized') or '')).lower()
+        'гільз' in (п.get('original', '') + п.get('normalized', '')).lower()
         and (п.get('_qa') or build_qa_fn(п)).get('type') == 'гільза'
         for п in позиції
     ):
