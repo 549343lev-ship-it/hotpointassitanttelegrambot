@@ -56,25 +56,12 @@ BRAND_TOKENS = {    # словник: що пише менеджер → офі�
     'plm':         ['plm', 'PLM'],
     'плм':         ['plm', 'PLM'],
     # ── Запірна арматура — крос-бренди → RAFTEC ──────────────────────────────
+    # Майстри пишуть KFA/Giacomini/Fado — ми продаємо RAFTEC аналог
     'kfa':         ['raftec', 'RAFTEC'],
-    'fado':        ['raftec', 'RAFTEC'],    # FADO → RAFTEC
-    'valtec':      ['raftec', 'RAFTEC'],   # VALTEC → RAFTEC
+    'fado':        ['raftec', 'RAFTEC'],
+    'valtec':      ['raftec', 'RAFTEC'],
     'solomon':     ['raftec', 'RAFTEC'],
-    'bugatti':     ['raftec', 'RAFTEC'],   # BUGATTI → RAFTEC
-    'hlv':         ['raftec', 'RAFTEC'],   # HLV → RAFTEC
-    'koer':        ['raftec', 'RAFTEC'],   # KOER → RAFTEC
-    'icma':        ['raftec', 'RAFTEC'],   # ICMA → RAFTEC
-    'sd forte':    ['raftec', 'RAFTEC'],   # SD Forte → RAFTEC
-    'sandi':       ['raftec', 'RAFTEC'],   # Sandi → RAFTEC
-    # ── PUSH — заборонені → RAFTEC ──────────────────────────────────────────
-    'kan':         ['raftec', 'RAFTEC'],   # KAN → RAFTEC PUSH
-    'kan-therm':   ['raftec', 'RAFTEC'],
-    'tece':        ['raftec', 'RAFTEC'],   # TECE → RAFTEC
-    'aquapex':     ['raftec', 'RAFTEC'],   # Aquapex → RAFTEC
-    'heat-pex':    ['raftec', 'RAFTEC'],   # HeatPex → RAFTEC
-    'heatpex':     ['raftec', 'RAFTEC'],
-    'magnaplast':  ['asg', 'ASG'],         # Magnaplast (каналізація) → ASG
-    # ── Giacomini — є в нашому каталозі ────────────────────────────────────
+    # Giacomini — є в нашому каталозі! Залишаємо як є, але шукаємо і RAFTEC
     'giacomini':   ['Giacomini', 'giacomini', 'raftec', 'RAFTEC'],
     'джикоміні':   ['Giacomini', 'giacomini', 'raftec', 'RAFTEC'],
     'гіакоміні':   ['Giacomini', 'giacomini', 'raftec', 'RAFTEC'],
@@ -125,10 +112,13 @@ BRAND_TOKENS = {    # словник: що пише менеджер → офі�
     'valrom':      ['valrom', 'Valrom'],
     'alcaplast':   ['alcaplast', 'AlcaPlast'],
     'esbe':        ['esbe', 'ESBE'],
+    'bonomi':      ['bonomi', 'Bonomi'],
+    'icma':        ['icma', 'Icma'],
     'valsir':      ['valsir', 'Valsir'],
     'flamco':      ['flamco', 'Flamco'],
     'grohe':       ['grohe', 'Grohe'],
     'thermaflex':  ['thermaflex', 'Thermaflex'],
+    'kan':         ['kan', 'KAN'],
 }
 
 # Синоніми для нормалізації запиту перед пошуком в каталозі
@@ -141,19 +131,6 @@ SEARCH_SYNONYMS = {
     'karro':            'RAFTEC',
     'fado':             'RAFTEC',
     'valtec':           'RAFTEC',
-    'bugatti':          'RAFTEC',
-    'hlv':              'RAFTEC',
-    'koer':             'RAFTEC',
-    'icma':             'RAFTEC',
-    'sd forte':         'RAFTEC',
-    'sandi':            'RAFTEC',
-    'kan':              'RAFTEC',
-    'kan-therm':        'RAFTEC',
-    'tece':             'RAFTEC',
-    'aquapex':          'RAFTEC',
-    'heat-pex':         'RAFTEC',
-    'heatpex':          'RAFTEC',
-    'magnaplast':       'ASG',
     # Самоочисний = самопромивний
     'самоочисний':      'самопромивний',
     'самоочищувальний': 'самопромивний',
@@ -216,21 +193,20 @@ CATEGORY_ALIASES = {    # словник: що пише менеджер у пі
 }
 
 DEFAULT_BRAND_PRIORITY = {  # якщо менеджер не вказав виробника — беремо з цього списку за пріоритетом
-    'plastic_ppr':             [['ekoplastik', 'Ekoplastik', 'PP-RCT'], ['asg', 'ASG'], ['raftec', 'RAFTEC'], ['fv plast', 'FV Plast'], ['plm', 'PLM']],
+    'sewage':                  [['asg', 'ASG'], ['ostendorf', 'OSTENDORF']],   # ASG першим для внутрішньої!
+    'plastic_ppr':             [['ekoplastik', 'Ekoplastik', 'PP-RCT'], ['asg', 'ASG'], ['raftec', 'RAFTEC']],
+    'shutoff_valves':          [['raftec', 'RAFTEC']],
+    'adapters_reducers':       [['raftec', 'RAFTEC']],
+    'filtration':              [['raftec', 'RAFTEC'], ['ecosoft', 'Ecosoft']],  # фільтр під пломбу RAFTEC першим
+    'radiators_radiatorsvalve':[['mirado', 'MIRADO'], ['hidros', 'Hidros'], ['idmar', 'IDMAR']],  # MIRADO першим
+    'pumps':                   [['lider', 'Lider'], ['tatra', 'TATRA'], ['termojet', 'Termojet']],  # Lider першим
+    'insulation':              [['plm', 'PLM']],
     'push_systems':            [['raftec', 'RAFTEC'], ['rehau', 'REHAU']],
-    'shutoff_valves':          [['raftec', 'RAFTEC'], ['asg', 'ASG']],
-    'adapters_reducers':       [['raftec', 'RAFTEC'], ['lexline', 'LEXLINE']],
-    'sewage':                  [['asg', 'ASG'], ['ostendorf', 'OSTENDORF'], ['plm', 'PLM']],
-    'metal_plastic':           [['raftec', 'RAFTEC'], ['tweetop', 'Tweetop']],
-    'pumps':                   [['termojet', 'Termojet'], ['tatra', 'Tatra-line'], ['grundfos', 'Grundfos'], ['raftec', 'RAFTEC'], ['wilo', 'Wilo'], ['lider', 'Lider']],
-    'radiators_radiatorsvalve':[['idmar', 'IDMAR'], ['biasi', 'BIASI'], ['hidros', 'Hidros'], ['purmo', 'PURMO']],
-    'insulation':              [['plm', 'PLM'], ['теплоізол', 'Теплоізол'], ['k-flex', 'K-FLEX']],
-    'underfloor_heating':      [['raftec', 'RAFTEC'], ['plm', 'PLM']],
-    'filtration':              [['ecosoft', 'Ecosoft'], ['filtrons', 'Filtrons'], ['bwt', 'BWT']],
-    'safety_valves':           [['raftec', 'RAFTEC'], ['herz', 'HERZ'], ['flamco', 'Flamco'], ['caleffi', 'CALEFFI']],
-    'heating':                 [['esbe', 'ESBE'], ['caleffi', 'CALEFFI'], ['honeywell', 'HONEYWELL'], ['herz', 'HERZ'], ['afriso', 'AFRISO']],
+    'metal_plastic':           [['raftec', 'RAFTEC']],
     'fasteners_sealants':      [['eco', 'ECO'], ['raftec', 'RAFTEC'], ['walraven', 'Walraven']],
-    'water_meters':            [['ecostar', 'Ecostar', 'ECOSTAR'], ['gidrotek', 'GIDROTEK']],
+    'underfloor_heating':      [['raftec', 'RAFTEC'], ['plm', 'PLM']],
+    'heating':                 [['ekoplastik', 'Ekoplastik'], ['raftec', 'RAFTEC']],
+    'water_meters':            [['ecostar', 'Ecostar', 'ECOSTAR']],
 }
 
 
@@ -838,6 +814,13 @@ def smart_search(пос: dict, top_n: int = 12,
     else:
         _voyage_fallback = []
 
+    # ── КРОК 0.4 (п.9): точні атрибути ДО node_pool ─────────────────────────
+    if not is_other:
+        _a = attr_search(qa, top_n=top_n, brand_tokens=brand_tokens,
+                         category=routed_cat, strict_cat=True)
+        if _a and _a[0].get('_attr_tier', 9) <= 2:
+            return _a
+
     # ── КРОК 0.5: NODE_POOL або ПІДГРУПА ─────────────────────────────────────
     if not is_other:
         # Захищений імпорт — працює і на сервері (engine/) і локально
@@ -927,31 +910,17 @@ def smart_search(пос: dict, top_n: int = 12,
 
 # ─── Claude вибір ────────────────────────────────────────────────────────────
 
-def _parse_claude_json(raw: str) -> list:   # витягує JSON-масив з відповіді Claude/Gemini; стійкий до обрізання
+def _parse_claude_json(raw: str) -> list:   # витягує JSON-масив з відповіді Claude (прибирає markdown-огорожі, збирає об'єкти)
     raw   = re.sub(r'```\w*', '', raw).strip()
     start = raw.find('[')
-    if start == -1:
-        return []
-    # Знаходимо закриваючий ] що відповідає відкриваючому [
-    depth, end = 0, -1
-    for i, ch in enumerate(raw[start:], start):
-        if ch == '[':
-            depth += 1
-        elif ch == ']':
-            depth -= 1
-            if depth == 0:
-                end = i + 1
-                break
-    if end != -1:
+    end   = raw.rfind(']') + 1
+    if start != -1 and end > 0:
         try:
-            result = json.loads(raw[start:end])
-            if isinstance(result, list):
-                return result
+            return json.loads(raw[start:end])
         except Exception:
             pass
-    # JSON обрізаний — відновлюємо по окремих повних об'єктах
     objects = []
-    for m in re.finditer(r'\{[^{}]*\}', raw[start:]):
+    for m in re.finditer(r'\{[^{}]*\}', raw[start:] if start != -1 else raw):
         try:
             objects.append(json.loads(m.group()))
         except Exception:
@@ -1003,13 +972,8 @@ PUSH: гільза≠кільце, "натяжний" обов'язково. Б�
    - зворотний клапан ≠ змішувальний/запобіжний клапан
    - фільтр самоочисний ≠ фільтр грубої очистки
    - трійник латунний ≠ трійник PPR
-4. АНАЛОГИ дозволені коли тип і діаметр збігаються, виробник інший:
-   - "Зворотний клапан DN20 3/4" → кандидат того ж типу і діаметру = ЗНАЙДЕНО (confidence=75)
-   - "Ніпель ЗЗ DN15 1/2" → будь-який ніпель ЗЗ 1/2 = ЗНАЙДЕНО (аналог)
-   - "Коліно канал ф50 45° Ostendorf" → "Коліно канал ф50 45° ASG" = ЗНАЙДЕНО (аналог)
-   ⚠️ Аналог ТІЛЬКИ якщо: той самий тип + ті самі розміри. Різний виробник — ок.
-5. Якщо жоден кандидат не підходить навіть як аналог → знайдено=false
-6. Різьба: 1/2=DN15, 3/4=DN20, 1"=DN25, 1 1/4"=DN32, 1 1/2"=DN40
+4. Якщо жоден кандидат не підходить → знайдено=false
+5. Різьба: 1/2=DN15, 3/4=DN20, 1"=DN25, 1 1/4"=DN32, 1 1/2"=DN40
 
 {chr(10).join(запити)}
 
@@ -1020,7 +984,7 @@ PUSH: гільза≠кільце, "натяжний" обов'язково. Б�
         resp = gemini_client.models.generate_content(
             model="gemini-2.5-flash",
             contents=[genai_types.Part.from_text(text=prompt)],
-            config=genai_types.GenerateContentConfig(temperature=0, max_output_tokens=8192)
+            config=genai_types.GenerateContentConfig(temperature=0)
         )
         parsed = _parse_claude_json(resp.text)
         if not parsed:
@@ -1045,24 +1009,10 @@ import os as _os
 _PICKER = _os.getenv('PICKER_MODEL', 'claude').lower()  # 'claude' або 'gemini'
 
 
-_PICK_CHUNK = 50   # макс позицій за один виклик Claude/Gemini
-
-
 def pick_batch(позиції: list[dict], _retry=True) -> list[dict]:     # єдина точка входу — делегує до Claude або Gemini залежно від PICKER_MODEL
-    if len(позиції) <= _PICK_CHUNK:
-        if _PICKER == 'gemini':
-            return gemini_pick_batch(позиції, _retry=_retry)
-        return claude_pick_batch(позиції, _retry=_retry)
-
-    # Великий батч — розбиваємо на чанки
-    results = []
-    for i in range(0, len(позиції), _PICK_CHUNK):
-        chunk = позиції[i:i + _PICK_CHUNK]
-        if _PICKER == 'gemini':
-            results.extend(gemini_pick_batch(chunk, _retry=_retry))
-        else:
-            results.extend(claude_pick_batch(chunk, _retry=_retry))
-    return results
+    if _PICKER == 'gemini':
+        return gemini_pick_batch(позиції, _retry=_retry)
+    return claude_pick_batch(позиції, _retry=_retry)
 
 
 def claude_pick_batch(позиції: list[dict], _retry=True) -> list[dict]:  # відправляє батч кандидатів до Claude; він вибирає правильний товар для кожної позиції
@@ -1073,7 +1023,14 @@ def claude_pick_batch(позиції: list[dict], _retry=True) -> list[dict]:  #
             f"  {j+1}. [{c.get('_match_pct', 0)}%] {c['name']}"
             for j, c in enumerate(пос['candidates'])
         )
-        запити.append(f"{i+1}. {пос['normalized']}{brand_note}\n{кандидати}")
+        ctx = [f"оригінал: {пос.get('original', '')}"]                     # п.7: контекст рядка
+        if пос.get('_system'):
+            ctx.append(f"система: {пос['_system']}")
+        if пос.get('_kit_role'):
+            ctx.append(f"комплект {пос.get('_kit')}: {пос['_kit_role']}")
+        if пос.get('notes'):
+            ctx.append('; '.join(пос['notes']))
+        запити.append(f"{i+1}. {пос['normalized']}\n   ({' | '.join(ctx)}){brand_note}\n{кандидати}")
 
     prompt = f"""Сантехнік. Для кожного запиту — номер кандидата або знайдено=false.
 
@@ -1113,22 +1070,21 @@ PUSH: гільза≠кільце, "натяжний" обов'язково. Б�
    - трійник латунний ≠ трійник PPR (якщо немає EKO/PPR → латунний)
    - ніпель латунний ≠ американка PPR
    - труба PPR ≠ труба PUSH/PEX (різні системи!)
-4. АНАЛОГИ — дозволені коли тип і діаметр збігаються, виробник інший:
-   - Запит: "Клапан зворотний DN20 3/4" → кандидат: "Зворотний клапан ВВ DN20 3/4 RAFTEC" → ЗНАЙДЕНО (аналог)
-   - Запит: "Коліно вн. канал. ф50 45° Ostendorf" → кандидат: "Коліно вн. канал. ф50 45° ASG" → ЗНАЙДЕНО (аналог)
-   - Запит: "Ніпель ЗЗ DN15 1/2" → кандидат: "Ніпель DN15 1/2 RAFTEC GOLD" → ЗНАЙДЕНО (аналог)
-   - Запит: "Футорка ЗВ DN25х15 1х1/2" → кандидат: "Футорка 1х1/2 RAFTEC" → ЗНАЙДЕНО (аналог)
-   ⚠️ Аналог ТІЛЬКИ якщо: той самий тип + ті самі розміри. confidence=70-80 для аналогів.
-5. Якщо жоден кандидат не підходить навіть як аналог → знайдено=false
-6. Різьба: 1/2=DN15, 3/4=DN20, 1"=DN25, 1 1/4"=DN32, 1 1/2"=DN40, 2"=DN50
+4. Якщо жоден кандидат не підходить → знайдено=false (НЕ підбирати "щось схоже"!)
+5. Різьба: 1/2=DN15, 3/4=DN20, 1"=DN25, 1 1/4"=DN32, 1 1/2"=DN40, 2"=DN50
 
 {chr(10).join(запити)}
 JSON рівно {len(позиції)} елементів:
 [{{"знайдено":true,"номер_кандидата":1,"confidence":95,"reason":"причина","fail_reason":""}}]"""
 
     try:
+        from knowledge.knowledge import get_knowledge
+        from knowledge.rules import get_rules
         resp   = claude.messages.create(
-            model="claude-sonnet-4-5", max_tokens=8192,
+            model="claude-sonnet-4-5", max_tokens=16384, temperature=0,   # п.21
+            system=[{"type": "text",                                       # п.7: знання, кешуються
+                     "text": f"{get_knowledge()}\n\n# ПРАВИЛА МАГАЗИНУ (вищий пріоритет):\n{get_rules()}",
+                     "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": prompt}]
         )
         parsed = _parse_claude_json(resp.content[0].text)
@@ -1151,10 +1107,31 @@ JSON рівно {len(позиції)} елементів:
 
 # ─── Головна функція пошуку ──────────────────────────────────────────────────
 
+def _mk_result(пос: dict, item: dict, conf: int, src: str, reason: str) -> dict:  # єдиний формат результату для нових гілок
+    return {
+        'original': пос.get('original', ''), 'normalized': пос.get('normalized', ''),
+        'знайдено': True, 'назва': item['name'], 'назва_повна': item.get('name_full', item['name']),
+        'артикул': item.get('artikul', ''), 'ціна': item.get('price', ''),
+        'qty': пос.get('qty', ''), 'category': пос.get('category', ''),
+        'confidence': conf, 'keyword_pct': item.get('_match_pct', 100),
+        'джерело': src, 'brand_warning': '', 'reason': reason, 'fail_reason': '',
+        'candidates_debug': [], '_prefix': пос.get('_prefix', 'XX'),
+        '_routed_cat': пос.get('_routed_cat', 'other'), '_node_id': пос.get('_node_id', ''),
+        '_catalog_node': item.get('_node_id', ''), '_used_brand': '',
+    }
+
+
 def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    # основна функція: маршрутизація + 4 рівні пошуку для кожної позиції; повертає список результатів
     # ── ЖОРСТКА МАРШРУТИЗАЦІЯ: визначаємо категорію ПЕРЕД пошуком ──────────
     # Кожна позиція отримує _routed_cat і _prefix на основі тексту нормалізації
     route_batch(позиції)   # мутує позиції: додає _routed_cat і _prefix in-place
+
+    # п.3: категорія з контексту замовлення сильніша за роутер
+    for пос in позиції:
+        ctx_cat = пос.get('_ctx_category')
+        if ctx_cat and пос.get('_routed_cat') != ctx_cat:
+            пос['_routed_cat'] = ctx_cat
+            пос['_node_id'] = ''        # вузол чужої категорії невалідний → пошук по родині
 
     # Уточнення node_id по виробнику з brand_map
     # Якщо підказка "пайка екопластик" + node=pp.f.k → уточнюємо до pp.e.f
@@ -1197,10 +1174,16 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                               'reason': 'not_ours', 'fail_reason': 'не наш асортимент'}
             continue
 
+        # п.6/17: роль комплекту → точний товар з шаблону
+        if пос.get('_forced'):
+            результати[i] = _mk_result(пос, пос['_forced'], 97, '🧩 комплект',
+                                       f"Комплект {пос.get('_kit')}: {пос.get('_kit_role')}")
+            continue
+
         brand_map    = пос.get('_brand_map', {})
         client_slug  = пос.get('_client_slug')
         client_prefs = пос.get('_client_prefs', {})
-        manager_brand = brand_map.get(category)
+        manager_brand = brand_map.get(category) or пос.get('_ctx_brand')   # п.3–4: бренд з контексту
         # якщо Gemini дав неточну категорію — пробуємо суміжні (але НЕ _global)
         if not manager_brand and brand_map:
             for similar_cat in SIMILAR_CATS.get(category, []):
@@ -1235,8 +1218,8 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
         # ⚡ _global_brand стає жорстким тільки якщо виробник актуальний для цієї категорії
         # "пайка екопластик" → жорстко для PPR, але НЕ для каналізації!
         # "пуш рафтек" → жорстко для push, але НЕ для каналізації і PPR!
-        _PPR_BRANDS  = {'ekoplastik', 'asg', 'plm', 'raftec', 'fv plast', 'eco'}
-        _PUSH_BRANDS = {'raftec', 'rehau', 'uponor'}
+        _PPR_BRANDS  = {'ekoplastik', 'asg', 'plm', 'raftec', 'fv plast', 'kan', 'eco'}
+        _PUSH_BRANDS = {'raftec', 'rehau', 'fado', 'kan', 'uponor', 'heat-pex'}
         _SEW_BRANDS  = {'ostendorf', 'asg', 'valrom', 'plm'}
 
         _CAT_BRAND_MAP = {
@@ -1258,6 +1241,8 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                                             required_brand_tokens=hard_brand)
             if c and cache_is_banned(original, c.get('catalog_name', '')):
                 c = None    # бан головніший за клієнтський кеш
+            if c and пос.get('_ctx_category') and c.get('category') not in (None, пос['_ctx_category']):
+                c = None    # п.18: кеш іншої системи
             if c:
                 _qa_c = пос.get('_qa') or build_qa(пос)
                 пос['_qa'] = _qa_c
@@ -1285,6 +1270,8 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
         cached = cache_lookup(original, brand_map)
         if cached and cache_is_banned(original, cached.get('catalog_name', '')):
             cached = None   # страховка: бан головніший за будь-який запис
+        if cached and пос.get('_ctx_category') and cached.get('category') not in (None, пос['_ctx_category']):
+            cached = None   # п.18: кеш іншої системи
         if cached:
             _qa_b = пос.get('_qa') or build_qa(пос)
             пос['_qa'] = _qa_b
@@ -1293,7 +1280,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
         if cached:
             ok = True
             if hard_brand:
-                nl = (cached.get('catalog_name') or '').lower()
+                nl = cached.get('catalog_name', '').lower()
                 ok = any(t.lower() in nl for t in hard_brand)
             if ok:
                 результати[i] = {
@@ -1320,11 +1307,25 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
         джерело        = ''
         brand_warning  = ''
 
+        # ── РІВЕНЬ 3.2 (п.8): ПОВНА РОДИНА — категорія + бренд + тип + діаметри ──
+        if hard_brand or пос.get('_ctx_category'):
+            _qa_f = пос.get('_qa') or build_qa(пос)
+            пос['_qa'] = _qa_f
+            fam = attr_search(_qa_f, top_n=60, brand_tokens=hard_brand,
+                              category=пос.get('_routed_cat') or category, strict_cat=True)
+            fam = [c for c in fam if not cache_is_banned(original, c['name'])]
+            if len(fam) == 1 and fam[0].get('_attr_tier') == 1 and validate_pick(_qa_f, fam[0]):
+                результати[i] = _mk_result(пос, fam[0], 96, '🎯 родина', 'Єдиний точний збіг у родині')
+                continue
+            if fam:
+                кандидати, джерело = fam, '🎯 родина'
+                required_brand = hard_brand[0] if hard_brand else None
+
         # ── РІВЕНЬ 3.5: ПАРАМЕТРИЧНИЙ ПОШУК ─────────────────────────────────
         # Жорсткий фільтр по розмірах/типу/системі ДО векторного пошуку.
         # Voyage сліпий до чисел — тут вони вирішують.
         _pq = parse_parametric(f"{normalized} {original}", query_mode=True)
-        if query_strength(_pq) >= 2:
+        if not кандидати and query_strength(_pq) >= 2:
             _phits = parametric_search(
                 normalized or original,
                 node_id=пос.get('_node_id') or None,
@@ -1469,7 +1470,7 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
             if top.get('score', 0) >= THRESHOLD_AUTO:
                 _qa_v = пос.get('_qa') or build_qa(пос)
                 пос['_qa'] = _qa_v
-                if validate_pick(_qa_v, top):
+                if validate_pick(_qa_v, top) and parse_attrs(top['name']).get('type') == _qa_v.get('type'):  # п.10
                     результати[i] = {
                         'original': original, 'normalized': normalized,
                         'знайдено': True, 'назва': top['name'],
@@ -1540,6 +1541,8 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
             'category': category, 'brand_map': brand_map,
             'client_slug': client_slug, 'джерело': джерело,
             'brand_warning': brand_warning,
+            '_system': пос.get('_system'), '_kit': пос.get('_kit'),
+            '_kit_role': пос.get('_kit_role'), 'notes': пос.get('notes', []),
             '_prefix': пос.get('_prefix', 'XX'),
             '_routed_cat': пос.get('_routed_cat', 'other'),
                     '_node_id': пос.get('_node_id', ''),
@@ -1671,5 +1674,12 @@ def find_items(позиції: list[dict], progress_cb=None) -> list[dict]:    #
                     r['назва_повна'] = it.get('name_full', it['name'])
                     break
             r.pop('_from_cache', None)
+
+    # п.22: примітки контексту/перевірок → «Чому знайшло» + жовтий рядок
+    for r, пос in zip(результати, позиції):
+        if r and пос.get('notes'):
+            txt = ' '.join(пос['notes'])
+            r['reason'] = f"{txt}. {r.get('reason', '')}".strip()
+            r['brand_warning'] = r.get('brand_warning') or txt
 
     return результати
